@@ -30,6 +30,14 @@ function safePath(rel) {
   return rel.startsWith('scripts/') || rel.startsWith('docs/');
 }
 
+function unpack(buffer) {
+  try {
+    return zlib.gunzipSync(buffer);
+  } catch (_) {
+    return zlib.brotliDecompressSync(buffer);
+  }
+}
+
 for (const dir of jobs) {
   const id = path.basename(dir);
   const parts = fs.readdirSync(dir)
@@ -43,7 +51,7 @@ for (const dir of jobs) {
     .join('');
 
   const packed = Buffer.from(packedBase64, 'base64');
-  const jsonBuffer = zlib.gunzipSync(packed);
+  const jsonBuffer = unpack(packed);
   const payload = JSON.parse(jsonBuffer.toString('utf8'));
 
   if (![1, 2].includes(payload.schemaVersion) || !Array.isArray(payload.files)) {
