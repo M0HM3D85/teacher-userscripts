@@ -4,6 +4,7 @@ import path from 'node:path';
 const ROOT = process.cwd();
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
 const AUTHOR_FILE = path.join(ROOT, 'config', 'author.json');
+const CATALOG_FILE = path.join(SCRIPTS_DIR, 'catalog.json');
 
 if (!fs.existsSync(AUTHOR_FILE)) {
   console.error('❌ config/author.json غير موجود.');
@@ -11,17 +12,16 @@ if (!fs.existsSync(AUTHOR_FILE)) {
 }
 
 const AUTHOR = JSON.parse(fs.readFileSync(AUTHOR_FILE, 'utf8'));
+const CATALOG = fs.existsSync(CATALOG_FILE)
+  ? JSON.parse(fs.readFileSync(CATALOG_FILE, 'utf8'))
+  : { scripts: [] };
+const CATALOG_BY_PATH = new Map(
+  (CATALOG.scripts || []).map((item) => [item.sourcePath, item])
+);
+
 const REQUIRED = [
-  '@name',
-  '@namespace',
-  '@version',
-  '@description',
-  '@author',
-  '@homepageURL',
-  '@supportURL',
-  '@copyright',
-  '@license',
-  '@match'
+  '@name', '@namespace', '@version', '@description', '@author',
+  '@homepageURL', '@supportURL', '@copyright', '@license', '@match'
 ];
 
 const EXACT_META = Object.freeze({
@@ -35,7 +35,7 @@ const EXACT_META = Object.freeze({
 
 const REQUIRED_IDENTITY_TEXT = Object.freeze([
   ['GreasyFork', AUTHOR.website],
-  ['GitHub', AUTHOR.repository],
+  ['GitHub support/source', AUTHOR.repository],
   ['X / Twitter', AUTHOR.x],
   ['Snapchat', AUTHOR.snapchat],
   ['حقوق المطور', AUTHOR.copyrightNotice]
@@ -74,10 +74,11 @@ if (!files.length) {
 }
 
 for (const file of files) {
-  const rel = path.relative(ROOT, file);
+  const rel = path.relative(ROOT, file).replaceAll('\\', '/');
   const text = fs.readFileSync(file, 'utf8');
   const header = readHeader(text);
   const errors = [];
+  const catalogEntry = CATALOG_BY_PATH.get(rel);
 
   if (!header) {
     errors.push('UserScript header مفقود أو غير مكتمل');
@@ -87,8 +88,19 @@ for (const file of files) {
     }
 
     const version = getMeta(header, '@version');
-    if (version && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
-      errors.push(`@version غير مطابق لـ SemVer: ${version}`);
+    const semver = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+    const legacyTwoPart = /^\d+\.\d+$/;
+    if (version && !semver.test(version)) {
+      const allowedLegacy = catalogEntry?.legacyVersionFormat === true && legacyTwoPart.test(version);
+      if (!allowedLegacy) {
+        errors.push(`@version غير مطابق لـ SemVer: ${version}`);
+      } else {
+        console.warn(`⚠️ ${rel}: إصدار Legacy مؤقت (${version}) — يجب تحويله إلى SemVer في أول تحديث جديد.`);
+      }
+    }
+
+    if (catalogEntry && catalogEntry.version !== version) {
+      errors.push(`الإصدار في catalog.json (${catalogEntry.version}) لا يطابق @version (${version})`);
     }
 
     const matches = [...header.matchAll(/^\s*\/\/\s*@match\s+(.+)$/gm)].map((m) => m[1].trim());
@@ -106,6 +118,10 @@ for (const file of files) {
     if (!text.includes(value)) {
       errors.push(`بيانات الهوية ناقصة: ${label} (${value})`);
     }
+  }
+
+  if (!catalogEntry) {
+    errors.push('السكربت غير مسجل في scripts/catalog.json');
   }
 
   if (errors.length) {
