@@ -46,13 +46,17 @@ for (const dir of jobs) {
   const jsonBuffer = zlib.gunzipSync(packed);
   const payload = JSON.parse(jsonBuffer.toString('utf8'));
 
-  if (payload.schemaVersion !== 1 || !Array.isArray(payload.files)) {
+  if (![1, 2].includes(payload.schemaVersion) || !Array.isArray(payload.files)) {
     throw new Error(`${id}: صيغة الحزمة غير مدعومة`);
   }
 
   for (const file of payload.files) {
     if (!safePath(file.path)) throw new Error(`${id}: مسار غير مسموح ${file.path}`);
-    const content = Buffer.from(file.contentBase64, 'base64');
+
+    const content = payload.schemaVersion === 1
+      ? Buffer.from(file.contentBase64, 'base64')
+      : Buffer.from(String(file.content ?? ''), 'utf8');
+
     const actual = sha256(content);
     if (actual !== String(file.sha256 || '').toLowerCase()) {
       throw new Error(`${id}: SHA-256 غير مطابق للملف ${file.path}`);
