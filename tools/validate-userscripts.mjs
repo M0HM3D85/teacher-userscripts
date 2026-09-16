@@ -3,7 +3,43 @@ import path from 'node:path';
 
 const ROOT = process.cwd();
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
-const REQUIRED = ['@name', '@version', '@description', '@author', '@match'];
+const AUTHOR_FILE = path.join(ROOT, 'config', 'author.json');
+
+if (!fs.existsSync(AUTHOR_FILE)) {
+  console.error('❌ config/author.json غير موجود.');
+  process.exit(1);
+}
+
+const AUTHOR = JSON.parse(fs.readFileSync(AUTHOR_FILE, 'utf8'));
+const REQUIRED = [
+  '@name',
+  '@namespace',
+  '@version',
+  '@description',
+  '@author',
+  '@homepageURL',
+  '@supportURL',
+  '@copyright',
+  '@license',
+  '@match'
+];
+
+const EXACT_META = Object.freeze({
+  '@namespace': AUTHOR.namespace,
+  '@author': AUTHOR.author,
+  '@homepageURL': AUTHOR.website,
+  '@supportURL': AUTHOR.support,
+  '@copyright': AUTHOR.copyrightHeader,
+  '@license': AUTHOR.license
+});
+
+const REQUIRED_IDENTITY_TEXT = Object.freeze([
+  ['GreasyFork', AUTHOR.website],
+  ['GitHub', AUTHOR.repository],
+  ['X / Twitter', AUTHOR.x],
+  ['Snapchat', AUTHOR.snapchat],
+  ['حقوق المطور', AUTHOR.copyrightNotice]
+]);
 
 function walk(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -20,8 +56,12 @@ function readHeader(text) {
   return text.slice(start, end + '// ==/UserScript=='.length);
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function getMeta(header, key) {
-  const match = header.match(new RegExp(`^\\s*//\\s*${key.replace('@', '\\@')}\\s+(.+)$`, 'm'));
+  const match = header.match(new RegExp(`^\\s*//\\s*${escapeRegExp(key)}\\s+(.+)$`, 'm'));
   return match?.[1]?.trim() ?? '';
 }
 
@@ -53,6 +93,19 @@ for (const file of files) {
 
     const matches = [...header.matchAll(/^\s*\/\/\s*@match\s+(.+)$/gm)].map((m) => m[1].trim());
     if (!matches.length) errors.push('@match واحد على الأقل مطلوب');
+
+    for (const [key, expected] of Object.entries(EXACT_META)) {
+      const actual = getMeta(header, key);
+      if (actual && actual !== expected) {
+        errors.push(`${key} يجب أن يكون موحدًا: ${expected}`);
+      }
+    }
+  }
+
+  for (const [label, value] of REQUIRED_IDENTITY_TEXT) {
+    if (!text.includes(value)) {
+      errors.push(`بيانات الهوية ناقصة: ${label} (${value})`);
+    }
   }
 
   if (errors.length) {
@@ -60,9 +113,9 @@ for (const file of files) {
     console.error(`❌ ${rel}`);
     for (const error of errors) console.error(`   - ${error}`);
   } else {
-    console.log(`✅ ${rel} — v${getMeta(header, '@version')}`);
+    console.log(`✅ ${rel} — v${getMeta(header, '@version')} — الهوية موحدة`);
   }
 }
 
 if (failed) process.exit(1);
-console.log(`\n✅ تم فحص ${files.length} سكربت بنجاح.`);
+console.log(`\n✅ تم فحص ${files.length} سكربت بنجاح، بما في ذلك الحقوق والروابط الموحدة.`);
