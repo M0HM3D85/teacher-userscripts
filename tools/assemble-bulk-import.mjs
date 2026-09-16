@@ -40,9 +40,10 @@ function unpack(buffer) {
 
 for (const dir of jobs) {
   const id = path.basename(dir);
-  const parts = fs.readdirSync(dir)
-    .filter((name) => /^part-\d+\.txt$/.test(name))
-    .sort();
+  const names = fs.readdirSync(dir);
+  const bulkParts = names.filter((name) => /^bulk-\d+\.txt$/.test(name)).sort();
+  const legacyParts = names.filter((name) => /^part-\d+\.txt$/.test(name)).sort();
+  const parts = bulkParts.length ? bulkParts : legacyParts;
 
   if (!parts.length) throw new Error(`${id}: لا توجد أجزاء`);
 
