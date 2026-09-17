@@ -1,0 +1,63 @@
+name: Adopt official userscript sources
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'imports-official/**/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  adopt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Assemble verified official archive
+        run: node tools/assemble-official-import.mjs
+
+      - name: Validate metadata, rights and catalog
+        run: node tools/validate-userscripts.mjs
+
+      - name: JavaScript syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find scripts -name '*.user.js' -print0)
+
+      - name: Verify official script count
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const c = JSON.parse(fs.readFileSync('scripts/catalog.json','utf8'));
+          if (!Array.isArray(c.scripts) || c.scripts.length !== 13) {
+            throw new Error(`Expected 13 scripts, found ${c.scripts?.length ?? 0}`);
+          }
+          for (const s of c.scripts) {
+            if (!fs.existsSync(s.sourcePath)) throw new Error(`Missing source: ${s.sourcePath}`);
+          }
+          console.log('✅ 13 official scripts are present.');
+          NODE
+
+      - name: Commit official sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "import: adopt 13 official userscript sources"
+          git push origin HEAD:dev
