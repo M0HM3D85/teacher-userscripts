@@ -36,8 +36,9 @@
 
 ## التثبيت والتحديث
 
-سيتم نشر السكربت على GreasyFork من المصدر الرسمي في GitHub، وبعد النشر تتم مزامنة الكود تلقائيًا من فرع `main`.
+يُنشر السكربت على GreasyFork مع مزامنة الكود وAdditional info تلقائيًا من فرع `main` في GitHub.
 
+- [صفحة السكربت على GreasyFork](https://greasyfork.org/en/scripts/596240-m85-yahoo-finance-stock-assistant-v16-1)
 - المصدر الرسمي: [m85-yahoo-finance-stock-assistant.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/m85-yahoo-finance-stock-assistant/m85-yahoo-finance-stock-assistant.user.js)
 - [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
 
