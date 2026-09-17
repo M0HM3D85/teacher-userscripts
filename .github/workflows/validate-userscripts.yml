@@ -21,5 +21,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate userscript metadata
+      - name: Validate userscript metadata and identity
         run: node tools/validate-userscripts.mjs
+
+      - name: Syntax check all userscripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            echo "Checking $file"
+            node --check "$file"
+          done < <(find scripts -name '*.user.js' -print0)
