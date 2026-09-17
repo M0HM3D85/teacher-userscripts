@@ -33,8 +33,9 @@
 
 ## التثبيت والتحديث
 
-سيتم نشر السكربت على GreasyFork من المصدر الرسمي في GitHub، وبعد النشر تتم مزامنة الكود تلقائيًا من فرع `main`.
+يُنشر السكربت على GreasyFork مع مزامنة الكود وAdditional info تلقائيًا من فرع `main` في GitHub.
 
+- [صفحة السكربت على GreasyFork](https://greasyfork.org/en/scripts/596242-microsoft-forms-smart-enhancer-%D9%85%D8%AD%D8%B3%D9%86-microsoft-forms-%D8%A7%D9%84%D8%B0%D9%83%D9%8A)
 - المصدر الرسمي: [microsoft-forms-smart-enhancer.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js)
 - [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
 
