@@ -73,6 +73,57 @@ if (!files.length) {
   process.exit(0);
 }
 
+const ids = new Set();
+const sourcePaths = new Set();
+const additionalInfoPaths = new Set();
+
+for (const item of CATALOG.scripts || []) {
+  const errors = [];
+
+  if (!item.id) errors.push('id مفقود');
+  if (item.id && ids.has(item.id)) errors.push(`id مكرر: ${item.id}`);
+  if (item.id) ids.add(item.id);
+
+  if (!item.sourcePath) errors.push('sourcePath مفقود');
+  if (item.sourcePath && sourcePaths.has(item.sourcePath)) errors.push(`sourcePath مكرر: ${item.sourcePath}`);
+  if (item.sourcePath) sourcePaths.add(item.sourcePath);
+
+  if (!item.additionalInfoPath) {
+    errors.push('additionalInfoPath مفقود');
+  } else {
+    if (additionalInfoPaths.has(item.additionalInfoPath)) {
+      errors.push(`additionalInfoPath مكرر: ${item.additionalInfoPath}`);
+    }
+    additionalInfoPaths.add(item.additionalInfoPath);
+
+    const infoFile = path.join(ROOT, item.additionalInfoPath);
+    if (!fs.existsSync(infoFile)) {
+      errors.push(`ملف Additional info غير موجود: ${item.additionalInfoPath}`);
+    } else {
+      const infoText = fs.readFileSync(infoFile, 'utf8');
+      const expectedVersion = `**الإصدار الحالي:** \`${item.version}\``;
+      if (!infoText.includes(expectedVersion)) {
+        errors.push(`README لا يعرض الإصدار الحالي المتوقع: ${item.version}`);
+      }
+      if (!infoText.includes(AUTHOR.author)) {
+        errors.push('README لا يحتوي اسم المطور الموحد');
+      }
+      if (!infoText.includes(AUTHOR.support)) {
+        errors.push('README لا يحتوي رابط الدعم الموحد');
+      }
+      if (!infoText.includes(AUTHOR.copyrightNotice)) {
+        errors.push('README لا يحتوي نص الحقوق الموحد');
+      }
+    }
+  }
+
+  if (errors.length) {
+    failed = true;
+    console.error(`❌ catalog: ${item.id || '(بدون id)'}`);
+    for (const error of errors) console.error(`   - ${error}`);
+  }
+}
+
 for (const file of files) {
   const rel = path.relative(ROOT, file).replaceAll('\\', '/');
   const text = fs.readFileSync(file, 'utf8');
@@ -134,4 +185,4 @@ for (const file of files) {
 }
 
 if (failed) process.exit(1);
-console.log(`\n✅ تم فحص ${files.length} سكربت بنجاح، بما في ذلك الحقوق والروابط الموحدة.`);
+console.log(`\n✅ تم فحص ${files.length} سكربت وملفات Additional info بنجاح.`);

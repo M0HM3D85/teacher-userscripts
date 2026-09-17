@@ -1,22 +1,58 @@
 # M85 Yahoo Finance Stock Assistant V16.1
 
+> أدوات مساعدة فوق صفحة سهم Yahoo Finance لعرض السعر بدقة أوضح، متابعة حالة الجلسة، وإنشاء تنبيهات عبور مستويات سعرية مع تحكم مستقل لكل تنبيه.
+
 **الإصدار الحالي:** `16.1`
 
-Accurate Yahoo price display, session status, crossing alerts, per-alert controls, and backup
+## ما الذي يقدمه السكربت؟
 
-## المواقع المستهدفة
+يضيف السكربت عناصر مساعدة إلى صفحات الأسهم في Yahoo Finance لعرض المعلومات التي يحتاجها المستخدم بسرعة أكبر وتنظيم التنبيهات السعرية محليًا من داخل الصفحة.
+
+## أبرز المزايا
+
+- عرض سعر السهم بصورة دقيقة وواضحة داخل الواجهة.
+- إظهار حالة جلسة السوق ضمن المعلومات المساعدة.
+- إنشاء تنبيهات عند عبور السعر لمستويات محددة.
+- تحكم مستقل في كل تنبيه بدل إدارة التنبيهات كمجموعة واحدة.
+- حفظ واستعادة/نسخ احتياطي لإعدادات التنبيهات المدعومة.
+- العمل مباشرة على صفحات `quote` في Yahoo Finance.
+
+## طريقة الاستخدام
+
+1. ثبّت السكربت عبر Tampermonkey.
+2. افتح صفحة السهم المطلوبة في Yahoo Finance.
+3. استخدم لوحة السكربت لإضافة أو إدارة مستويات التنبيه.
+4. راجع حالة الجلسة والسعر المعروض حسب الحاجة.
+5. استخدم النسخ الاحتياطي قبل تغييرات كبيرة على مجموعة التنبيهات.
+
+## المواقع المدعومة
 
 - `*://finance.yahoo.com/quote/*`
 - `*://*.finance.yahoo.com/quote/*`
 
-## الروابط
+## ملاحظة مهمة
 
-- GreasyFork: غير مربوط حاليًا بصفحة GreasyFork في الملف المرفوع.
-- صفحة المطور: https://greasyfork.org/en/users/1636459-m0hm3d85
-- الدعم والمشكلات: https://github.com/M0HM3D85/teacher-userscripts/issues
+السكربت أداة عرض وتنبيه فقط، ولا يقدم توصية استثمارية أو قرار شراء/بيع.
 
-## المصدر
+## التثبيت والتحديث
 
-الملف الرسمي: [`m85-yahoo-finance-stock-assistant.user.js`](./m85-yahoo-finance-stock-assistant.user.js)
+سيتم نشر السكربت على GreasyFork من المصدر الرسمي في GitHub، وبعد النشر تتم مزامنة الكود تلقائيًا من فرع `main`.
 
-> هذه النسخة مستوردة من الملف الأصلي الذي سلّمه المطور، مع توحيد بيانات الهوية والحقوق فقط عند الحاجة.
+- المصدر الرسمي: [m85-yahoo-finance-stock-assistant.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/m85-yahoo-finance-stock-assistant/m85-yahoo-finance-stock-assistant.user.js)
+- [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
+
+## الدعم
+
+- [الإبلاغ عن مشكلة أو اقتراح](https://github.com/M0HM3D85/teacher-userscripts/issues)
+- [X](https://x.com/M0HM3D85)
+- [Snapchat](https://www.snapchat.com/add/M0HM3D85)
+
+## ملاحظة الإصدار
+
+صيغة الإصدار `16.1` محفوظة كما هي للنسخة الحالية، ويُستخدم SemVer كامل عند أول تحديث فعلي لاحق.
+
+## المطور والحقوق
+
+**Mohammed Almalki (M0HM3D85)**  
+© 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.  
+الترخيص: **All Rights Reserved**
