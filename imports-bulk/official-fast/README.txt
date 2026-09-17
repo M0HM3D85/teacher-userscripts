@@ -1,0 +1,1 @@
+Official verified import bundle assembled from the 13 user-uploaded source files on 2026-09-17. The four part files are a Brotli-compressed, base64-encoded payload. READY triggers verified extraction on dev.
