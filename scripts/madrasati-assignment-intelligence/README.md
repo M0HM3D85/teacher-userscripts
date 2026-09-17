@@ -34,8 +34,9 @@
 
 ## التثبيت والتحديث
 
-سيتم نشر السكربت على GreasyFork من المصدر الرسمي في GitHub، وبعد النشر تتم مزامنة الكود تلقائيًا من فرع `main`.
+يُنشر السكربت على GreasyFork مع مزامنة الكود وAdditional info تلقائيًا من فرع `main` في GitHub.
 
+- [صفحة السكربت على GreasyFork](https://greasyfork.org/en/scripts/596241-madrasati-assignment-intelligence-%D9%85%D8%AF%D9%8A%D8%B1-%D8%A7%D9%84%D9%88%D8%A7%D8%AC%D8%A8%D8%A7%D8%AA-%D8%A7%D9%84%D8%B0%D9%83%D9%8A)
 - المصدر الرسمي: [madrasati-assignment-intelligence.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js)
 - [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
 

@@ -36,8 +36,9 @@
 
 ## التثبيت والتحديث
 
-سيتم نشر السكربت على GreasyFork من المصدر الرسمي في GitHub، وبعد النشر تتم مزامنة الكود تلقائيًا من فرع `main`.
+يُنشر السكربت على GreasyFork مع مزامنة الكود وAdditional info تلقائيًا من فرع `main` في GitHub.
 
+- [صفحة السكربت على GreasyFork](https://greasyfork.org/en/scripts/596243-whatsapp-communication-manager-%D9%85%D8%AF%D9%8A%D8%B1-%D8%A7%D9%84%D8%AA%D9%88%D8%A7%D8%B5%D9%84-%D8%B9%D8%A8%D8%B1-%D9%88%D8%A7%D8%AA%D8%B3%D8%A7%D8%A8)
 - المصدر الرسمي: [whatsapp-communication-manager.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/whatsapp-communication-manager/whatsapp-communication-manager.user.js)
 - [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
 
