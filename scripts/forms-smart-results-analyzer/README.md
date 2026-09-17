@@ -1,25 +1,23 @@
 # Forms Smart Results Analyzer | محلل نتائج فورمز الذكي
 
-**الإصدار الحالي:** `0.1.8`  
-**الحالة:** Stable
+**الإصدار الحالي:** `0.3.0`
 
-سكربت لتحليل نتائج اختبارات Microsoft Forms وإنتاج مؤشرات وتقارير قابلة للطباعة والتصدير.
+منصة تحليل تربوي لنتائج Microsoft Forms: تقديرات، مهارات تلقائية من Subtitle، مصفوفة إتقان، تدخلات، فصول وشعب، جودة اختبار، مشتتات، مقارنات وتقارير متعددة.
 
-## المصدر والنشر
+## المواقع المستهدفة
 
-- GitHub هو المصدر الرئيسي بعد اكتمال الترحيل.
-- صفحة GreasyFork الحالية تبقى قناة التثبيت والتحديث للمستخدمين.
-- لا يتم تغيير `@updateURL` أو `@downloadURL` في نسخة مستقرة إلا ضمن خطوة ترحيل مخططة.
+- `https://forms.cloud.microsoft/Pages/DesignPageV2.aspx*`
+- `https://forms.office.com/Pages/DesignPageV2.aspx*`
+- `https://forms.microsoft.com/Pages/DesignPageV2.aspx*`
 
-## ملفات هذا المجلد
+## الروابط
 
-- `forms-smart-results-analyzer.user.js` — الكود المنشور.
-- `CHANGELOG.md` — سجل الإصدارات.
+- GreasyFork: https://greasyfork.org/scripts/593393
+- صفحة المطور: https://greasyfork.org/en/users/1636459-m0hm3d85
+- الدعم والمشكلات: https://github.com/M0HM3D85/teacher-userscripts/issues
 
-## قبل النشر
+## المصدر
 
-1. اختبار فتح المحلل على Microsoft Forms.
-2. التأكد من قراءة الاستجابات والأسئلة.
-3. اختبار التقارير والطباعة والتصدير.
-4. رفع `@version` حسب Semantic Versioning.
-5. تحديث `CHANGELOG.md` و`../catalog.json`.
+الملف الرسمي: [`forms-smart-results-analyzer.user.js`](./forms-smart-results-analyzer.user.js)
+
+> هذه النسخة مستوردة من الملف الأصلي الذي سلّمه المطور، مع توحيد بيانات الهوية والحقوق فقط عند الحاجة.
