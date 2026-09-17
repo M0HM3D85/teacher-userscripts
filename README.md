@@ -2,59 +2,35 @@
 
 مستودع موحّد لتطوير وإدارة ونشر سكربتات Tampermonkey التعليمية التي يطوّرها **Mohammed Almalki (M0HM3D85)**.
 
-## الهدف
+> GitHub هو مصدر الكود الرئيسي بعد اعتماد كل سكربت، بينما GreasyFork هو واجهة التثبيت والتحديث للمستخدم.
 
-- جعل GitHub هو **المصدر الرئيسي الوحيد (Source of Truth)** للكود.
-- الاحتفاظ بتاريخ كامل لكل تعديل وإصدار.
-- فصل التطوير عن النسخ المستقرة المنشورة للمعلمين.
-- تجهيز السكربتات للمزامنة مع GreasyFork دون كسر روابط التثبيت الحالية.
-- توحيد أسلوب الإصدارات والتوثيق والفحص الآلي.
+## الهوية والحقوق
 
-## السكربتات
+- المطوّر: Mohammed Almalki (M0HM3D85)
+- GreasyFork: https://greasyfork.org/en/users/1636459-m0hm3d85
+- X: https://x.com/M0HM3D85
+- Snapchat: https://www.snapchat.com/add/M0HM3D85
+- الدعم والمصدر: https://github.com/M0HM3D85/teacher-userscripts
+- الترخيص: All Rights Reserved
 
-| السكربت | المسار | الحالة |
-|---|---|---|
-| محلل نتائج فورمز الذكي | `scripts/forms-smart-results-analyzer/` | مستقر |
-| مصمم الجدول الدراسي الاحترافي | `scripts/madrasati-schedule-designer/` | مستقر |
-| راصد الطلاب — مدرستي + نور | `scripts/student-rased-madrasati-noor/` | قيد الإدخال |
-
-## بنية المستودع
-
-```text
-teacher-userscripts/
-├── scripts/                 # السكربتات المستقلة
-├── shared/                  # وحدات مشتركة مستقبلًا
-├── tools/                   # أدوات الفحص والإدارة
-├── docs/                    # توثيق وصور المشروع
-└── .github/workflows/       # فحوصات GitHub Actions
-```
-
-## سياسة الإصدارات
-
-نستخدم [Semantic Versioning](https://semver.org/):
-
-- `PATCH` — إصلاح خطأ: `1.4.0 → 1.4.1`
-- `MINOR` — ميزة متوافقة جديدة: `1.4.1 → 1.5.0`
-- `MAJOR` — تغيير كبير أو غير متوافق: `1.5.0 → 2.0.0`
+© 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
 
 ## دورة العمل
 
 ```text
-تطوير وتجربة
+ملف المصدر الرسمي
     ↓
-فرع dev / feature
+dev
     ↓
-فحص آلي
+فحص الهوية + الإصدار + Syntax
     ↓
-دمج إلى main
+Pull Request
+    ↓
+main
     ↓
 GreasyFork
     ↓
-تحديث Tampermonkey للمستخدمين
+Tampermonkey
 ```
 
-> **مهم:** فرع `main` مخصص للنسخ المستقرة. لا تُنشر التجارب غير المكتملة عليه.
-
-## الحقوق
-
-© 2026 Mohammed Almalki (M0HM3D85). All Rights Reserved.
+لا تُرفع نسخة إلى `main` ولا تُربط بـ GreasyFork قبل اجتياز الفحص.

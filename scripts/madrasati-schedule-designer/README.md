@@ -1,20 +1,22 @@
 # مدرستي - مصمم الجدول الدراسي الاحترافي
 
-**الإصدار الحالي:** `1.4.0`  
-**الحالة:** Stable
+**الإصدار الحالي:** `1.4.1`
 
-مصمم لجدول المعلم أو الطالب في مدرستي مع التخصيص والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.
+مصمم احترافي لجدول المعلم أو الطالب في مدرستي مع تنظيف مسميات المواد والتخصيص والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.
 
-## المصدر والنشر
+## المواقع المستهدفة
 
-- GitHub هو المصدر الرئيسي بعد اكتمال الترحيل.
-- GreasyFork يبقى قناة التثبيت والتحديث للمستخدمين.
-- رابط GreasyFork الحالي مرتبط بالسكربت رقم `592421`.
+- `https://schools.madrasati.sa/SchoolSchedule/Schedule/TeacherSchedule*`
+- `https://schools.madrasati.sa/SchoolSchedule/Schedule/StudentSchedule*`
 
-## قبل النشر
+## الروابط
 
-1. اختبار جدول المعلم وجدول الطالب.
-2. اختبار قراءة أسماء المواد والحصص والأوقات.
-3. اختبار الشعار والمعاينة والطباعة وPNG وExcel والنسخ.
-4. رفع `@version`.
-5. تحديث `CHANGELOG.md` و`../catalog.json`.
+- GreasyFork: https://greasyfork.org/scripts/592421
+- صفحة المطور: https://greasyfork.org/en/users/1636459-m0hm3d85
+- الدعم والمشكلات: https://github.com/M0HM3D85/teacher-userscripts/issues
+
+## المصدر
+
+الملف الرسمي: [`madrasati-schedule-designer.user.js`](./madrasati-schedule-designer.user.js)
+
+> هذه النسخة مستوردة من الملف الأصلي الذي سلّمه المطور، مع توحيد بيانات الهوية والحقوق فقط عند الحاجة.
