@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Assignment Intelligence | مدير الواجبات الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.1.7
-// @description  مدير واجبات مدرستي: هوية دقيقة للطلاب، استيراد درجات XLSX/CSV، قرار إلزامي لدرجات الصفر عند غياب حالة التسليم، ملاحظات تلقائية حسب الحالة ونسبة الدرجة، تطبيق مباشر في خانات مدرستي، حفظ آمن وتقارير وتحليل.
+// @version      1.4.2
+// @description  مدير واجبات مدرستي: تقارير نهائية لا تُحتسب إلا بعد انتهاء وقت النشر وفق وقت خادم مدرستي، تحليل دقيق للطلاب والأسئلة، لوحة شاملة لكل الصفحات والمنشورات، PDF/Excel/CSV، واستيراد درجات ذكي.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/Teacher/Assignments/*
@@ -11,21 +11,24 @@
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
+// @require      https://cdn.jsdelivr.net/gh/M0HM3D85/teacher-userscripts@2c779aed06435d7e99ba94a3212ac40bf20317f1/scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
 
 /*
 =========================================================================
- Madrasati Assignment Intelligence | مدير الواجبات الذكي
+ Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.2
 
  تصميم وتطوير: Mohammed Almalki (M0HM3D85)
  X / Twitter : https://x.com/M0HM3D85
  Snapchat    : https://www.snapchat.com/add/M0HM3D85
  GreasyFork  : https://greasyfork.org/en/users/1636459-m0hm3d85
 
+ هذا الإصدار يبني طبقة التحليل المتقدمة فوق النواة المستقرة v1.1.7
+ المثبتة على commit محدد لضمان عدم تغير السلوك الأساسي دون قصد.
+
  © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
- يمنع حذف أو تغيير بيانات المصمم وحقوقه عند إعادة نشر السكربت.
 =========================================================================
 */
 
@@ -33,93 +36,183 @@
   'use strict';
 
   const APP = 'MAI';
-  const VERSION = '1.1.7';
+  const VERSION = '1.4.2';
+  const BASE_REQUIRED_VERSION = '1.1.7';
+  const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V3';
+  const PANEL_COLLAPSE_KEY = 'MAI_PANEL_COLLAPSED_V1';
+  const INDEX_COLLAPSE_KEY = 'MAI_INDEX_PANEL_COLLAPSED_V1';
+  const INDEX_PUBLICATIONS_CACHE_KEY = 'MAI_INDEX_PUBLICATIONS_V5';
+  const INDEX_DEEP_CACHE_KEY = 'MAI_INDEX_DEEP_ANALYSIS_V5';
+  const isGradeAssignment = /\/Teacher\/Assignments\/GradeAssignment\//i.test(location.pathname);
+  const isAssignmentsIndex = /\/Teacher\/Assignments\/Index\//i.test(location.pathname);
+  const isMyStudents = /\/SchoolManagment\/Actions\/MyStudents/i.test(location.pathname);
 
-  const STORE = {
-    registry: 'MAI_STUDENT_REGISTRY_V2',
-    bridge: 'MAI_ASSIGNMENT_BRIDGE_V2',
-    snapshot: 'MAI_ASSIGNMENT_SNAPSHOT_V2',
-    importBackup: 'MAI_IMPORT_BACKUP_V1',
-    importHistory: 'MAI_IMPORT_HISTORY_V1',
-    importPrefs: 'MAI_IMPORT_PREFS_V1'
-  };
+  const base = globalThis.MadrasatiAssignmentIntelligence || null;
 
-  const state = {
-    registry: null,
-    bridge: null,
-    gradeData: null,
-    questions: null,
-    questionAnalytics: null,
-    importSession: null,
-    importPreview: null,
-    busy: false
-  };
+  // صفحة GradeAssignment تعتمد على النواة المستقرة v1.1.7.
+  // أما صفحة Index فلها لوحة مستقلة، لذلك لا نمنع تشغيلها إذا تعذر تحميل النواة لأي سبب.
+  if (!base && isGradeAssignment) {
+    console.error('[MAI v1.4.2] Base v1.1.7 was not loaded on GradeAssignment.');
+    return;
+  }
 
-  // -----------------------------
-  // Utilities
-  // -----------------------------
-  const clean = (v) =>
-    String(v ?? '')
-      .replace(/\u00a0/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+  // الصفحات الأخرى تكتفي بالنواة إن كانت متاحة.
+  if (!isGradeAssignment && !isAssignmentsIndex) {
+    try { if (base) base.version = VERSION; } catch {}
+    return;
+  }
 
-  const englishDigits = (v) =>
-    String(v ?? '')
-      .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
-      .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
-
+  const state = base?.state || {};
+  const clean = (v) => String(v ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  const norm = (v) => clean(v)
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/[إأآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .toLowerCase();
+  const esc = (s) => clean(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
   const num = (v) => {
-    const raw = englishDigits(clean(v)).replace(/[^\d.-]/g, '');
+    const raw = String(v ?? '')
+      .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+      .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+      .replace(/[^\d.-]/g, '');
     if (!raw || raw === '-' || raw === '.' || raw === '-.') return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
   };
-
-  const norm = (v) =>
-    clean(v)
-      .replace(/[\u064B-\u065F\u0670]/g, '')
-      .replace(/ـ/g, '')
-      .replace(/[إأآ]/g, 'ا')
-      .replace(/ى/g, 'ي')
-      .toLowerCase();
-
-  const esc = (s) =>
-    clean(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
   const pct = (a, b) => b ? Number(((a / b) * 100).toFixed(2)) : 0;
+  const fmt = (v, digits = 2) => {
+    if (!Number.isFinite(v)) return '—';
+    return Number(v.toFixed(digits)).toString();
+  };
+  const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const median = (arr) => {
-    const a = arr.filter(Number.isFinite).slice().sort((x, y) => x - y);
-    if (!a.length) return null;
-    const m = Math.floor(a.length / 2);
-    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  // -----------------------------
+  // حالة نشر الواجب من نفس صفحة GradeAssignment
+  // -----------------------------
+  // مدرستي يضع وقت الخادم ووقت نهاية نشر الواجب في حقول مخفية:
+  // #ServerDateTime و #PublishedEndTime.
+  // نعتمد وقت الخادم بدل ساعة جهاز المعلم حتى لا تتأثر النتيجة بإعدادات الجهاز.
+  const parseMadrasatiDateTime = (value) => {
+    const raw = clean(value);
+    if (!raw) return null;
+
+    // الصيغة المرصودة في مدرستي: MM/DD/YYYY HH:mm:ss مع احتمال AM/PM.
+    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+    if (m) {
+      const month = Number(m[1]);
+      const day = Number(m[2]);
+      const year = Number(m[3]);
+      let hour = Number(m[4]);
+      const minute = Number(m[5]);
+      const second = Number(m[6] || 0);
+      const ampm = String(m[7] || '').toUpperCase();
+
+      if (ampm === 'AM' && hour === 12) hour = 0;
+      if (ampm === 'PM' && hour < 12) hour += 12;
+
+      const d = new Date(year, month - 1, day, hour, minute, second, 0);
+      if (
+        d.getFullYear() === year &&
+        d.getMonth() === month - 1 &&
+        d.getDate() === day &&
+        d.getHours() === hour &&
+        d.getMinutes() === minute
+      ) return d;
+    }
+
+    const fallback = new Date(raw);
+    return Number.isFinite(fallback.getTime()) ? fallback : null;
   };
 
-  const stdDev = (arr) => {
-    const a = arr.filter(Number.isFinite);
-    if (!a.length) return null;
-    const mean = a.reduce((s, x) => s + x, 0) / a.length;
-    return Math.sqrt(a.reduce((s, x) => s + ((x - mean) ** 2), 0) / a.length);
+  const getDocumentInputValue = (doc, selector) => {
+    const el = doc?.querySelector?.(selector);
+    return clean(el?.value ?? el?.getAttribute?.('value') ?? '');
   };
 
-  const saveJSON = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-  const loadJSON = (key, fallback = null) => {
-    try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; }
-    catch { return fallback; }
+  const getGradePublicationTiming = (doc = document) => {
+    const serverRaw = getDocumentInputValue(doc, '#ServerDateTime');
+    const endRaw = getDocumentInputValue(doc, '#PublishedEndTime');
+    const serverDate = parseMadrasatiDateTime(serverRaw);
+    const endDate = parseMadrasatiDateTime(endRaw);
+
+    if (!serverDate || !endDate) {
+      return {
+        status: 'unknown',
+        serverRaw,
+        endRaw,
+        serverDate,
+        endDate,
+        isEnded: null,
+        remainingMs: null
+      };
+    }
+
+    const isEnded = serverDate.getTime() >= endDate.getTime();
+    return {
+      status: isEnded ? 'ended' : 'receiving',
+      serverRaw,
+      endRaw,
+      serverDate,
+      endDate,
+      isEnded,
+      remainingMs: endDate.getTime() - serverDate.getTime()
+    };
   };
 
-  const currentSchoolId = () => {
-    const u = new URL(location.href);
-    return u.searchParams.get('SchoolId') ||
-           u.searchParams.get('schoolId') ||
-           location.pathname.match(/[A-F0-9]{32}/i)?.[0] ||
-           '';
+  const formatGradeTimingDate = (date) => {
+    if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return '—';
+    try {
+      return date.toLocaleString('ar-SA-u-nu-latn', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+    } catch {
+      return date.toLocaleString();
+    }
+  };
+
+  const gradeReportGate = (doc = document) => {
+    const timing = getGradePublicationTiming(doc);
+    if (timing.status === 'ended') {
+      return {
+        ready: true,
+        status: 'ended',
+        timing,
+        label: 'منتهي',
+        message: 'انتهى وقت استقبال الحلول، والتقرير النهائي متاح.'
+      };
+    }
+
+    if (timing.status === 'receiving') {
+      return {
+        ready: false,
+        status: 'receiving',
+        timing,
+        label: 'قيد الاستقبال',
+        message: `الواجب ما زال قيد استقبال الحلول حتى ${formatGradeTimingDate(timing.endDate)}. التقرير النهائي مؤجل حتى انتهاء الوقت.`
+      };
+    }
+
+    return {
+      ready: false,
+      status: 'unknown',
+      timing,
+      label: 'غير متحقق',
+      message: 'تعذر التحقق من وقت نهاية نشر الواجب من صفحة مدرستي؛ لن يتم إنشاء تقرير نهائي لتجنب بيانات غير مكتملة.'
+    };
+  };
+
+  const assertFinalReportReady = () => {
+    const gate = gradeReportGate(document);
+    if (!gate.ready) throw new Error(gate.message);
+    return gate;
   };
 
   const toast = (message, type = 'info') => {
@@ -132,2762 +225,2832 @@
     box.className = `${APP}-toast ${type}`;
     box.textContent = message;
     box.classList.add('show');
-    clearTimeout(box._t);
-    box._t = setTimeout(() => box.classList.remove('show'), 3200);
+    clearTimeout(box._maiTimer);
+    box._maiTimer = setTimeout(() => box.classList.remove('show'), 3500);
   };
 
-  const setBusy = (busy, label = '') => {
-    state.busy = busy;
+  const setStatus = (text, busy = false) => {
     const el = document.getElementById(`${APP}-status`);
-    if (el) {
-      el.textContent = busy ? (label || 'جارٍ المعالجة…') : 'جاهز';
-      el.dataset.busy = busy ? '1' : '0';
+    if (!el) return;
+    el.textContent = text || 'جاهز';
+    el.dataset.busy = busy ? '1' : '0';
+  };
+
+  const safeJSONParse = (text, fallback = null) => {
+    try { return JSON.parse(text); } catch { return fallback; }
+  };
+
+  const loadEnhancedCache = () => {
+    const cached = safeJSONParse(localStorage.getItem(ENHANCED_CACHE_KEY), null);
+    if (!cached || cached.pageUrl !== location.href) return null;
+    return cached;
+  };
+
+  const saveEnhancedCache = (analytics) => {
+    try {
+      const compact = {
+        pageUrl: location.href,
+        savedAt: new Date().toISOString(),
+        analytics
+      };
+      localStorage.setItem(ENHANCED_CACHE_KEY, JSON.stringify(compact));
+    } catch {}
+  };
+
+  const getMode = () => state.gradeData?.assignmentMode || { key: 'unknown', label: 'غير محدد', rawSolvingTypes: [] };
+  const isOutsideSystem = () => getMode()?.key === 'outside_system' || (getMode()?.rawSolvingTypes || []).map(String).includes('3');
+  const isOnlineQuestions = () => getMode()?.key === 'online_questions' || (getMode()?.rawSolvingTypes || []).map(String).includes('4') || (state.gradeData?.students || []).some(s => !!s.resultUrl || String(s.solvingType) === '4');
+
+  const EPS = 1e-9;
+  const nearlyEqual = (a, b, eps = EPS) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= eps;
+
+  const resolvedAchievedGrade = (student) => {
+    const resultGrade = num(student?.resultGrade);
+    if (Number.isFinite(resultGrade)) return resultGrade;
+    return num(student?.achievedGrade);
+  };
+
+  const resolvedMaxGrade = (student) => {
+    const resultMax = num(student?.resultMaxGrade);
+    if (Number.isFinite(resultMax) && resultMax > 0) return resultMax;
+    return num(student?.maxGrade);
+  };
+
+  const studentPercent = (student) => {
+    const achieved = resolvedAchievedGrade(student);
+    const total = resolvedMaxGrade(student);
+    if (!Number.isFinite(achieved) || !Number.isFinite(total) || total <= 0) return null;
+    return Number(((achieved / total) * 100).toFixed(2));
+  };
+
+  const computeEnhancedSummary = () => {
+    const students = state.gradeData?.students || [];
+    const outside = isOutsideSystem();
+    const total = students.length;
+    const submitted = outside ? [] : students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+    const scored = students
+      .map(s => ({ s, achieved: resolvedAchievedGrade(s), max: resolvedMaxGrade(s) }))
+      .filter(x => Number.isFinite(x.achieved) && Number.isFinite(x.max) && x.max > 0);
+    const percents = scored.map(x => (x.achieved / x.max) * 100).filter(Number.isFinite);
+    const averagePercent = percents.length ? percents.reduce((a,b) => a+b, 0) / percents.length : null;
+    const discrepancies = students.filter(s => s.gradeDiscrepancy === true);
+    return {
+      total,
+      submittedCount: outside ? null : submitted.length,
+      notSubmittedCount: outside ? null : Math.max(0, total - submitted.length),
+      submissionRate: outside ? null : pct(submitted.length, total),
+      graded: scored.length,
+      gradingRate: pct(scored.length, total),
+      averagePercent: Number.isFinite(averagePercent) ? Number(averagePercent.toFixed(2)) : null,
+      highestPercent: percents.length ? Math.max(...percents) : null,
+      lowestPercent: percents.length ? Math.min(...percents) : null,
+      discrepancyCount: discrepancies.length
+    };
+  };
+
+  const studentLevel = (student, mode = getMode()) => {
+    const outside = mode?.key === 'outside_system';
+
+    if (!outside && student?.submissionState === 'not_submitted') {
+      return { key: 'not-solved', label: 'لم يحل', rank: 7 };
     }
-    document.querySelectorAll(`[data-${APP.toLowerCase()}-action]`).forEach(btn => {
-      btn.disabled = busy;
+
+    const percent = studentPercent(student);
+    if (!Number.isFinite(percent)) {
+      if (outside) return { key: 'unverified', label: 'غير مرصود', rank: 8 };
+      return { key: 'pending', label: 'بانتظار الرصد', rank: 8 };
+    }
+
+    if (percent >= 90) return { key: 'excellent', label: 'ممتاز', rank: 1 };
+    if (percent >= 80) return { key: 'very-good', label: 'جيد جدًا', rank: 2 };
+    if (percent >= 70) return { key: 'good', label: 'جيد', rank: 3 };
+    if (percent > 50) return { key: 'acceptable', label: 'مقبول', rank: 4 };
+    return { key: 'weak', label: 'ضعيف', rank: 5 };
+  };
+
+  const levelOrder = [
+    ['excellent', 'ممتاز'],
+    ['very-good', 'جيد جدًا'],
+    ['good', 'جيد'],
+    ['acceptable', 'مقبول'],
+    ['weak', 'ضعيف'],
+    ['not-solved', 'لم يحل'],
+    ['pending', 'بانتظار الرصد'],
+    ['unverified', 'غير مرصود']
+  ];
+
+  const computeStudentLevels = () => {
+    const students = state.gradeData?.students || [];
+    const mode = getMode();
+    const counts = Object.fromEntries(levelOrder.map(([k]) => [k, 0]));
+    const rows = students.map(s => {
+      const level = studentLevel(s, mode);
+      counts[level.key] = (counts[level.key] || 0) + 1;
+      return { student: s, percent: studentPercent(s), level };
+    });
+    return { counts, rows, total: students.length };
+  };
+
+  const cleanOptionText = (text) => clean(text)
+    .replace(/(?:الإجابة|الاجابة)\s+الصحيحة/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // -----------------------------
+  // Parser v1.2.1: السؤال = أصغر حاوية محلية تحتوي qid واحدًا
+  // ويعتمد StudentAssignmentResult على checked + success/fail + شارة الإجابة الصحيحة.
+  // -----------------------------
+  const findQuestionRootEnhanced = (qid) => {
+    let node = qid?.parentElement || null;
+    while (node) {
+      const qidCount = node.querySelectorAll?.('input.qid')?.length || 0;
+      const answerCount = node.querySelectorAll?.('input[id="qaid"],input.qaid')?.length || 0;
+      if (qidCount === 1 && answerCount > 0) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const findOptionRootEnhanced = (aid, questionRoot) => {
+    let node = aid?.parentElement || null;
+    let best = node;
+    while (node && node !== questionRoot) {
+      const aidCount = node.querySelectorAll?.('input[id="qaid"],input.qaid')?.length || 0;
+      const hasChoice = !!node.querySelector?.('input[type="radio"],input[type="checkbox"]');
+      if (aidCount !== 1) break;
+      if (hasChoice) best = node;
+      node = node.parentElement;
+    }
+    return best;
+  };
+
+  const parseQuestionCardsEnhanced = (doc) => {
+    const qids = [...doc.querySelectorAll('input.qid')];
+
+    return qids.map((qid, index) => {
+      const root = findQuestionRootEnhanced(qid);
+      if (!root) return null;
+
+      const qtype = root.querySelector('input.qidtype');
+      const questionText = clean(
+        root.querySelector('#divQuestion .eldetail')?.innerText ||
+        root.querySelector('.qQuestion')?.innerText ||
+        root.querySelector('#divQuestion')?.innerText ||
+        ''
+      );
+
+      const rootText = clean(root.innerText || '');
+      const maxScore =
+        num(rootText.match(/درجة\s+السؤال\s*[:：]?\s*([\d٠-٩۰-۹.,]+)/i)?.[1]) ??
+        num(rootText.match(/(?:الدرجة|درجة|نقطة|نقاط)\s*[:：]?\s*([\d٠-٩۰-۹.,]+)/i)?.[1]);
+
+      const aids = [...root.querySelectorAll('input[id="qaid"],input.qaid')];
+      const options = aids.map((aid, oi) => {
+        const opt = findOptionRootEnhanced(aid, root) || aid.parentElement;
+        const choiceInput = opt?.querySelector?.('input[type="radio"],input[type="checkbox"]') || null;
+        const cs = opt?.querySelector?.('.cs-input') || opt;
+        const classes = `${opt?.className || ''} ${cs?.className || ''}`.toLowerCase();
+        const rawText = clean(opt?.innerText || cs?.innerText || '');
+        const correctAnswerMarker =
+          /(?:الإجابة|الاجابة)\s+الصحيحة/i.test(rawText) ||
+          !!opt?.querySelector?.('.badge.status-4') ||
+          [...(opt?.querySelectorAll?.('.badge,[class*="status-"]') || [])]
+            .some(el => /(?:الإجابة|الاجابة)\s+الصحيحة/i.test(clean(el.innerText)));
+        const selected = !!choiceInput?.checked;
+        const selectedCorrect = selected && /\bsuccess\b/.test(classes);
+        const selectedWrong = selected && /\bfail\b/.test(classes);
+
+        return {
+          index: oi + 1,
+          answerId: clean(aid?.value || aid?.getAttribute?.('name') || ''),
+          text: cleanOptionText(rawText),
+          selected,
+          selectedCorrect,
+          selectedWrong,
+          correctAnswerMarker,
+          markedCorrect: correctAnswerMarker || selectedCorrect,
+          markedWrong: selectedWrong,
+          choiceType: choiceInput?.type || ''
+        };
+      });
+
+      const selected = options.filter(o => o.selected);
+      const correct = options.filter(o => o.markedCorrect);
+      const answered = selected.length > 0;
+      const typeValue = clean(qtype?.value || qtype?.getAttribute?.('name') || '');
+      const reliableSingleChoice = ['0', '2', 'multiplechoice', 'truefalse'].includes(norm(typeValue));
+
+      let isCorrect = null;
+      if (!answered) {
+        isCorrect = null;
+      } else if (selected.some(o => o.selectedWrong)) {
+        isCorrect = false;
+      } else if (selected.length && selected.every(o => o.selectedCorrect)) {
+        isCorrect = true;
+      } else if (reliableSingleChoice && correct.length) {
+        const identity = o => o.answerId || norm(o.text);
+        const selectedIds = selected.map(identity).filter(Boolean).sort();
+        const correctIds = correct.map(identity).filter(Boolean).sort();
+        isCorrect = selectedIds.length === correctIds.length && JSON.stringify(selectedIds) === JSON.stringify(correctIds);
+      }
+
+      return {
+        number: index + 1,
+        questionId: clean(qid?.value || qid?.getAttribute?.('name') || ''),
+        type: typeValue,
+        text: questionText,
+        maxScore,
+        options,
+        answered,
+        selectedOptions: selected,
+        correctOptions: correct,
+        selectedText: selected.map(o => o.text).filter(Boolean).join('، '),
+        correctText: correct.map(o => o.text).filter(Boolean).join('، '),
+        isCorrect
+      };
+    }).filter(Boolean);
+  };
+
+  const parseResultSummaryEnhanced = (doc) => {
+    const text = clean(doc?.body?.innerText || '');
+    const scoreMatch = text.match(/درجة\s+الطالب\s*[:：]?\s*([\d٠-٩۰-۹.,]+)\s*من\s*([\d٠-٩۰-۹.,]+)/i);
+    return {
+      resultScore: num(scoreMatch?.[1]),
+      resultMaxScore: num(scoreMatch?.[2]),
+      resultCorrectCount: num(text.match(/عدد\s+الإجابات\s+الصحيحة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1]),
+      resultWrongCount: num(text.match(/عدد\s+الإجابات\s+الخاطئة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1]),
+      resultQuestionCount: num(text.match(/إجمالي\s+عدد\s+الأسئلة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1])
+    };
+  };
+
+  const parseResultDocumentEnhanced = (doc, meta = {}) => ({
+    ...meta,
+    ...parseResultSummaryEnhanced(doc),
+    questions: parseQuestionCardsEnhanced(doc)
+  });
+
+  const fetchTextDocument = async (url) => {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    return new DOMParser().parseFromString(html, 'text/html');
+  };
+
+  const extractLoadStudentsParamsEnhanced = () => {
+    const fn = globalThis.loadStudents;
+    if (typeof fn !== 'function') return null;
+    const src = String(fn);
+    const get = (key) => {
+      const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return src.match(new RegExp(`${k}\\s*:\\s*['"]([^'"]*)['"]`))?.[1] ??
+        src.match(new RegExp(`${k}\\s*:\\s*([\\d.]+)`))?.[1] ?? '';
+    };
+    return {
+      schoolId: get('schoolId'), subjectId: get('subjectId'), teacherId: get('teacherId'), semesterId: get('semesterId'),
+      assignmentId: get('assignmentId'), publishedAssignmentId: get('publishedAssignmentId'), lectureClassId: get('lectureClassId'),
+      isGradebook: get('isGradebook'), isPublished: get('isPublished'), isCurrentTeacher: get('isCurrentTeacher'), isQuran: get('isQuran'),
+      assigmentStarts: get('assigmentStarts'), grade: get('grade'), solvingType: get('solvingType')
+    };
+  };
+
+  const postFormEnhanced = (url, data) => new Promise((resolve, reject) => {
+    if (globalThis.jQuery?.post) {
+      globalThis.jQuery.post(url, data).done(resolve).fail((xhr, status, err) => reject(new Error(err || status || `HTTP ${xhr?.status || ''}`)));
+      return;
+    }
+    const body = new URLSearchParams();
+    for (const [key, value] of Object.entries(data || {})) {
+      if (Array.isArray(value)) value.forEach(v => body.append(key, v));
+      else body.append(key, value ?? '');
+    }
+    fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body })
+      .then(async r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); const text = await r.text(); try { resolve(JSON.parse(text)); } catch { resolve(text); } })
+      .catch(reject);
+  });
+
+  const responseHtmlEnhanced = (response) => typeof response === 'string' ? response : (response?.html || '');
+
+  const resolveSingleStudentResultLink = async (student, params) => {
+    const studentId = clean(student?.assignmentStudentId || student?.studentId || '');
+    if (!studentId) return '';
+    const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+      ...params, pageNumber: 1, pageSize: 10, studentIds: [studentId], status: '', sortBy: ''
+    });
+    const doc = new DOMParser().parseFromString(responseHtmlEnhanced(response), 'text/html');
+    const link = doc.querySelector('a[href*="StudentAssignmentResult"]');
+    return link ? new URL(link.getAttribute('href'), location.origin).href : '';
+  };
+
+  const resolveAccurateResultLinks = async (students) => {
+    const params = extractLoadStudentsParamsEnhanced();
+    if (!params) return students.filter(s => !!s.resultUrl);
+    const submitted = students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+    const concurrency = 4;
+    for (let i = 0; i < submitted.length; i += concurrency) {
+      const batch = submitted.slice(i, i + concurrency);
+      const links = await Promise.all(batch.map(async s => {
+        try { return await resolveSingleStudentResultLink(s, params); }
+        catch (e) { console.warn('[MAI v1.4.2] Could not resolve student result link:', e); return ''; }
+      }));
+      batch.forEach((s, j) => {
+        if (links[j]) {
+          s.resultUrl = links[j];
+          s.resultUrlVerified = true;
+        } else {
+          s.resultUrlVerified = false;
+          s.resultUrl = '';
+        }
+      });
+    }
+    return submitted.filter(s => !!s.resultUrl);
+  };
+
+  const fetchResultBatch = async (students, offset, total) => {
+    const tasks = students.map(async (s, localIndex) => {
+      const current = offset + localIndex + 1;
+      setStatus(`تحليل إجابات الطلاب ${current}/${total}…`, true);
+      try {
+        const doc = await fetchTextDocument(s.resultUrl);
+        return parseResultDocumentEnhanced(doc, {
+          assignmentStudentId: String(s.assignmentStudentId || s.studentId || ''),
+          name: s.name || '',
+          className: s.className || '',
+          achievedGrade: s.achievedGrade,
+          maxGrade: s.maxGrade,
+          resultUrl: s.resultUrl
+        });
+      } catch (e) {
+        return {
+          assignmentStudentId: String(s.assignmentStudentId || s.studentId || ''),
+          name: s.name || '',
+          className: s.className || '',
+          error: String(e?.message || e),
+          questions: []
+        };
+      }
+    });
+    return Promise.all(tasks);
+  };
+
+  const applyResultGradesToStudents = (results) => {
+    const students = state.gradeData?.students || [];
+    const byId = new Map(students.map(s => [String(s.assignmentStudentId || s.studentId || ''), s]));
+
+    for (const result of results || []) {
+      if (result?.error) continue;
+      const student = byId.get(String(result.assignmentStudentId || ''));
+      if (!student) continue;
+
+      const resultGrade = num(result.resultScore);
+      const resultMax = num(result.resultMaxScore);
+      const pageGrade = num(student.currentGrade ?? student.achievedGrade);
+
+      if (Number.isFinite(resultGrade)) {
+        student.resultGrade = resultGrade;
+        student.resultGradeSource = 'StudentAssignmentResult';
+        student.achievedGrade = resultGrade;
+        student.gradeState = 'recorded';
+        if (student.submissionState === 'submitted') student.status = 'graded';
+      }
+      if (Number.isFinite(resultMax) && resultMax > 0) {
+        student.resultMaxGrade = resultMax;
+        student.maxGrade = resultMax;
+      }
+
+      student.resultCorrectCount = num(result.resultCorrectCount);
+      student.resultWrongCount = num(result.resultWrongCount);
+      student.resultQuestionCount = num(result.resultQuestionCount) ?? (result.questions || []).length;
+      student.gradeFieldValue = pageGrade;
+      student.gradeDiscrepancy = Number.isFinite(resultGrade) && Number.isFinite(pageGrade) && !nearlyEqual(resultGrade, pageGrade);
+    }
+  };
+
+  const aggregateDeepAnalysis = (results) => {
+    const questionMap = new Map();
+    const studentMap = new Map();
+
+    for (const result of results) {
+      let detailCorrect = 0;
+      let detailIncorrect = 0;
+      let detailUnanswered = 0;
+      let detailUnknown = 0;
+
+      for (const q of result.questions || []) {
+        const key = q.questionId || `n:${q.number}:${norm(q.text)}`;
+        if (!questionMap.has(key)) {
+          questionMap.set(key, {
+            questionId: q.questionId,
+            number: q.number,
+            text: q.text,
+            type: q.type,
+            maxScore: q.maxScore,
+            correctText: q.correctText,
+            correctAnswerIds: new Set((q.correctOptions || []).map(o => o.answerId).filter(Boolean)),
+            participants: 0,
+            answered: 0,
+            unanswered: 0,
+            correct: 0,
+            incorrect: 0,
+            unknown: 0,
+            wrongChoices: new Map()
+          });
+        }
+
+        const agg = questionMap.get(key);
+        if (!agg.text && q.text) agg.text = q.text;
+        if (!agg.type && q.type) agg.type = q.type;
+        if (!Number.isFinite(agg.maxScore) && Number.isFinite(q.maxScore)) agg.maxScore = q.maxScore;
+        for (const option of q.correctOptions || []) if (option.answerId) agg.correctAnswerIds.add(option.answerId);
+        if (!agg.correctText && q.correctText) agg.correctText = q.correctText;
+
+        agg.participants++;
+        if (q.answered) agg.answered++; else agg.unanswered++;
+
+        if (q.isCorrect === true) {
+          agg.correct++;
+          detailCorrect++;
+        } else if (q.isCorrect === false) {
+          agg.incorrect++;
+          detailIncorrect++;
+          for (const option of q.selectedOptions || []) {
+            if (option.selectedCorrect || option.correctAnswerMarker) continue;
+            const optionKey = option.answerId || norm(option.text) || `unknown-${option.index}`;
+            const current = agg.wrongChoices.get(optionKey) || { text: option.text || 'إجابة غير محددة', count: 0 };
+            current.count++;
+            agg.wrongChoices.set(optionKey, current);
+          }
+        } else if (!q.answered) {
+          detailUnanswered++;
+        } else {
+          agg.unknown++;
+          detailUnknown++;
+        }
+      }
+
+      const summaryCorrect = num(result.resultCorrectCount);
+      const summaryWrong = num(result.resultWrongCount);
+      const summaryTotal = num(result.resultQuestionCount) ?? (result.questions || []).length;
+      const useSummary = Number.isFinite(summaryCorrect) && Number.isFinite(summaryWrong);
+      const correctCount = useSummary ? summaryCorrect : detailCorrect;
+      const incorrectCount = useSummary ? summaryWrong : detailIncorrect;
+      const unansweredCount = useSummary && Number.isFinite(summaryTotal)
+        ? Math.max(0, summaryTotal - correctCount - incorrectCount)
+        : detailUnanswered;
+
+      studentMap.set(String(result.assignmentStudentId || ''), {
+        correct: correctCount,
+        incorrect: incorrectCount,
+        unanswered: unansweredCount,
+        unknown: detailUnknown,
+        totalQuestions: Number.isFinite(summaryTotal) ? summaryTotal : (result.questions || []).length,
+        resultScore: num(result.resultScore),
+        resultMaxScore: num(result.resultMaxScore),
+        error: result.error || ''
+      });
+    }
+
+    const questions = [...questionMap.values()].map(q => {
+      const wrongList = [...q.wrongChoices.values()].sort((a, b) => b.count - a.count);
+      const knownAnswered = q.correct + q.incorrect;
+      const correctRate = pct(q.correct, knownAnswered);
+      const masteryRate = pct(q.correct, q.participants);
+      const correctAnswerIds = [...q.correctAnswerIds];
+      return {
+        questionId: q.questionId,
+        number: q.number,
+        text: q.text,
+        type: q.type,
+        maxScore: q.maxScore,
+        correctText: q.correctText,
+        correctAnswerIds,
+        participants: q.participants,
+        answered: q.answered,
+        knownAnswered,
+        unanswered: q.unanswered,
+        correct: q.correct,
+        incorrect: q.incorrect,
+        unknown: q.unknown,
+        correctRate,
+        masteryRate,
+        difficulty:
+          knownAnswered === 0 ? 'غير محدد' :
+          correctRate < 50 ? 'صعب' :
+          correctRate < 75 ? 'متوسط' : 'سهل',
+        mostCommonWrong: wrongList[0] || null,
+        wrongChoices: wrongList
+      };
+    }).sort((a, b) => a.number - b.number);
+
+    const answeredResponses = questions.reduce((sum, q) => sum + q.knownAnswered, 0);
+    const correctResponses = questions.reduce((sum, q) => sum + q.correct, 0);
+    const incorrectResponses = questions.reduce((sum, q) => sum + q.incorrect, 0);
+    const unansweredResponses = questions.reduce((sum, q) => sum + q.unanswered, 0);
+    const unknownResponses = questions.reduce((sum, q) => sum + q.unknown, 0);
+    const known = questions.filter(q => q.knownAnswered > 0);
+    const easiest = known.slice().sort((a, b) => b.correctRate - a.correctRate)[0] || null;
+    const hardest = known.slice().sort((a, b) => a.correctRate - b.correctRate)[0] || null;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      results,
+      questions,
+      studentMap: Object.fromEntries(studentMap),
+      summary: {
+        resultStudents: results.filter(r => !r.error).length,
+        failedResults: results.filter(r => !!r.error).length,
+        questionCount: questions.length,
+        answeredResponses,
+        correctResponses,
+        incorrectResponses,
+        unansweredResponses,
+        unknownResponses,
+        correctRate: pct(correctResponses, answeredResponses),
+        incorrectRate: pct(incorrectResponses, answeredResponses),
+        responseRate: pct(answeredResponses, answeredResponses + unansweredResponses + unknownResponses),
+        easiest,
+        hardest
+      }
+    };
+  };
+
+  async function runDeepQuestionAnalysisEnhanced({ silent = false } = {}) {
+    if (!state.gradeData) await base.refreshAll(false);
+    const allStudents = state.gradeData?.students || [];
+    const submitted = allStudents.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+    if (!submitted.length) throw new Error('لا توجد نتائج طلاب قابلة لتحليل الأسئلة في هذا الواجب حتى الآن.');
+
+    if (!silent) setStatus(`جاري تثبيت روابط نتائج ${submitted.length} طالب…`, true);
+    const students = await resolveAccurateResultLinks(allStudents);
+    if (!students.length) throw new Error('لم أتمكن من العثور على روابط نتائج الطلاب المحلين لهذا الواجب.');
+
+    if (!silent) setStatus(`جاري تحليل ${students.length} نتيجة طالب…`, true);
+    const results = [];
+    const concurrency = 4;
+
+    try {
+      for (let i = 0; i < students.length; i += concurrency) {
+        const batch = students.slice(i, i + concurrency);
+        const part = await fetchResultBatch(batch, i, students.length);
+        results.push(...part);
+      }
+
+      applyResultGradesToStudents(results);
+      const analytics = aggregateDeepAnalysis(results);
+      state.enhancedQuestionAnalytics = analytics;
+      state.questionAnalytics = analytics;
+      const first = results.find(r => !r.error && r.questions?.length);
+      if (first) state.questions = first.questions;
+      saveEnhancedCache(analytics);
+      if (!silent) toast(`تم تحليل ${analytics.summary.resultStudents} نتيجة و${analytics.summary.questionCount} سؤال.`, 'success');
+      return analytics;
+    } finally {
+      setStatus('جاهز', false);
+    }
+  }
+
+  const getQuestionAnalytics = () => state.enhancedQuestionAnalytics || null;
+
+  const findDetailsUrlEnhanced = () => {
+    const a = [...document.querySelectorAll('a[href]')]
+      .find(x => /تفاصيل\s+الواجب/i.test(clean(x.innerText || '')));
+    return a ? new URL(a.getAttribute('href'), location.origin).href : '';
+  };
+
+  // -----------------------------
+  // Assignment identity / title
+  // -----------------------------
+  // v1.1.7 used the first generic h1/h2/h3 on the page. Madrasati can keep
+  // unrelated hidden/modal headings before the actual assignment title, which
+  // is why text such as "نعم، أنا ولي أمر..." could leak into printed output.
+  // Here we resolve the assignment name semantically and reject generic UI text.
+  let assignmentNameCache = '';
+
+  const cleanAssignmentNameCandidate = (value) => clean(value)
+    .replace(/^(?:اسم|عنوان)\s+الواجب\s*[:：-]?\s*/i, '')
+    .replace(/^[\s:：\-–—]+|[\s:：\-–—]+$/g, '')
+    .trim();
+
+  const isUsableAssignmentName = (value) => {
+    const t = cleanAssignmentNameCandidate(value);
+    if (!t || t.length < 2 || t.length > 140) return false;
+    if (/نعم\s*[،,]?\s*أنا\s+ولي\s+أمر|الطالب\/الطالبة\s+الموضح|مدير\s+الواجبات|تفاصيل\s+النتيجة|إجمالي\s+عدد\s+الأسئلة|درجة\s+الطالب|ملاحظات\s+المعلم/i.test(t)) return false;
+    if (/^(?:الواجب|الواجبات|تفاصيل\s+الواجب|رصد\s+درجات(?:\s+الواجب)?|أسئلة\s+الواجب|نموذج\s+إجابة\s+الواجب|تقرير\s+تحليل\s+الواجب|أسئلة\s+داخل\s+مدرستي)$/i.test(t)) return false;
+    return true;
+  };
+
+  const extractAssignmentNameFromDocument = (doc) => {
+    if (!doc) return '';
+
+    const take = (value) => {
+      const t = cleanAssignmentNameCandidate(value);
+      return isUsableAssignmentName(t) ? t : '';
+    };
+
+    // 0) المصدر المؤكد في GradeAssignment: عنوان بطاقة الواجب نفسها.
+    // لا نستخدم h1/h2/h3 العامة لأن صفحة مدرستي تحتوي عناوين نوافذ وسياسات كثيرة.
+    const confirmedTitleNodes = [...doc.querySelectorAll(
+      '.homeworks-management-section > .card-header h5.mb-0'
+    )];
+
+    const nodeVisible = (el) => {
+      if (!el) return false;
+      if (el.closest?.('[hidden],.d-none,[aria-hidden="true"]')) return false;
+      if (doc !== document) return true;
+      try {
+        const cs = getComputedStyle(el);
+        return cs.display !== 'none' && cs.visibility !== 'hidden' && el.offsetParent !== null;
+      } catch {
+        return true;
+      }
+    };
+
+    for (const el of confirmedTitleNodes) {
+      const candidate = take(el.textContent || el.innerText || '');
+      if (candidate && nodeVisible(el)) return candidate;
+    }
+    for (const el of confirmedTitleNodes) {
+      const candidate = take(el.textContent || el.innerText || '');
+      if (candidate) return candidate;
+    }
+
+    // احتياط مؤكد آخر ظهر في الجزء المختصر المخفي أعلى بطاقة الرصد.
+    for (const el of doc.querySelectorAll('#mainDiv > .bg-light h5.mb-0')) {
+      const candidate = take(el.textContent || el.innerText || '');
+      if (candidate) return candidate;
+    }
+
+    // 1) حقول مخفية/مقروءة ذات اسم دلالي واضح.
+    for (const el of doc.querySelectorAll('input,textarea,select')) {
+      const key = `${el.id || ''} ${el.name || ''}`;
+      if (!/(?:assignment|assigment).*(?:name|title)|(?:name|title).*(?:assignment|assigment)/i.test(key)) continue;
+      const candidate = take(el.value || el.getAttribute('value') || '');
+      if (candidate) return candidate;
+    }
+
+    // 2) ابحث عن تسمية "اسم الواجب" / "عنوان الواجب" وخذ القيمة المجاورة.
+    const labels = [...doc.querySelectorAll('label,dt,th,strong,b,span,p,div')]
+      .filter(el => {
+        const t = clean(el.textContent || '');
+        return t.length <= 45 && /^(?:اسم|عنوان)\s+الواجب\s*[:：]?$/i.test(t);
+      });
+
+    for (const label of labels) {
+      const nearby = [
+        label.nextElementSibling?.innerText,
+        label.nextElementSibling?.textContent,
+        label.parentElement?.querySelector?.('input,textarea,select')?.value,
+        label.parentElement?.innerText
+      ];
+      for (const value of nearby) {
+        if (!value) continue;
+        let candidate = String(value);
+        const match = candidate.match(/(?:اسم|عنوان)\s+الواجب\s*[:：]?\s*(.+?)(?=\s+(?:المادة|الفصل|الصف|نوع\s+الواجب|طريقة\s+الحل|الدرجة|درجة\s+الواجب|تاريخ|وقت|الوصف|الحالة)\s*[:：]?|$)/i);
+        if (match) candidate = match[1];
+        candidate = take(candidate);
+        if (candidate) return candidate;
+      }
+    }
+
+    // 3) النص الخام مع الحفاظ على الأسطر؛ مفيد عندما تكون القيمة نصًا بجوار label.
+    const rawText = String(doc.body?.innerText || '').replace(/\u00a0/g, ' ');
+    const lineMatch = rawText.match(/(?:اسم|عنوان)\s+الواجب\s*[:：]?\s*([^\r\n]{2,140})/i);
+    if (lineMatch) {
+      const candidate = take(lineMatch[1].split(/\s{2,}/)[0]);
+      if (candidate) return candidate;
+    }
+
+    // 4) عناوين مرئية محددة، مع رفض العناوين العامة والنوافذ المخفية.
+    const headingSelectors = [
+      '[id*="assignment" i][id*="name" i]',
+      '[id*="assignment" i][id*="title" i]',
+      '[class*="assignment" i][class*="name" i]',
+      '[class*="assignment" i][class*="title" i]',
+      '.page-title', '.card-title', 'h1', 'h2', 'h3'
+    ].join(',');
+
+    const headingCandidates = [...doc.querySelectorAll(headingSelectors)]
+      .map(el => ({
+        text: take(el.innerText || el.textContent || ''),
+        hidden: el.hidden || el.closest?.('[hidden],[aria-hidden="true"],.modal')?.hidden === true,
+        len: clean(el.innerText || el.textContent || '').length
+      }))
+      .filter(x => x.text && !x.hidden)
+      .sort((a, b) => a.text.length - b.text.length);
+
+    if (headingCandidates.length) return headingCandidates[0].text;
+
+    return '';
+  };
+
+  async function resolveAssignmentNameEnhanced({ allowFetch = true } = {}) {
+    if (isUsableAssignmentName(assignmentNameCache)) return assignmentNameCache;
+
+    let name = extractAssignmentNameFromDocument(document);
+
+    // إذا تعذر من صفحة الرصد، استخدم صفحة تفاصيل الواجب فقط كاحتياط.
+    if (!name && allowFetch) {
+      const detailsUrl = findDetailsUrlEnhanced();
+      if (detailsUrl) {
+        try {
+          const doc = await fetchTextDocument(detailsUrl);
+          name = extractAssignmentNameFromDocument(doc);
+        } catch (e) {
+          console.warn('[MAI v1.4.2] Could not resolve assignment name from details page:', e);
+        }
+      }
+    }
+
+    if (!name && isUsableAssignmentName(state.gradeData?.title)) {
+      name = cleanAssignmentNameCandidate(state.gradeData.title);
+    }
+
+    assignmentNameCache = name || 'واجب مدرستي';
+    if (state.gradeData) {
+      state.gradeData.assignmentName = assignmentNameCache;
+      state.gradeData.title = assignmentNameCache;
+    }
+    const panelSub = document.querySelector(`#${APP}-panel .${APP}-sub`);
+    if (panelSub && assignmentNameCache !== 'واجب مدرستي') {
+      panelSub.textContent = `${assignmentNameCache} · تحليل الطلاب والأسئلة + تقارير PDF + استيراد ذكي — v${VERSION}`;
+    }
+    return assignmentNameCache;
+  }
+
+  const mergeAnswerKeyIntoQuestions = (questions, analytics) => {
+    if (!analytics?.questions?.length) return questions;
+    const keyMap = new Map(analytics.questions.map(q => [String(q.questionId || q.number), q]));
+    return (questions || []).map(q => {
+      const aq = keyMap.get(String(q.questionId || q.number));
+      if (!aq) return q;
+      const ids = new Set(aq.correctAnswerIds || []);
+      const options = (q.options || []).map(o => ({
+        ...o,
+        markedCorrect: o.markedCorrect || (o.answerId && ids.has(o.answerId))
+      }));
+      const correctText = options.filter(o => o.markedCorrect).map(o => o.text).filter(Boolean).join('، ') || aq.correctText || q.correctText || '';
+      return { ...q, options, correctOptions: options.filter(o => o.markedCorrect), correctText };
     });
   };
 
-  const downloadText = (name, text, mime = 'text/plain;charset=utf-8') => {
-    const blob = new Blob([text], { type: mime });
+  async function getQuestionTemplateEnhanced({ requireAnswerKey = false } = {}) {
+    let analytics = getQuestionAnalytics();
+    if (requireAnswerKey && !analytics && isOnlineQuestions()) {
+      try { analytics = await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch {}
+    }
+
+    const firstResult = analytics?.results?.find(r => !r.error && r.questions?.length);
+    if (firstResult) {
+      const merged = mergeAnswerKeyIntoQuestions(firstResult.questions, analytics);
+      if (!requireAnswerKey || merged.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) return merged;
+    }
+
+    const solved = (state.gradeData?.students || []).find(s => s.resultUrlVerified && s.resultUrl) ||
+      (state.gradeData?.students || []).find(s => s.resultUrl);
+    if (solved) {
+      const doc = await fetchTextDocument(solved.resultUrl);
+      const questions = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(doc), analytics);
+      if (questions.length && (!requireAnswerKey || questions.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText))) return questions;
+    }
+
+    const detailsUrl = findDetailsUrlEnhanced();
+    if (detailsUrl) {
+      const doc = await fetchTextDocument(detailsUrl);
+      const questions = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(doc), analytics);
+      if (questions.length) {
+        if (requireAnswerKey && !questions.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) {
+          throw new Error('تعذر استنتاج مفتاح الإجابة لجميع الأسئلة من النتائج الحالية.');
+        }
+        return questions;
+      }
+    }
+
+    const current = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(document), analytics);
+    if (current.length) {
+      if (requireAnswerKey && !current.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) {
+        throw new Error('تعذر استنتاج مفتاح الإجابة لجميع الأسئلة من النتائج الحالية.');
+      }
+      return current;
+    }
+
+    if (requireAnswerKey) throw new Error('لا يمكن إنشاء نموذج الإجابة قبل توفر نتيجة طالب تكشف مفتاح الإجابة.');
+    throw new Error('لم أتمكن من العثور على بنية الأسئلة في الصفحات المتاحة.');
+  };
+
+
+  // -----------------------------
+  // بناء التحليلات المرئية
+  // -----------------------------
+  const studentQuestionStats = (student) => {
+    const analytics = getQuestionAnalytics();
+    if (!analytics) return null;
+    const key = String(student.assignmentStudentId || student.studentId || '');
+    return analytics.studentMap?.[key] || null;
+  };
+
+  const getStatusLabel = (student) => {
+    const mode = getMode();
+    if (mode.key === 'outside_system') {
+      return student.gradeState === 'recorded' ? 'درجة مرصودة' : 'التسليم غير قابل للتحقق';
+    }
+    if (student.submissionState === 'not_submitted') return 'لم يحل';
+    if (student.gradeState === 'recorded') return 'تم الحل / مصحح';
+    if (student.submissionState === 'submitted') return 'تم الحل / بانتظار الرصد';
+    return 'غير محدد';
+  };
+
+  const performanceRows = () => {
+    const { rows } = computeStudentLevels();
+    return rows.sort((a, b) => {
+      if (a.level.rank !== b.level.rank) return a.level.rank - b.level.rank;
+      if (Number.isFinite(a.percent) && Number.isFinite(b.percent)) return b.percent - a.percent;
+      return clean(a.student.name).localeCompare(clean(b.student.name), 'ar');
+    });
+  };
+
+  const metricHtml = (value, label, hint = '') => `
+    <div class="${APP}-metric ${APP}-metric-v12">
+      <b>${value}</b><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ''}
+    </div>`;
+
+  const levelCardsHtml = () => {
+    const { counts, total } = computeStudentLevels();
+    const visible = levelOrder.filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key));
+    return visible.map(([key, label]) => `
+      <div class="${APP}-level-card ${APP}-level-${key}">
+        <strong>${counts[key] || 0}</strong>
+        <span>${esc(label)}</span>
+        <small>${total ? pct(counts[key] || 0, total) : 0}% من الطلاب</small>
+      </div>`).join('');
+  };
+
+  const questionSummaryCardsHtml = () => {
+    const a = getQuestionAnalytics();
+    if (!a) {
+      return `<div class="${APP}-analysis-note">تحليل الأسئلة سيظهر بعد جمع نتائج الطلاب. استخدم «تحديث التحليل».</div>`;
+    }
+    const s = a.summary;
+    return `
+      <div class="${APP}-question-metrics">
+        ${metricHtml(s.questionCount, 'عدد الأسئلة')}
+        ${metricHtml(`${fmt(s.correctRate)}%`, 'الإجابات الصحيحة')}
+        ${metricHtml(`${fmt(s.incorrectRate)}%`, 'الإجابات الخاطئة')}
+        ${metricHtml(s.unansweredResponses, 'إجابات متروكة')}
+        ${metricHtml(s.hardest ? `س${s.hardest.number}` : '—', 'أصعب سؤال', s.hardest ? `${fmt(s.hardest.correctRate)}% صحة` : '')}
+        ${metricHtml(s.easiest ? `س${s.easiest.number}` : '—', 'أسهل سؤال', s.easiest ? `${fmt(s.easiest.correctRate)}% صحة` : '')}
+      </div>`;
+  };
+
+  const buildStudentTableRows = () => performanceRows().map((row, index) => {
+    const s = row.student;
+    const qs = studentQuestionStats(s);
+    const achieved = resolvedAchievedGrade(s);
+    const maxGrade = resolvedMaxGrade(s);
+    const discrepancyHint = s.gradeDiscrepancy
+      ? `<div class="${APP}-tiny ${APP}-grade-warning">⚠ درجة صفحة الرصد: ${fmt(num(s.gradeFieldValue), 4)}</div>`
+      : '';
+    return `<tr>
+      <td>${index + 1}</td>
+      <td><b>${esc(s.name || '—')}</b></td>
+      <td>${esc(s.className || '—')}</td>
+      <td>${esc(getStatusLabel(s))}</td>
+      <td>${Number.isFinite(achieved) ? `${fmt(achieved, 4)} / ${fmt(maxGrade, 4)}${discrepancyHint}` : '—'}</td>
+      <td>${Number.isFinite(row.percent) ? `${fmt(row.percent)}%` : '—'}</td>
+      <td><span class="${APP}-level-pill ${APP}-level-${row.level.key}">${esc(row.level.label)}</span></td>
+      ${isOnlineQuestions() ? `<td>${qs?.correct ?? '—'}</td><td>${qs?.incorrect ?? '—'}</td><td>${qs?.unanswered ?? '—'}</td>` : ''}
+    </tr>`;
+  }).join('');
+
+  const buildQuestionTableRows = () => {
+    const a = getQuestionAnalytics();
+    if (!a) return '';
+    return a.questions.map(q => `<tr>
+      <td>${q.number}</td>
+      <td><b>${esc(q.text || '—')}</b><div class="${APP}-tiny">${esc(q.correctText ? `الإجابة الصحيحة: ${q.correctText}` : '')}</div></td>
+      <td>${esc(q.type || '—')}</td>
+      <td>${Number.isFinite(q.maxScore) ? fmt(q.maxScore, 4) : '—'}</td>
+      <td>${q.participants}</td>
+      <td>${q.correct}</td>
+      <td>${q.incorrect}</td>
+      <td>${q.unanswered}</td>
+      <td>${fmt(q.correctRate)}%</td>
+      <td><span class="${APP}-difficulty ${q.difficulty === 'صعب' ? 'hard' : q.difficulty === 'متوسط' ? 'medium' : 'easy'}">${esc(q.difficulty)}</span></td>
+      <td>${q.mostCommonWrong ? `${esc(q.mostCommonWrong.text)} <small>(${q.mostCommonWrong.count})</small>` : '—'}</td>
+    </tr>`).join('');
+  };
+
+  const buildInlineAnalysisHtml = () => {
+    const data = state.gradeData;
+    if (!data) return `<div class="${APP}-analysis-note">جاري تجهيز بيانات الواجب…</div>`;
+
+    const gate = gradeReportGate(document);
+    if (!gate.ready) {
+      const endText = gate.timing?.endDate ? formatGradeTimingDate(gate.timing.endDate) : 'غير متاح';
+      const serverText = gate.timing?.serverDate ? formatGradeTimingDate(gate.timing.serverDate) : 'غير متاح';
+      return `
+        <section class="${APP}-analysis-section ${APP}-analysis-overview">
+          <div class="${APP}-analysis-heading">
+            <div>
+              <h3>${gate.status === 'receiving' ? 'الواجب قيد الاستقبال' : 'تعذر التحقق من اكتمال الواجب'}</h3>
+              <p>${esc(gate.message)}</p>
+            </div>
+            <span class="${APP}-pill">v${VERSION}</span>
+          </div>
+          <div class="${APP}-overview-metrics">
+            ${metricHtml(gate.status === 'receiving' ? 'قيد الاستقبال' : 'غير متحقق', 'حالة التقرير', 'لا تُحتسب بيانات الأداء الآن')}
+            ${metricHtml(endText, 'نهاية استقبال الحلول')}
+            ${metricHtml(serverText, 'وقت خادم مدرستي')}
+          </div>
+          <div class="${APP}-analysis-note ${APP}-analysis-warning">
+            لا يتم عرض نسبة الإنجاز أو المتوسط أو «لم يحل» قبل انتهاء وقت النشر، لأن هذه القيم ما زالت قابلة للتغير. تبقى أدوات الرصد والاستيراد وطباعة نموذج الأسئلة متاحة.
+          </div>
+        </section>`;
+    }
+
+    const s = computeEnhancedSummary();
+    const outside = isOutsideSystem();
+    const qa = getQuestionAnalytics();
+
+    const topMetrics = outside
+      ? [
+          metricHtml(s.total ?? 0, 'عدد الطلاب'),
+          metricHtml(s.graded ?? 0, 'درجات مرصودة'),
+          metricHtml(`${fmt(s.gradingRate ?? 0)}%`, 'نسبة الرصد'),
+          metricHtml(Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'),
+          metricHtml(Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'),
+          metricHtml(Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة مرصودة')
+        ].join('')
+      : [
+          metricHtml(s.total ?? 0, 'عدد الطلاب'),
+          metricHtml(s.submittedCount ?? 0, 'حلوا الواجب'),
+          metricHtml(s.notSubmittedCount ?? 0, 'لم يحلوا'),
+          metricHtml(`${fmt(s.submissionRate ?? 0)}%`, 'نسبة الإنجاز'),
+          metricHtml(Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'),
+          metricHtml(Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'),
+          metricHtml(Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة')
+        ].join('');
+
+    const questionSection = outside
+      ? `<div class="${APP}-analysis-note ${APP}-analysis-note-muted">هذا الواجب «خارج النظام»؛ لذلك لا تعرض مدرستي بنية أسئلة أو إجابات يمكن تحليلها. تحليل الدرجات والطلاب أدناه يظل متاحًا.</div>`
+      : `
+        <section class="${APP}-analysis-section">
+          <div class="${APP}-analysis-heading"><div><h3>تحليل الأسئلة والإجابات</h3><p>نسب الصحة والخطأ والأسئلة الأصعب والأخطاء الأكثر شيوعًا.</p></div></div>
+          ${questionSummaryCardsHtml()}
+          ${qa ? `<details class="${APP}-details" open><summary>تفاصيل الأسئلة (${qa.questions.length})</summary>
+            <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+              <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
+              <tbody>${buildQuestionTableRows()}</tbody>
+            </table></div>
+          </details>` : ''}
+        </section>`;
+
+    return `
+      <section class="${APP}-analysis-section ${APP}-analysis-overview">
+        <div class="${APP}-analysis-heading">
+          <div><h3>تحليل الواجب</h3><p>${esc(data.assignmentMode?.label || 'الواجب')} · تحديث: ${new Date().toLocaleString('ar-SA')}</p></div>
+          <span class="${APP}-pill">v${VERSION}</span>
+        </div>
+        <div class="${APP}-overview-metrics">${topMetrics}</div>
+        ${s.discrepancyCount ? `<div class="${APP}-analysis-note ${APP}-analysis-warning">⚠ تم اكتشاف ${s.discrepancyCount} حالة تعارض بين درجة صفحة الرصد ودرجة صفحة نتيجة الطالب. اعتمد التحليل درجة صفحة النتيجة.</div>` : ''}
+      </section>
+
+      <section class="${APP}-analysis-section">
+        <div class="${APP}-analysis-heading"><div><h3>مستويات الطلاب</h3><p>«ضعيف» يشمل 50% فأقل لمن لديه درجة، و«لم يحل» فئة مستقلة.</p></div></div>
+        <div class="${APP}-level-grid">${levelCardsHtml()}</div>
+      </section>
+
+      ${questionSection}
+
+      <section class="${APP}-analysis-section">
+        <div class="${APP}-analysis-heading"><div><h3>تقييم الطلاب</h3><p>الحالة والدرجة والنسبة والمستوى${outside ? '.' : ' مع ملخص إجابات كل طالب.'}</p></div></div>
+        <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+          <thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${isOnlineQuestions() ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead>
+          <tbody>${buildStudentTableRows()}</tbody>
+        </table></div>
+      </section>`;
+  };
+
+  const renderInlineAnalysis = () => {
+    const summary = document.getElementById(`${APP}-summary`);
+    if (summary) summary.style.display = 'none';
+
+    let host = document.getElementById(`${APP}-analysis-inline`);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = `${APP}-analysis-inline`;
+      const panel = document.getElementById(`${APP}-panel`);
+      const rights = panel?.querySelector(`.${APP}-rights`);
+      if (panel && rights) panel.insertBefore(host, rights);
+      else panel?.appendChild(host);
+    }
+    if (host) host.innerHTML = buildInlineAnalysisHtml();
+    syncActionAvailability();
+  };
+
+  // -----------------------------
+  // نافذة التحليل الموسعة
+  // -----------------------------
+  const showModal = (title, html) => {
+    const modal = document.getElementById(`${APP}-modal`);
+    const titleEl = document.getElementById(`${APP}-modal-title`);
+    const body = document.getElementById(`${APP}-modal-body`);
+    if (!modal || !body) throw new Error('تعذر فتح نافذة مدير الواجبات.');
+    if (titleEl) titleEl.textContent = title;
+    body.innerHTML = html;
+    modal.hidden = false;
+  };
+
+  const openDashboardEnhanced = () => {
+    assertFinalReportReady();
+    if (!state.gradeData) throw new Error('حدّث التحليل أولًا.');
+    showModal('لوحة تحليل الواجب', buildInlineAnalysisHtml());
+  };
+
+  const openQuestionAnalyticsEnhanced = async () => {
+    assertFinalReportReady();
+    if (isOutsideSystem()) throw new Error('تحليل الأسئلة غير متاح لواجبات «خارج النظام».');
+    let a = getQuestionAnalytics();
+    if (!a) a = await runDeepQuestionAnalysisEnhanced();
+    showModal('تحليل الأسئلة', `
+      ${questionSummaryCardsHtml()}
+      <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+        <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
+        <tbody>${buildQuestionTableRows()}</tbody>
+      </table></div>`);
+  };
+
+  // -----------------------------
+  // Print / PDF — فتح النافذة قبل أي await لمنع popup blocker
+  // -----------------------------
+  const openPrintShell = (title) => {
+    const w = window.open('', '_blank');
+    if (!w) {
+      throw new Error('تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة لموقع مدرستي ثم أعد المحاولة.');
+    }
+    try { w.opener = null; } catch {}
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title></head>
+      <body style="font-family:Tahoma,Arial,sans-serif;direction:rtl;padding:32px;text-align:center"><h3>جارٍ تجهيز ${esc(title)}…</h3></body></html>`);
+    w.document.close();
+    return w;
+  };
+
+  const renderPrintDocument = (w, title, bodyHtml, { autoPrint = true } = {}) => {
+    const css = `
+      @page{size:A4;margin:12mm}
+      *{box-sizing:border-box}
+      body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:0;font-size:12px;line-height:1.65}
+      h1{font-size:22px;margin:0} h2{font-size:16px;margin:0 0 10px} h3{font-size:13px;margin:0}
+      .header{border-bottom:3px solid #111827;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:20px;align-items:flex-end}
+      .muted{color:#6b7280}.small{font-size:10px}.nowrap{white-space:nowrap}
+      .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 16px}
+      .card{border:1px solid #d1d5db;border-radius:10px;padding:10px;break-inside:avoid}.card b{display:block;font-size:18px}.card span{color:#6b7280}
+      .levels{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0 16px}.level{border:1px solid #d1d5db;border-radius:9px;padding:8px;text-align:center}.level b{font-size:16px;display:block}
+      .section{margin:18px 0;break-inside:auto}.section-title{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #9ca3af;padding-bottom:6px;margin-bottom:8px}
+      table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #d1d5db;padding:6px;text-align:right;vertical-align:top}th{background:#f3f4f6;font-weight:700}
+      tr{break-inside:avoid}.page-break{break-before:page}.q{border:1px solid #d1d5db;border-radius:9px;padding:10px;margin:8px 0;break-inside:avoid}.qhead{display:flex;justify-content:space-between;gap:10px;font-weight:700}.opts{list-style:none;padding:0;margin:8px 0}.opts li{padding:3px 0}.correct{font-weight:700}.badge{display:inline-block;border:1px solid #9ca3af;border-radius:999px;padding:2px 6px;font-size:9px}
+      .footer{margin-top:20px;border-top:1px solid #d1d5db;padding-top:8px;color:#6b7280;font-size:9px;display:flex;justify-content:space-between}
+      .print-actions{position:fixed;left:15px;bottom:15px;z-index:10}.print-actions button{padding:10px 16px;border:0;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}
+      @media print{.print-actions{display:none}.page-break{break-before:page}}
+    `;
+
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style></head><body>
+      <div class="print-actions"><button onclick="window.print()">طباعة / حفظ PDF</button></div>
+      ${bodyHtml}
+      </body></html>`);
+    w.document.close();
+    if (autoPrint) {
+      w.setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 450);
+    }
+  };
+
+  const printHeaderHtml = (documentLabel, { compact = false, assignmentName = '' } = {}) => {
+    const data = state.gradeData;
+    const name = assignmentName || data?.assignmentName || (isUsableAssignmentName(data?.title) ? cleanAssignmentNameCandidate(data.title) : '') || 'واجب مدرستي';
+    if (compact) {
+      return `<div class="header compact-header">
+        <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)}</div></div>
+      </div>`;
+    }
+
+    const classes = [...new Set((data?.students || []).map(s => clean(s.className)).filter(Boolean))].join('، ');
+    return `<div class="header">
+      <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)}</div></div>
+      <div class="small">${esc(data?.assignmentMode?.label || '')}<br>${classes ? `الفصل/الفصول: ${esc(classes)}` : ''}<br>${new Date().toLocaleString('ar-SA')}</div>
+    </div>`;
+  };
+
+  const questionPaperCss = `
+    @page{size:A4;margin:12mm}
+    *{box-sizing:border-box}
+    body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:0;font-size:13px;line-height:1.7}
+    .paper-head{border-bottom:3px solid #111827;padding-bottom:12px;margin-bottom:14px}
+    .paper-head h1{font-size:24px;margin:0 0 3px}.paper-head .sub{font-size:12px;color:#4b5563}.paper-meta{font-size:10px;color:#6b7280;margin-top:5px}
+    .student-fields{display:none;border:1px solid #9ca3af;border-radius:8px;padding:9px 12px;margin:10px 0 14px;grid-template-columns:1fr 1fr;gap:18px}
+    body.student-copy .student-fields{display:grid}
+    .q{border:1px solid #d1d5db;border-radius:9px;padding:11px 12px;margin:9px 0;break-inside:avoid}
+    .qhead{display:flex;justify-content:space-between;gap:12px;font-weight:700}.qgrade{white-space:nowrap;font-size:11px;color:#4b5563}
+    .opts{list-style:none;padding:0;margin:8px 0 0}.opts li{padding:4px 7px;border-radius:6px;margin:2px 0}.choice-marker{display:inline-block;min-width:20px;font-weight:800}
+    .correct-choice{font-weight:700;background:#f3f4f6}.correct-label{font-size:9px;border:1px solid #9ca3af;border-radius:999px;padding:1px 6px;margin-right:8px;white-space:nowrap}
+    body.student-copy .correct-choice{font-weight:400;background:transparent}body.student-copy .correct-label{display:none}
+    body.teacher-copy .student-marker{display:none}body.student-copy .teacher-marker{display:none}
+    .print-actions{position:fixed;left:14px;bottom:14px;z-index:20;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 28px)}
+    .print-actions button{padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#111827;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+    .print-actions button.primary{background:#111827;color:#fff;border-color:#111827}
+    .print-actions button.active{outline:2px solid #111827;outline-offset:1px}
+    @media print{.print-actions{display:none}.q{border-color:#9ca3af}.correct-choice{background:#f3f4f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}body.student-copy .correct-choice{background:transparent!important}}
+  `;
+
+  const renderQuestionPaperDocument = (w, assignmentName, questions) => {
+    const total = questions.map(q => num(q.maxScore)).filter(Number.isFinite).reduce((a, b) => a + b, 0);
+    const meta = `${questions.length} ${questions.length === 1 ? 'سؤال' : 'أسئلة'}${Number.isFinite(total) && total > 0 ? ` · الدرجة الكلية: ${fmt(total, 4)}` : ''}`;
+    const body = `
+      <div class="print-actions">
+        <button id="teacherMode" class="active" onclick="setCopyMode('teacher')">نسخة المعلم · مع الإجابات</button>
+        <button id="studentMode" onclick="setCopyMode('student')">نسخة الطالب · بدون إجابات</button>
+        <button class="primary" onclick="window.print()">طباعة / حفظ PDF</button>
+      </div>
+      <header class="paper-head">
+        <h1>${esc(assignmentName)}</h1>
+        <div class="sub" id="paperModeLabel">نموذج أسئلة الواجب والإجابة</div>
+        <div class="paper-meta">${esc(meta)}</div>
+      </header>
+      <div class="student-fields"><div>اسم الطالب: ....................................................................</div><div>الفصل: ....................................................</div></div>
+      ${questions.map(q => `
+        <section class="q">
+          <div class="qhead"><span>السؤال ${q.number}: ${esc(q.text)}</span><span class="qgrade">${Number.isFinite(q.maxScore) ? `${fmt(q.maxScore, 4)} درجة` : ''}</span></div>
+          ${(q.options || []).length ? `<ul class="opts">${q.options.map(o => {
+            const correct = !!o.markedCorrect;
+            return `<li class="${correct ? 'correct-choice' : ''}">
+              <span class="choice-marker"><span class="teacher-marker">${correct ? '✓' : '○'}</span><span class="student-marker">○</span></span>${esc(o.text)}${correct ? '<span class="correct-label">الإجابة الصحيحة</span>' : ''}
+            </li>`;
+          }).join('')}</ul>` : (q.correctText ? `<div class="correct-label">الإجابة الصحيحة: ${esc(q.correctText)}</div>` : '')}
+        </section>`).join('')}`;
+
+    const script = `
+      function setCopyMode(mode){
+        document.body.classList.toggle('teacher-copy', mode === 'teacher');
+        document.body.classList.toggle('student-copy', mode === 'student');
+        document.getElementById('teacherMode')?.classList.toggle('active', mode === 'teacher');
+        document.getElementById('studentMode')?.classList.toggle('active', mode === 'student');
+        const label = document.getElementById('paperModeLabel');
+        if (label) label.textContent = mode === 'teacher' ? 'نموذج أسئلة الواجب والإجابة' : 'أسئلة الواجب';
+        document.title = ${JSON.stringify(assignmentName)} + (mode === 'teacher' ? ' — نموذج الإجابة' : ' — أسئلة الواجب');
+      }
+      setCopyMode('teacher');`;
+
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(assignmentName)} — نموذج الإجابة</title><style>${questionPaperCss}</style></head><body class="teacher-copy">${body}<script>${script}<\/script></body></html>`);
+    w.document.close();
+  };
+
+  async function printQuestionsEnhanced() {
+    if (isOutsideSystem()) throw new Error('الأسئلة ونموذج الإجابة غير متاحين لواجب «خارج النظام».');
+    const w = openPrintShell('طباعة أسئلة الواجب');
+    try {
+      const [assignmentName, questions] = await Promise.all([
+        resolveAssignmentNameEnhanced({ allowFetch: true }),
+        getQuestionTemplateEnhanced({ requireAnswerKey: true })
+      ]);
+      renderQuestionPaperDocument(w, assignmentName, questions);
+    } catch (e) {
+      renderPrintDocument(w, 'طباعة أسئلة الواجب', `<div class="header"><h1>تعذر تجهيز أسئلة الواجب</h1></div><div class="card"><div>${esc(String(e?.message || e))}</div></div>`, { autoPrint: false });
+      throw e;
+    }
+  }
+
+  const printLevelGrid = () => {
+    const { counts, total } = computeStudentLevels();
+    return levelOrder
+      .filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key))
+      .map(([key, label]) => `<div class="level"><b>${counts[key] || 0}</b><span>${esc(label)}</span><div class="small muted">${total ? pct(counts[key] || 0, total) : 0}%</div></div>`).join('');
+  };
+
+  const buildAssignmentPrintReport = () => {
+    const data = state.gradeData;
+    const s = computeEnhancedSummary();
+    const outside = isOutsideSystem();
+    const qa = getQuestionAnalytics();
+
+    const cards = outside
+      ? [
+          [s.total ?? 0, 'عدد الطلاب'], [s.graded ?? 0, 'درجات مرصودة'], [`${fmt(s.gradingRate ?? 0)}%`, 'نسبة الرصد'],
+          [Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'], [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
+        ]
+      : [
+          [s.total ?? 0, 'عدد الطلاب'], [s.submittedCount ?? 0, 'حلوا الواجب'], [s.notSubmittedCount ?? 0, 'لم يحلوا'],
+          [`${fmt(s.submissionRate ?? 0)}%`, 'نسبة الإنجاز'], [Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'],
+          [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
+        ];
+
+    const studentRows = performanceRows().map((row, i) => {
+      const st = row.student;
+      const qs = studentQuestionStats(st);
+      const achieved = resolvedAchievedGrade(st);
+      const maxGrade = resolvedMaxGrade(st);
+      const discrepancy = st.gradeDiscrepancy
+        ? `<div class="small muted">تعارض: صفحة الرصد ${fmt(num(st.gradeFieldValue),4)}</div>`
+        : '';
+      return `<tr><td>${i + 1}</td><td>${esc(st.name || '—')}</td><td>${esc(st.className || '—')}</td><td>${esc(getStatusLabel(st))}</td><td>${Number.isFinite(achieved) ? `${fmt(achieved,4)} / ${fmt(maxGrade,4)}${discrepancy}` : '—'}</td><td>${Number.isFinite(row.percent) ? `${fmt(row.percent)}%` : '—'}</td><td>${esc(row.level.label)}</td>${!outside ? `<td>${qs?.correct ?? '—'}</td><td>${qs?.incorrect ?? '—'}</td><td>${qs?.unanswered ?? '—'}</td>` : ''}</tr>`;
+    }).join('');
+
+    const questionReport = !outside && qa ? `<div class="section page-break">
+      <div class="section-title"><h2>تحليل الأسئلة</h2><span class="muted">${qa.questions.length} سؤال</span></div>
+      <div class="cards">
+        <div class="card"><b>${fmt(qa.summary.correctRate)}%</b><span>نسبة الإجابات الصحيحة</span></div>
+        <div class="card"><b>${qa.summary.hardest ? `س${qa.summary.hardest.number}` : '—'}</b><span>أصعب سؤال${qa.summary.hardest ? ` · ${fmt(qa.summary.hardest.correctRate)}%` : ''}</span></div>
+        <div class="card"><b>${qa.summary.easiest ? `س${qa.summary.easiest.number}` : '—'}</b><span>أسهل سؤال${qa.summary.easiest ? ` · ${fmt(qa.summary.easiest.correctRate)}%` : ''}</span></div>
+      </div>
+      <table><thead><tr><th>#</th><th>السؤال</th><th>الدرجة</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>التصنيف</th><th>أكثر خطأ شيوعًا</th></tr></thead><tbody>
+        ${qa.questions.map(q => `<tr><td>${q.number}</td><td>${esc(q.text)}${q.correctText ? `<div class="small muted">الصحيح: ${esc(q.correctText)}</div>` : ''}</td><td>${Number.isFinite(q.maxScore) ? fmt(q.maxScore,4) : '—'}</td><td>${q.correct}</td><td>${q.incorrect}</td><td>${q.unanswered}</td><td>${fmt(q.correctRate)}%</td><td>${esc(q.difficulty)}</td><td>${q.mostCommonWrong ? `${esc(q.mostCommonWrong.text)} (${q.mostCommonWrong.count})` : '—'}</td></tr>`).join('')}
+      </tbody></table>
+    </div>` : outside ? `<div class="section"><div class="card"><b>ملاحظة</b><span>هذا الواجب خارج النظام، لذلك لا تتوفر بيانات موثوقة لتحليل الأسئلة أو حالة التسليم داخل مدرستي.</span></div></div>` : '';
+
+    const discrepancyNote = s.discrepancyCount
+      ? `<div class="section"><div class="card"><b>تنبيه تعارض بيانات</b><span>اكتشف النظام ${s.discrepancyCount} حالة اختلفت فيها درجة صفحة الرصد عن صفحة نتيجة الطالب؛ تم اعتماد صفحة النتيجة في هذا التقرير.</span></div></div>`
+      : '';
+
+    return `${printHeaderHtml('تقرير الواجب')}
+      <div class="section"><div class="section-title"><h2>الملخص التنفيذي</h2></div><div class="cards">${cards.map(([v,l]) => `<div class="card"><b>${v}</b><span>${esc(l)}</span></div>`).join('')}</div></div>
+      ${discrepancyNote}
+      <div class="section"><div class="section-title"><h2>توزيع مستويات الطلاب</h2><span class="muted">ضعيف = 50% فأقل لمن لديه درجة</span></div><div class="levels">${printLevelGrid()}</div></div>
+      <div class="section"><div class="section-title"><h2>تقرير الطلاب</h2></div><table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${!outside ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead><tbody>${studentRows}</tbody></table></div>
+      ${questionReport}
+      <div class="footer"><span>تم إنشاء التقرير بواسطة Madrasati Assignment Intelligence v${VERSION}</span><span>Mohammed Almalki (M0HM3D85)</span></div>`;
+  };
+
+
+  async function printAssignmentReportEnhanced() {
+    assertFinalReportReady();
+    const w = openPrintShell('تقرير الواجب');
+    try {
+      if (!state.gradeData) await refreshEnhanced(false);
+      if (isOnlineQuestions() && !getQuestionAnalytics() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
+        await runDeepQuestionAnalysisEnhanced({ silent: true });
+      }
+      renderPrintDocument(w, `${state.gradeData?.assignmentName || state.gradeData?.title || 'الواجب'} — تقرير الواجب`, buildAssignmentPrintReport());
+    } catch (e) {
+      renderPrintDocument(w, 'تقرير الواجب', `<div class="header"><h1>تقرير الواجب</h1></div><div class="card"><b>تعذر تجهيز التقرير</b><div>${esc(String(e?.message || e))}</div></div>`, { autoPrint: false });
+      throw e;
+    }
+  }
+
+  // -----------------------------
+  // Export
+  // -----------------------------
+  const exportRowsEnhanced = () => performanceRows().map(row => {
+    const s = row.student;
+    const qs = studentQuestionStats(s);
+    return {
+      'الطالب': s.name || '',
+      'الفصل': s.className || '',
+      'حساب الطالب': s.account || '',
+      'StudentId': s.studentId || s.assignmentStudentId || '',
+      'الحالة': getStatusLabel(s),
+      'الدرجة': Number.isFinite(resolvedAchievedGrade(s)) ? resolvedAchievedGrade(s) : '',
+      'الدرجة الكلية': Number.isFinite(resolvedMaxGrade(s)) ? resolvedMaxGrade(s) : '',
+      'درجة صفحة الرصد': Number.isFinite(num(s.gradeFieldValue ?? s.currentGrade)) ? num(s.gradeFieldValue ?? s.currentGrade) : '',
+      'مصدر الدرجة': Number.isFinite(num(s.resultGrade)) ? 'صفحة نتيجة الطالب' : 'صفحة الرصد',
+      'تعارض الدرجة': s.gradeDiscrepancy ? 'نعم' : 'لا',
+      'النسبة': Number.isFinite(row.percent) ? row.percent : '',
+      'المستوى': row.level.label,
+      'صحيح': qs?.correct ?? '',
+      'خطأ': qs?.incorrect ?? '',
+      'لم يجب': qs?.unanswered ?? '',
+      'الملاحظة': s.feedback || ''
+    };
+  });
+
+  const downloadText = (name, text, mime) => {
+    const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = name;
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
   };
 
-  const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-
-
-  const normalizeAccount = (v) => clean(v)
-    .replace(/^mailto:/i, '')
-    .replace(/\s+/g, '')
-    .toLowerCase();
-
-  const roundToStep = (value, step) => {
-    const s = Number(step);
-    if (!Number.isFinite(value) || !Number.isFinite(s) || s <= 0) return value;
-    return Math.round(value / s) * s;
-  };
-
-  const nearlyEqual = (a, b, eps = 1e-9) =>
-    Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= eps;
-
-  const todayStamp = () => {
+  const dateStamp = () => {
     const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   };
 
+  function exportCSVEnhanced() {
+    assertFinalReportReady();
+    const data = exportRowsEnhanced();
+    if (!data.length) throw new Error('لا توجد بيانات طلاب قابلة للتصدير.');
+    const headers = Object.keys(data[0] || {});
+    const lines = [headers.map(csvCell).join(',')];
+    for (const row of data) lines.push(headers.map(h => csvCell(row[h])).join(','));
+    downloadText(`madrasati-assignment-analysis-${dateStamp()}.csv`, '\uFEFF' + lines.join('\n'), 'text/csv;charset=utf-8');
+  }
+
+  function exportExcelEnhanced() {
+    assertFinalReportReady();
+    const data = exportRowsEnhanced();
+    if (!data.length) throw new Error('لا توجد بيانات طلاب قابلة للتصدير.');
+    if (!globalThis.XLSX) return exportCSVEnhanced();
+    const wb = XLSX.utils.book_new();
+    const studentsWs = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, studentsWs, 'Students');
+    const qa = getQuestionAnalytics();
+    if (qa?.questions?.length) {
+      const questionData = qa.questions.map(q => ({
+        '#': q.number,
+        'السؤال': q.text,
+        'النوع': q.type,
+        'درجة السؤال': Number.isFinite(q.maxScore) ? q.maxScore : '',
+        'المشاركون': q.participants,
+        'صحيح': q.correct,
+        'خطأ': q.incorrect,
+        'لم يجب': q.unanswered,
+        'غير محسوم': q.unknown || 0,
+        'نسبة الصحة': q.correctRate,
+        'الصعوبة': q.difficulty,
+        'الإجابة الصحيحة': q.correctText,
+        'أكثر خطأ شيوعًا': q.mostCommonWrong?.text || '',
+        'تكرار الخطأ': q.mostCommonWrong?.count || 0
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(questionData), 'Questions');
+    }
+    XLSX.writeFile(wb, `madrasati-assignment-analysis-${dateStamp()}.xlsx`);
+  }
+
   // -----------------------------
-  // Student registry: MyStudents
+  // Refresh + cache
   // -----------------------------
-  const parseStudentCard = (card) => {
-    const text = clean(card.innerText);
-    const account = text.match(/[sS]\d+@[a-z0-9.-]+\.moe\.gov\.sa/i)?.[0] || '';
-    const name = clean(text.split(/اسم\s+الفصل\s*:/i)[0]);
+  let enhancedRefreshRunning = false;
+  let summaryObserver = null;
+  let summaryObserverTimer = null;
 
-    const className =
-      text.match(/اسم\s+الفصل\s*:\s*(.+?)(?=\s+الايميل\s*:)/i)?.[1]?.trim() || '';
+  async function refreshEnhanced(forceRegistry = false) {
+    if (enhancedRefreshRunning) return state.gradeData;
+    enhancedRefreshRunning = true;
+    setStatus('جاري جمع بيانات الواجب…', true);
+    try {
+      await base.refreshAll(forceRegistry);
+      await resolveAssignmentNameEnhanced({ allowFetch: true });
+      state.enhancedQuestionAnalytics = null;
+      state.questionAnalytics = null;
 
-    const status =
-      text.match(/حالة\s+الطالب\s*:\s*(.+?)(?=\s+\d+\s|ملف الإنجاز|$)/i)?.[1]?.trim() || '';
+      const gate = gradeReportGate(document);
+      if (!gate.ready) {
+        renderInlineAnalysis();
+        const panelSub = document.querySelector(`#${APP}-panel .${APP}-sub`);
+        if (panelSub) {
+          panelSub.textContent = `${gate.label} · التقرير النهائي مؤجل — v${VERSION}`;
+          panelSub.title = gate.message;
+        }
+        syncActionAvailability();
+        toast(gate.message, gate.status === 'receiving' ? 'info' : 'error');
+        return state.gradeData;
+      }
 
-    const profile = [...card.querySelectorAll('a[href]')]
-      .find(a => /\/Profile\/My/i.test(a.getAttribute('href') || ''));
+      if (isOnlineQuestions() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
+        try {
+          await runDeepQuestionAnalysisEnhanced({ silent: true });
+        } catch (e) {
+          console.warn('[MAI v1.4.2] Question analysis skipped:', e);
+        }
+      }
 
-    let userGuid = '';
-    if (profile) {
+      renderInlineAnalysis();
+      const panelSub = document.querySelector(`#${APP}-panel .${APP}-sub`);
+      if (panelSub) {
+        const currentGate = gradeReportGate(document);
+        panelSub.textContent = currentGate.ready
+          ? `الواجب منتهي · التحليل والتقرير النهائي متاحان — v${VERSION}`
+          : `${currentGate.label} · التقرير النهائي مؤجل — v${VERSION}`;
+        panelSub.title = currentGate.message;
+      }
+      toast('تم تحديث تحليل الواجب والبطاقات.', 'success');
+      return state.gradeData;
+    } finally {
+      enhancedRefreshRunning = false;
+      setStatus('جاهز', false);
+    }
+  }
+
+  const setupBaseSummaryObserver = () => {
+    const summary = document.getElementById(`${APP}-summary`);
+    if (!summary || summaryObserver) return;
+    summaryObserver = new MutationObserver(() => {
+      if (enhancedRefreshRunning) return;
+      clearTimeout(summaryObserverTimer);
+      summaryObserverTimer = setTimeout(async () => {
+        if (enhancedRefreshRunning || !state.gradeData) return;
+        try {
+          state.enhancedQuestionAnalytics = null;
+          state.questionAnalytics = null;
+          const gate = gradeReportGate(document);
+          if (!gate.ready) {
+            renderInlineAnalysis();
+            syncActionAvailability();
+            return;
+          }
+          if (isOnlineQuestions() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
+            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.2] Post-base refresh analysis skipped:', e); }
+          }
+          renderInlineAnalysis();
+        } catch (e) {
+          console.warn('[MAI v1.4.2] UI sync after base update failed:', e);
+        }
+      }, 650);
+    });
+    summaryObserver.observe(summary, { childList: true, subtree: true });
+  };
+
+
+  // -----------------------------
+  // UI replacement
+  // -----------------------------
+  const addEnhancedStyles = () => {
+    if (document.getElementById(`${APP}-v12-style`)) return;
+    const style = document.createElement('style');
+    style.id = `${APP}-v12-style`;
+    style.textContent = `
+      #${APP}-analysis-inline{margin-top:14px;display:flex;flex-direction:column;gap:12px}
+      .${APP}-analysis-section{border:1px solid #e5e7eb;border-radius:15px;padding:14px;background:#fff}
+      .${APP}-analysis-overview{background:linear-gradient(180deg,#fff,#f8fafc)}
+      .${APP}-analysis-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+      .${APP}-analysis-heading h3{font-size:16px;margin:0;color:#111827}.${APP}-analysis-heading p{margin:3px 0 0;color:#6b7280;font-size:11px}
+      .${APP}-overview-metrics,.${APP}-question-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+      .${APP}-metric-v12{background:#fff;border:1px solid #e5e7eb;border-radius:13px;padding:13px 11px;min-height:86px;display:flex;flex-direction:column;justify-content:center}.${APP}-metric-v12 b{font-size:23px;line-height:1.15}.${APP}-metric-v12 span{font-size:11px;font-weight:800;margin-top:5px}.${APP}-metric-v12 small{display:block;margin-top:3px;color:#6b7280;font-size:9px}
+      .${APP}-level-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+      .${APP}-level-card{border:1px solid #e5e7eb;border-radius:12px;padding:10px;text-align:center;background:#fafafa}.${APP}-level-card strong{display:block;font-size:21px}.${APP}-level-card span{display:block;font-weight:800;font-size:11px}.${APP}-level-card small{font-size:9px;color:#6b7280}
+      .${APP}-level-pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}
+      .${APP}-level-excellent{background:#dcfce7!important;color:#166534}.${APP}-level-very-good{background:#dbeafe!important;color:#1d4ed8}.${APP}-level-good{background:#e0e7ff!important;color:#4338ca}.${APP}-level-acceptable{background:#fef3c7!important;color:#92400e}.${APP}-level-weak{background:#fee2e2!important;color:#991b1b}.${APP}-level-not-solved{background:#f3f4f6!important;color:#374151}.${APP}-level-pending,.${APP}-level-unverified{background:#f3e8ff!important;color:#6b21a8}
+      .${APP}-analysis-note{padding:12px;border-radius:11px;background:#eff6ff;color:#1e40af;font-size:11px;margin-top:10px}.${APP}-analysis-note-muted{background:#f3f4f6;color:#4b5563}.${APP}-analysis-warning{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa}.${APP}-grade-warning{color:#b45309;margin-top:3px}
+      .${APP}-details{margin-top:10px}.${APP}-details summary{cursor:pointer;font-weight:800;font-size:12px;margin-bottom:8px}
+      .${APP}-analysis-table td{line-height:1.6}.${APP}-difficulty{display:inline-block;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:800}.${APP}-difficulty.hard{background:#fee2e2;color:#991b1b}.${APP}-difficulty.medium{background:#fef3c7;color:#92400e}.${APP}-difficulty.easy{background:#dcfce7;color:#166534}
+      .${APP}-btn[data-mode-disabled="1"]{opacity:.45;cursor:not-allowed!important;background:#f3f4f6!important;color:#6b7280!important}.${APP}-btn[data-running="1"]{opacity:.65;cursor:wait!important;pointer-events:none}
+      .${APP}-collapse-btn{border:1px solid #d1d5db;background:#fff;border-radius:9px;padding:6px 10px;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}.${APP}-head-tools{display:flex;align-items:center;gap:8px}
+      #${APP}-panel.${APP}-collapsed>.${APP}-toolbar,#${APP}-panel.${APP}-collapsed>#${APP}-summary,#${APP}-panel.${APP}-collapsed>#${APP}-analysis-inline,#${APP}-panel.${APP}-collapsed>.${APP}-rights{display:none!important}
+      @media(max-width:1100px){.${APP}-level-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      @media(max-width:650px){.${APP}-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.${APP}-overview-metrics,.${APP}-question-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    `;
+    document.head.appendChild(style);
+  };
+
+  const syncActionAvailability = () => {
+    const outside = isOutsideSystem();
+    const gate = gradeReportGate(document);
+    const questionActions = new Set(['questions','printQuestions']);
+    const finalReportActions = new Set(['dashboard','questions','printStudents','csv','excel']);
+    const buttons = document.querySelectorAll(`#${APP}-panel [data-${APP.toLowerCase()}-action]`);
+
+    for (const btn of buttons) {
+      const action = btn.dataset[`${APP.toLowerCase()}Action`] || '';
+      let disabled = false;
+      let title = '';
+
+      if (questionActions.has(action) && outside) {
+        disabled = true;
+        title = 'هذه الميزة غير متاحة لواجبات خارج النظام.';
+      }
+
+      if (finalReportActions.has(action) && !gate.ready) {
+        disabled = true;
+        title = gate.message;
+      }
+
+      btn.dataset.modeDisabled = disabled ? '1' : '0';
+      btn.disabled = disabled;
+      btn.title = title;
+    }
+  };
+
+  const setPanelCollapsed = (panel, collapsed) => {
+    if (!panel) return;
+    panel.classList.toggle(`${APP}-collapsed`, !!collapsed);
+    const btn = panel.querySelector(`[data-${APP.toLowerCase()}-collapse]`);
+    if (btn) {
+      btn.textContent = collapsed ? 'فتح اللوحة' : 'طي اللوحة';
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    try { localStorage.setItem(PANEL_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
+  };
+
+  const installPanelCollapse = (panel) => {
+    const head = panel?.querySelector?.(`.${APP}-head`);
+    const status = panel?.querySelector?.(`#${APP}-status`);
+    if (!head || !status) return;
+
+    let tools = head.querySelector(`.${APP}-head-tools`);
+    if (!tools) {
+      tools = document.createElement('div');
+      tools.className = `${APP}-head-tools`;
+      status.parentElement?.insertBefore(tools, status);
+      tools.appendChild(status);
+    }
+
+    let btn = tools.querySelector(`[data-${APP.toLowerCase()}-collapse]`);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `${APP}-collapse-btn`;
+      btn.dataset[`${APP.toLowerCase()}Collapse`] = '1';
+      tools.appendChild(btn);
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setPanelCollapsed(panel, !panel.classList.contains(`${APP}-collapsed`));
+      });
+    }
+
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(PANEL_COLLAPSE_KEY) === '1'; } catch {}
+    setPanelCollapsed(panel, collapsed);
+  };
+
+  const replacePanelToolbar = () => {
+    const oldPanel = document.getElementById(`${APP}-panel`);
+    if (!oldPanel) return null;
+
+    // clone يزيل مستمع النواة القديم عن اللوحة فقط، بينما نبقي الـ modal الأصلي
+    // لأن استيراد الدرجات في v1.1.7 يعتمد على مستمعه الداخلي.
+    const panel = oldPanel.cloneNode(true);
+    oldPanel.replaceWith(panel);
+
+    const title = panel.querySelector(`.${APP}-title`);
+    if (title) title.textContent = 'مدير الواجبات الذكي — تحليل متقدم';
+    const sub = panel.querySelector(`.${APP}-sub`);
+    if (sub) {
+      const gate = gradeReportGate(document);
+      sub.textContent = gate.ready
+        ? `الواجب منتهي · التحليل والتقرير النهائي متاحان — v${VERSION}`
+        : `${gate.label} · التقرير النهائي مؤجل — v${VERSION}`;
+      sub.title = gate.message;
+    }
+
+    installPanelCollapse(panel);
+
+    const toolbar = panel.querySelector(`.${APP}-toolbar`);
+    if (toolbar) {
+      toolbar.innerHTML = `
+        <button class="${APP}-btn ${APP}-primary" data-${APP.toLowerCase()}-action="refresh">تحديث التحليل</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="identity">مزامنة الهوية</button>
+        <button class="${APP}-btn ${APP}-primary" data-${APP.toLowerCase()}-action="importGrades">استيراد درجات Excel / CSV</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="dashboard">عرض لوحة موسعة</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="questions">تحليل الأسئلة</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="printQuestions">طباعة الأسئلة / النموذج</button>
+        <button class="${APP}-btn ${APP}-primary" data-${APP.toLowerCase()}-action="printStudents">تقرير الواجب / PDF</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="csv">CSV</button>
+        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="excel">Excel</button>`;
+    }
+
+    panel.addEventListener('click', async (event) => {
+      const btn = event.target.closest?.(`[data-${APP.toLowerCase()}-action]`);
+      if (!btn || btn.disabled || btn.dataset.modeDisabled === '1' || btn.dataset.running === '1') return;
+      const action = btn.dataset[`${APP.toLowerCase()}Action`];
+      if (!action) return;
+
+      const originalText = btn.textContent;
+      btn.dataset.running = '1';
+      btn.setAttribute('aria-busy', 'true');
+      if (!['dashboard','csv','excel'].includes(action)) btn.textContent = `${originalText}…`;
+
       try {
-        const u = new URL(profile.getAttribute('href'), location.origin);
-        userGuid = u.searchParams.get('UserId') || u.searchParams.get('userId') || '';
-      } catch {}
+        if (action === 'refresh') await refreshEnhanced(false);
+        else if (action === 'identity') {
+          setStatus('جاري مزامنة الهوية…', true);
+          await base.buildIdentityBridge(true, state.gradeData?.students || []);
+          await refreshEnhanced(false);
+        }
+        else if (action === 'importGrades') await base.openImportWizard();
+        else if (action === 'dashboard') openDashboardEnhanced();
+        else if (action === 'questions') await openQuestionAnalyticsEnhanced();
+        else if (action === 'printQuestions') await printQuestionsEnhanced();
+        else if (action === 'printStudents') await printAssignmentReportEnhanced();
+        else if (action === 'csv') exportCSVEnhanced();
+        else if (action === 'excel') exportExcelEnhanced();
+        else throw new Error(`إجراء غير معروف: ${action}`);
+      } catch (e) {
+        console.error('[MAI v1.4.2] Action failed:', action, e);
+        toast(String(e?.message || e), 'error');
+      } finally {
+        btn.dataset.running = '0';
+        btn.removeAttribute('aria-busy');
+        btn.textContent = originalText;
+        setStatus('جاهز', false);
+        syncActionAvailability();
+      }
+    });
+
+    return panel;
+  };
+
+  const restoreCache = () => {
+    if (!gradeReportGate(document).ready) return false;
+    const cached = loadEnhancedCache();
+    if (!cached?.analytics) return false;
+    state.enhancedQuestionAnalytics = cached.analytics;
+    state.questionAnalytics = cached.analytics;
+    if (state.gradeData && cached.analytics?.results) applyResultGradesToStudents(cached.analytics.results);
+    return true;
+  };
+
+  async function bootstrapGrade() {
+    addEnhancedStyles();
+
+    // انتظر حتى تنتهي النواة من حقن واجهتها.
+    for (let i = 0; i < 40 && !document.getElementById(`${APP}-panel`); i++) await sleep(100);
+    const panel = replacePanelToolbar();
+    if (!panel) return;
+
+    try { base.version = VERSION; } catch {}
+    const hadCache = restoreCache();
+    if (state.gradeData) renderInlineAnalysis();
+    setupBaseSummaryObserver();
+
+    // نعرض الكاش فورًا إن وجد، ثم نجري تحديثًا حقيقيًا واحدًا لضمان أن البطاقات والأزرار تعتمد أحدث بيانات.
+    try {
+      await refreshEnhanced(false);
+    } catch (e) {
+      if (!hadCache) renderInlineAnalysis();
+      toast(`تعذر التحديث التلقائي: ${String(e?.message || e)}`, 'error');
+    }
+  }
+
+  // =====================================================================
+  // Assignments Index — لوحة الواجبات الشاملة
+  // =====================================================================
+  const indexState = {
+    assignments: [],
+    publications: null,
+    deep: null,
+    busy: false,
+    collectedAt: null,
+    indexPagesScanned: 0,
+    indexStopReason: '',
+    indexCollectionMode: 'current'
+  };
+
+  const indexPanelId = `${APP}-index-panel`;
+  const INDEX_MAX_PAGES = 100;
+
+  const indexCardSelector = '.list-group .dga-defualt-card';
+
+  const safeAbsoluteUrl = (href) => {
+    if (!href) return '';
+    try { return new URL(href, location.origin).href; }
+    catch { return ''; }
+  };
+
+  const parseIndexPathSegments = (pathText) => clean(pathText)
+    .split(/\s*-\s*/)
+    .map(clean)
+    .filter(Boolean);
+
+  const parseIndexAssignmentCard = (card, index = 0) => {
+    const title = clean(card.querySelector('h4.mb-1')?.textContent || '');
+    const infoNode = card.querySelector('.flex-fill.mb-2.mb-sm-0') || card;
+    const infoText = clean(infoNode.innerText || infoNode.textContent || '');
+
+    const source = clean(infoText.match(/مصدر\s+الواجب\s*:\s*(.+?)(?=\s+طريقة\s+عرض\s+الواجب\s*:|\s+درجة\s+الواجب\s*:|$)/i)?.[1] || '');
+    const displayMode = clean(infoText.match(/طريقة\s+عرض\s+الواجب\s*:\s*(.+?)(?=\s+درجة\s+الواجب\s*:|$)/i)?.[1] || '');
+    const grade = num(infoText.match(/درجة\s+الواجب\s*:\s*([\d٠-٩۰-۹.,]+)/i)?.[1]);
+
+    let curriculumPath = infoText;
+    if (title && curriculumPath.startsWith(title)) curriculumPath = clean(curriculumPath.slice(title.length));
+    const sourcePos = curriculumPath.search(/مصدر\s+الواجب\s*:/i);
+    if (sourcePos >= 0) curriculumPath = clean(curriculumPath.slice(0, sourcePos));
+    curriculumPath = curriculumPath.replace(/^[-–—\s]+|[-–—\s]+$/g, '').trim();
+
+    const pathSegments = parseIndexPathSegments(curriculumPath);
+    const course = pathSegments.length >= 3 ? pathSegments[pathSegments.length - 3] : '';
+    const unit = pathSegments.length >= 2 ? pathSegments[pathSegments.length - 2] : '';
+    const topic = pathSegments.length >= 1 ? pathSegments[pathSegments.length - 1] : '';
+
+    const viewAnchor = card.querySelector('a[href*="/Teacher/Assignments/ViewAssignment/"]');
+    const publishAnchor = card.querySelector('a[href*="/Teacher/Assignments/PublishAssignment"]');
+    const publishedAnchor = card.querySelector('a[href*="/Teacher/Assignments/PublishedAssignments"]');
+
+    const viewUrl = safeAbsoluteUrl(viewAnchor?.getAttribute('href'));
+    const publishUrl = safeAbsoluteUrl(publishAnchor?.getAttribute('href'));
+    const publishedUrl = safeAbsoluteUrl(publishedAnchor?.getAttribute('href'));
+    const assignmentGuid = viewUrl.match(/\/ViewAssignment\/([A-F0-9]{32})/i)?.[1] ||
+      publishedUrl.match(/[?&]assignmentId=([A-F0-9]{32})/i)?.[1] || '';
+
+    const activationEl = [...card.querySelectorAll('[onclick]')]
+      .find(el => /showActivateConfirmation\s*\(/i.test(el.getAttribute('onclick') || ''));
+    const activationCode = activationEl?.getAttribute('onclick') || '';
+    const internalId = activationCode.match(/showActivateConfirmation\s*\(\s*['"]?(\d+)['"]?/i)?.[1] || '';
+    const action = activationCode.match(/showActivateConfirmation\s*\([^,]+,\s*['"](activate|deactivate)['"]/i)?.[1] || '';
+    const active = action === 'deactivate' ? true : action === 'activate' ? false : null;
+
+    return {
+      index: index + 1,
+      title,
+      curriculumPath,
+      pathSegments,
+      course,
+      unit,
+      topic,
+      source,
+      displayMode,
+      grade,
+      active,
+      internalId,
+      assignmentGuid,
+      viewUrl,
+      publishUrl,
+      publishedUrl
+    };
+  };
+
+  const parseIndexAssignmentsFromDocument = (doc = document) => {
+    const cards = [...doc.querySelectorAll(indexCardSelector)]
+      .filter(card => card.querySelectorAll('a[href*="/Teacher/Assignments/ViewAssignment/"]').length === 1);
+
+    const assignments = cards
+      .map(parseIndexAssignmentCard)
+      .filter(a => a.title && a.assignmentGuid);
+
+    const unique = new Map();
+    for (const a of assignments) if (!unique.has(a.assignmentGuid)) unique.set(a.assignmentGuid, a);
+    return [...unique.values()];
+  };
+
+  const indexScopeUrl = () => {
+    try { return new URL(location.pathname, location.origin).href; }
+    catch { return location.origin + location.pathname; }
+  };
+
+  const indexPageUrl = (pageNumber = 1) => {
+    const url = new URL(indexScopeUrl());
+    url.searchParams.set('pageNumber', String(pageNumber));
+    return url.href;
+  };
+
+  const collectIndexAssignments = () => {
+    const assignments = parseIndexAssignmentsFromDocument(document);
+    indexState.assignments = assignments.map((a, i) => ({ ...a, index: i + 1 }));
+    indexState.collectedAt = new Date().toISOString();
+    indexState.indexPagesScanned = assignments.length ? 1 : 0;
+    indexState.indexStopReason = 'current_dom';
+    indexState.indexCollectionMode = 'current';
+    return indexState.assignments;
+  };
+
+  async function collectAllIndexAssignments({ silent = false } = {}) {
+    const unique = new Map();
+    let pagesScanned = 0;
+    let stopReason = '';
+    let firstPageFailed = false;
+
+    for (let pageNumber = 1; pageNumber <= INDEX_MAX_PAGES; pageNumber++) {
+      if (!silent) setIndexBusy(true, `جاري قراءة صفحة الواجبات ${pageNumber}…`);
+
+      let doc = null;
+      try {
+        doc = await fetchTextDocument(indexPageUrl(pageNumber));
+      } catch (e) {
+        if (pageNumber === 1) firstPageFailed = true;
+        stopReason = `fetch_error:${pageNumber}`;
+        console.warn(`[MAI v${VERSION}] Could not fetch Index page ${pageNumber}:`, e);
+        break;
+      }
+
+      const rows = parseIndexAssignmentsFromDocument(doc);
+
+      // أول صفحة فارغة قد تعني أن GET تغيّر مستقبلاً؛ عندها نحتفظ بالـDOM الحالي بدل فقد البيانات.
+      if (!rows.length) {
+        stopReason = pageNumber === 1 ? 'empty_first_page' : 'empty_page';
+        break;
+      }
+
+      pagesScanned++;
+      let newCount = 0;
+      for (const row of rows) {
+        if (!unique.has(row.assignmentGuid)) {
+          unique.set(row.assignmentGuid, row);
+          newCount++;
+        }
+      }
+
+      // حماية من أي خادم يعيد الصفحة نفسها مهما تغير pageNumber.
+      if (pageNumber > 1 && newCount === 0) {
+        stopReason = 'duplicate_page';
+        break;
+      }
+
+      if (pageNumber === INDEX_MAX_PAGES) stopReason = 'max_pages';
+    }
+
+    // احتياط: لو تعذر جلب الصفحة الأولى نستخدم بطاقات الصفحة المفتوحة.
+    if (!unique.size) {
+      const fallback = parseIndexAssignmentsFromDocument(document);
+      for (const row of fallback) if (!unique.has(row.assignmentGuid)) unique.set(row.assignmentGuid, row);
+      if (fallback.length && !pagesScanned) pagesScanned = 1;
+      if (firstPageFailed) stopReason = 'fallback_current_dom';
+    }
+
+    indexState.assignments = [...unique.values()].map((a, i) => ({ ...a, index: i + 1 }));
+    indexState.collectedAt = new Date().toISOString();
+    indexState.indexPagesScanned = pagesScanned;
+    indexState.indexStopReason = stopReason || 'done';
+    indexState.indexCollectionMode = 'all_pages';
+    return indexState.assignments;
+  }
+
+  const loadIndexPublicationsCache = () => {
+    const cached = safeJSONParse(localStorage.getItem(INDEX_PUBLICATIONS_CACHE_KEY), null);
+    if (!cached || cached.pageUrl !== indexScopeUrl() || !cached.byGuid) return null;
+    const current = new Set(indexState.assignments.map(a => a.assignmentGuid));
+    const cachedKeys = Object.keys(cached.byGuid || {});
+    if (!cachedKeys.some(k => current.has(k))) return null;
+    indexState.publications = cached;
+    return cached;
+  };
+
+  const saveIndexPublicationsCache = (cache) => {
+    try { localStorage.setItem(INDEX_PUBLICATIONS_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  };
+
+  const loadIndexDeepCache = () => {
+    const cached = safeJSONParse(localStorage.getItem(INDEX_DEEP_CACHE_KEY), null);
+    if (!cached || cached.pageUrl !== indexScopeUrl() || !cached.byGuid) return null;
+    const current = new Set(indexState.assignments.map(a => a.assignmentGuid));
+    if (!Object.keys(cached.byGuid || {}).some(k => current.has(k))) return null;
+    indexState.deep = cached;
+    return cached;
+  };
+
+  const saveIndexDeepCache = (cache) => {
+    try { localStorage.setItem(INDEX_DEEP_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  };
+
+  const publicationInfoFor = (assignment) => indexState.publications?.byGuid?.[assignment.assignmentGuid] || null;
+  const deepInfoFor = (assignment) => indexState.deep?.byGuid?.[assignment.assignmentGuid] || null;
+
+  // التقرير النهائي لا يُحتسب إلا بعد انتهاء جميع مرات نشر الواجب.
+  // وجود أي نشر حالي يعني أن البيانات ما زالت قيد الاكتمال، لذلك نؤجل التقرير بالكامل.
+  const reportEligibilityFor = (assignment) => {
+    const pub = publicationInfoFor(assignment);
+    if (!pub) return { eligible: false, status: 'unscanned', label: 'لم يتم فحص المنشورات', current: 0, ended: 0 };
+
+    const deep = deepInfoFor(assignment);
+    if (deep?.reportStatus === 'receiving_server_verified') {
+      return { eligible: false, status: 'receiving', label: 'قيد الاستقبال (وقت الخادم)', current: Number(pub.currentGradeLinks || 0), ended: Number(pub.endedGradeLinks || 0) };
+    }
+    if (deep?.reportStatus === 'timing_unverified') {
+      return { eligible: false, status: 'scan_incomplete', label: 'تعذر التحقق من وقت النهاية', current: Number(pub.currentGradeLinks || 0), ended: Number(pub.endedGradeLinks || 0) };
+    }
+
+    const current = Number(pub.currentGradeLinks || pub.current?.gradeLinks?.length || 0);
+    const ended = Number(pub.endedGradeLinks || pub.ended?.gradeLinks?.length || 0);
+    const currentOk = Array.isArray(pub.current?.errors) ? pub.current.errors.length === 0 : false;
+    const endedOk = Array.isArray(pub.ended?.errors) ? pub.ended.errors.length === 0 : false;
+
+    if (current > 0) return { eligible: false, status: 'receiving', label: 'قيد الاستقبال', current, ended };
+    if (!currentOk || !endedOk) return { eligible: false, status: 'scan_incomplete', label: 'فحص المنشورات غير مكتمل', current, ended };
+    if (ended > 0) return { eligible: true, status: 'ready', label: 'مكتمل', current, ended };
+    return { eligible: false, status: 'no_publications', label: 'لا توجد منشورات منتهية', current, ended };
+  };
+
+  const summarizeIndexAssignments = () => {
+    const rows = indexState.assignments || [];
+    const grades = rows.map(r => r.grade).filter(Number.isFinite);
+    const totalGrade = grades.reduce((a, b) => a + b, 0);
+    const averageGrade = grades.length ? totalGrade / grades.length : null;
+    const activeCount = rows.filter(r => r.active === true).length;
+    const disabledCount = rows.filter(r => r.active === false).length;
+    const sourceCounts = {};
+    for (const row of rows) {
+      const k = row.source || 'غير محدد';
+      sourceCounts[k] = (sourceCounts[k] || 0) + 1;
+    }
+    const publicationLinks = rows.reduce((sum, row) => sum + (publicationInfoFor(row)?.gradeLinks?.length || 0), 0);
+    const publishedAssignments = rows.filter(row => (publicationInfoFor(row)?.gradeLinks?.length || 0) > 0).length;
+    const reportReadyCount = rows.filter(row => reportEligibilityFor(row).eligible).length;
+    const reportReceivingCount = rows.filter(row => reportEligibilityFor(row).status === 'receiving').length;
+    const reportDeferredCount = rows.filter(row => ['receiving','scan_incomplete'].includes(reportEligibilityFor(row).status)).length;
+    const deepItems = rows.map(deepInfoFor).filter(x => x && x.analysisAvailable !== false && x.reportStatus !== 'receiving' && x.publicationsAnalyzed > 0);
+    const deepStudentRecords = deepItems.reduce((sum, x) => sum + (x.studentRecords || 0), 0);
+    const deepSubmitted = deepItems.reduce((sum, x) => sum + (x.submitted || 0), 0);
+    const deepNotSubmitted = deepItems.reduce((sum, x) => sum + (x.notSubmitted || 0), 0);
+    const deepScoreCount = deepItems.reduce((sum, x) => sum + (x.scoreCount || 0), 0);
+    const deepScoreSum = deepItems.reduce((sum, x) => sum + (x.scorePercentSum || 0), 0);
+
+    return {
+      total: rows.length,
+      activeCount,
+      disabledCount,
+      unknownStatusCount: rows.length - activeCount - disabledCount,
+      totalGrade,
+      averageGrade,
+      highestGrade: grades.length ? Math.max(...grades) : null,
+      lowestGrade: grades.length ? Math.min(...grades) : null,
+      sourceCounts,
+      uniqueSources: Object.keys(sourceCounts).length,
+      publicationLinks,
+      publishedAssignments,
+      reportReadyCount,
+      reportReceivingCount,
+      reportDeferredCount,
+      publicationsScanned: !!indexState.publications,
+      deepScanned: !!indexState.deep,
+      deepStudentRecords,
+      deepSubmitted,
+      deepNotSubmitted,
+      deepAveragePercent: deepScoreCount ? deepScoreSum / deepScoreCount : null
+    };
+  };
+
+  const indexStatusLabel = (row) => row.active === true ? 'مفعّل' : row.active === false ? 'معطل' : 'غير محدد';
+
+  const indexMetric = (value, label, hint = '') => `
+    <div class="${APP}-idx-metric">
+      <strong>${esc(value)}</strong>
+      <span>${esc(label)}</span>
+      ${hint ? `<small>${esc(hint)}</small>` : ''}
+    </div>`;
+
+  const renderIndexPanel = () => {
+    const panel = document.getElementById(indexPanelId);
+    if (!panel) return;
+
+    const summary = summarizeIndexAssignments();
+    const sourceHtml = Object.entries(summary.sourceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `<span class="${APP}-idx-chip">${esc(name)} <b>${count}</b></span>`)
+      .join('');
+
+    const body = panel.querySelector(`.${APP}-idx-body`);
+    if (!body) return;
+
+    body.innerHTML = `
+      <div class="${APP}-idx-metrics">
+        ${indexMetric(summary.total, 'إجمالي الواجبات', indexState.indexPagesScanned ? `من ${indexState.indexPagesScanned} صفحة` : '')}
+        ${indexMetric(summary.activeCount, 'مفعّلة', summary.disabledCount ? `${summary.disabledCount} معطل` : '')}
+        ${indexMetric(fmt(summary.totalGrade, 4), 'مجموع الدرجات')}
+        ${indexMetric(Number.isFinite(summary.averageGrade) ? fmt(summary.averageGrade, 4) : '—', 'متوسط درجة الواجب')}
+        ${indexMetric(Number.isFinite(summary.highestGrade) ? fmt(summary.highestGrade, 4) : '—', 'أعلى درجة')}
+        ${indexMetric(Number.isFinite(summary.lowestGrade) ? fmt(summary.lowestGrade, 4) : '—', 'أقل درجة')}
+        ${indexMetric(summary.publicationsScanned ? summary.publicationLinks : '—', 'روابط رصد مكتشفة', summary.publicationsScanned ? `${summary.publishedAssignments} واجب له رصد` : 'اضغط فحص المنشورات')}
+        ${indexMetric(summary.deepScanned && Number.isFinite(summary.deepAveragePercent) ? `${fmt(summary.deepAveragePercent)}%` : '—', 'متوسط الأداء العام', summary.deepScanned ? `${summary.deepStudentRecords} سجل طالب · ${summary.reportReceivingCount} قيد الاستقبال` : 'للواجبات المنتهية فقط')}
+      </div>
+
+      ${sourceHtml ? `<div class="${APP}-idx-sources"><b>مصادر الواجبات:</b>${sourceHtml}</div>` : ''}
+
+      <div class="${APP}-idx-note">
+        يجمع «تحديث السجل» جميع صفحات إدارة الواجبات تلقائيًا ويزيل التكرار بالـ Assignment GUID. «فحص المنشورات» يكتشف الحالية والمنتهية، أما تقرير الأداء فلا يُحتسب إلا للواجب الذي انتهت جميع مرات نشره؛ أي واجب ما زال قيد الاستقبال يُؤجل تقريره حتى ينتهي.
+      </div>
+
+      <div class="${APP}-idx-table-wrap">
+        <table class="${APP}-idx-table">
+          <thead><tr>
+            <th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة / الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>الرصد</th><th>نسبة الحل</th><th>المتوسط</th><th>لم يحل</th><th>روابط</th>
+          </tr></thead>
+          <tbody>
+            ${(indexState.assignments || []).map(row => {
+              const pub = publicationInfoFor(row);
+              const deep = deepInfoFor(row);
+              const reportState = reportEligibilityFor(row);
+              const pubCount = pub ? (pub.gradeLinks?.length || 0) : null;
+              const pubCell = !pub
+                ? '—'
+                : pub.error && !pub.scanComplete
+                  ? `تعذر<div class="${APP}-idx-tiny error">فشل فحص المنشورات</div>`
+                  : pubCount > 0
+                    ? `${pubCount}<div class="${APP}-idx-tiny">${pub.currentGradeLinks || 0} حالي · ${pub.endedGradeLinks || 0} منتهي</div>${reportState.status === 'receiving' ? `<div class="${APP}-idx-tiny">التقرير مؤجل حتى انتهاء الاستقبال</div>` : ''}`
+                    : `لا يوجد<div class="${APP}-idx-tiny">0 رابط رصد مكتشف</div>`;
+              const deepAvailable = !!(reportState.eligible && deep && deep.analysisAvailable !== false && deep.publicationsAnalyzed > 0);
+              return `<tr>
+                <td>${row.index}</td>
+                <td><b>${esc(row.title)}</b>${row.internalId ? `<div class="${APP}-idx-tiny">ID: ${esc(row.internalId)}</div>` : ''}</td>
+                <td>${esc(row.course || '—')}</td>
+                <td>${esc([row.unit, row.topic].filter(Boolean).join(' ← ') || '—')}</td>
+                <td>${esc(row.source || '—')}<div class="${APP}-idx-tiny">${esc(row.displayMode || '')}</div></td>
+                <td>${Number.isFinite(row.grade) ? fmt(row.grade, 4) : '—'}</td>
+                <td><span class="${APP}-idx-status ${row.active === true ? 'on' : row.active === false ? 'off' : ''}">${esc(indexStatusLabel(row))}</span></td>
+                <td>${pubCell}</td>
+                <td>${reportState.status === 'receiving' ? '<b>قيد الاستقبال</b>' : deepAvailable ? (deep.submissionVerifiable ? `${fmt(deep.submissionRate)}%` : 'غير متاح') : '—'}</td>
+                <td>${deepAvailable && Number.isFinite(deep.averagePercent) ? `${fmt(deep.averagePercent)}%` : '—'}${deepAvailable && deep?.gradeDiscrepancies ? `<div class="${APP}-idx-tiny error">${deep.gradeDiscrepancies} تعارض درجة</div>` : ''}</td>
+                <td>${deepAvailable ? (deep.submissionVerifiable ? deep.notSubmitted : '—') : '—'}</td>
+                <td class="${APP}-idx-links">
+                  ${row.viewUrl ? `<a href="${esc(row.viewUrl)}" target="_blank" rel="noopener">استعراض</a>` : ''}
+                  ${row.publishedUrl ? `<a href="${esc(row.publishedUrl)}" target="_blank" rel="noopener">المرسلة</a>` : ''}
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  };
+
+  const setIndexBusy = (busy, text = '') => {
+    indexState.busy = !!busy;
+    const panel = document.getElementById(indexPanelId);
+    if (!panel) return;
+    const status = panel.querySelector(`.${APP}-idx-status-text`);
+    if (status) {
+      const pages = indexState.indexPagesScanned ? ` · ${indexState.indexPagesScanned} صفحة` : '';
+      status.textContent = busy ? (text || 'جارٍ المعالجة…') : `جاهز · ${indexState.assignments.length} واجب${pages}`;
+    }
+    panel.querySelectorAll(`[data-${APP.toLowerCase()}-index-action]`).forEach(btn => { btn.disabled = !!busy; });
+  };
+
+  const setIndexCollapsed = (panel, collapsed) => {
+    if (!panel) return;
+    panel.classList.toggle(`${APP}-idx-collapsed`, !!collapsed);
+    const btn = panel.querySelector(`[data-${APP.toLowerCase()}-index-collapse]`);
+    if (btn) {
+      btn.textContent = collapsed ? 'فتح اللوحة' : 'طي اللوحة';
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    try { localStorage.setItem(INDEX_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
+  };
+
+  const addIndexStyles = () => {
+    if (document.getElementById(`${APP}-index-style`)) return;
+    const style = document.createElement('style');
+    style.id = `${APP}-index-style`;
+    style.textContent = `
+      #${indexPanelId}{direction:rtl;font-family:Tahoma,Arial,sans-serif;border:1px solid #dbe3ee;border-radius:14px;background:#fff;margin:14px 0 18px;overflow:hidden;box-shadow:0 4px 18px rgba(15,23,42,.06)}
+      #${indexPanelId} .${APP}-idx-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#f8fafc,#eef6ff);border-bottom:1px solid #e5e7eb}
+      #${indexPanelId} .${APP}-idx-title{font-size:18px;font-weight:900;color:#111827;margin:0}#${indexPanelId} .${APP}-idx-sub{font-size:11px;color:#64748b;margin-top:4px}
+      #${indexPanelId} .${APP}-idx-head-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}#${indexPanelId} .${APP}-idx-status-text{font-size:10px;color:#64748b;font-weight:700}
+      #${indexPanelId} button{font-family:inherit}#${indexPanelId} .${APP}-idx-collapse,#${indexPanelId} .${APP}-idx-btn{border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:9px;padding:7px 10px;font-size:10px;font-weight:800;cursor:pointer}
+      #${indexPanelId} .${APP}-idx-btn.primary{background:#0f172a;color:#fff;border-color:#0f172a}#${indexPanelId} .${APP}-idx-btn:disabled{opacity:.55;cursor:wait}
+      #${indexPanelId} .${APP}-idx-toolbar{display:flex;gap:7px;flex-wrap:wrap;padding:11px 14px;border-bottom:1px solid #eef2f7;background:#fff}
+      #${indexPanelId} .${APP}-idx-body{padding:14px}#${indexPanelId}.${APP}-idx-collapsed .${APP}-idx-toolbar,#${indexPanelId}.${APP}-idx-collapsed .${APP}-idx-body{display:none!important}
+      #${indexPanelId} .${APP}-idx-metrics{display:grid;grid-template-columns:repeat(8,minmax(105px,1fr));gap:8px;margin-bottom:12px}
+      #${indexPanelId} .${APP}-idx-metric{border:1px solid #e5e7eb;border-radius:11px;padding:10px;text-align:center;background:#fafafa;min-height:76px;display:flex;flex-direction:column;justify-content:center}
+      #${indexPanelId} .${APP}-idx-metric strong{font-size:21px;color:#111827;line-height:1.2}#${indexPanelId} .${APP}-idx-metric span{font-size:10px;font-weight:800;color:#475569;margin-top:4px}#${indexPanelId} .${APP}-idx-metric small{font-size:9px;color:#94a3b8;margin-top:2px}
+      #${indexPanelId} .${APP}-idx-sources{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;margin:8px 0 10px;color:#475569}#${indexPanelId} .${APP}-idx-chip{background:#f1f5f9;border:1px solid #e2e8f0;padding:4px 7px;border-radius:999px}
+      #${indexPanelId} .${APP}-idx-note{font-size:10px;line-height:1.7;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:8px 10px;margin-bottom:10px}
+      #${indexPanelId} .${APP}-idx-table-wrap{overflow:auto;border:1px solid #e5e7eb;border-radius:10px}#${indexPanelId} .${APP}-idx-table{width:100%;border-collapse:collapse;min-width:1220px;font-size:10px}
+      #${indexPanelId} .${APP}-idx-table th,#${indexPanelId} .${APP}-idx-table td{border-bottom:1px solid #edf2f7;padding:8px 7px;text-align:right;vertical-align:top}#${indexPanelId} .${APP}-idx-table th{background:#f8fafc;position:sticky;top:0;z-index:1;font-weight:900;color:#334155}
+      #${indexPanelId} .${APP}-idx-table tr:last-child td{border-bottom:0}#${indexPanelId} .${APP}-idx-tiny{font-size:8px;color:#94a3b8;margin-top:2px}#${indexPanelId} .${APP}-idx-tiny.error{color:#b91c1c}
+      #${indexPanelId} .${APP}-idx-status{display:inline-block;padding:3px 7px;border-radius:999px;background:#f1f5f9;color:#475569;font-weight:800}#${indexPanelId} .${APP}-idx-status.on{background:#dcfce7;color:#166534}#${indexPanelId} .${APP}-idx-status.off{background:#fee2e2;color:#991b1b}
+      #${indexPanelId} .${APP}-idx-links{white-space:nowrap}#${indexPanelId} .${APP}-idx-links a{display:inline-block;margin-left:5px;text-decoration:none;font-weight:800;color:#1d4ed8}
+      @media(max-width:1200px){#${indexPanelId} .${APP}-idx-metrics{grid-template-columns:repeat(4,minmax(100px,1fr))}}@media(max-width:700px){#${indexPanelId} .${APP}-idx-head{align-items:flex-start;flex-direction:column}#${indexPanelId} .${APP}-idx-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    `;
+    document.head.appendChild(style);
+  };
+
+  const createIndexPanel = () => {
+    let panel = document.getElementById(indexPanelId);
+    if (panel) return panel;
+
+    panel = document.createElement('section');
+    panel.id = indexPanelId;
+    panel.innerHTML = `
+      <div class="${APP}-idx-head">
+        <div><div class="${APP}-idx-title">لوحة الواجبات الشاملة</div><div class="${APP}-idx-sub">سجل وتقارير صفحة إدارة الواجبات — v${VERSION}</div></div>
+        <div class="${APP}-idx-head-tools"><span class="${APP}-idx-status-text">جاهز</span><button type="button" class="${APP}-idx-collapse" data-${APP.toLowerCase()}-index-collapse>طي اللوحة</button></div>
+      </div>
+      <div class="${APP}-idx-toolbar">
+        <button type="button" class="${APP}-idx-btn primary" data-${APP.toLowerCase()}-index-action="refresh">تحديث السجل</button>
+        <button type="button" class="${APP}-idx-btn" data-${APP.toLowerCase()}-index-action="publications">فحص المنشورات</button>
+        <button type="button" class="${APP}-idx-btn primary" data-${APP.toLowerCase()}-index-action="deep">تحليل أداء الواجبات المنتهية</button>
+        <button type="button" class="${APP}-idx-btn primary" data-${APP.toLowerCase()}-index-action="print">تقرير / PDF</button>
+        <button type="button" class="${APP}-idx-btn" data-${APP.toLowerCase()}-index-action="csv">CSV</button>
+        <button type="button" class="${APP}-idx-btn" data-${APP.toLowerCase()}-index-action="excel">Excel</button>
+      </div>
+      <div class="${APP}-idx-body"></div>`;
+
+    // لا نستخدم أول .list-group في الصفحة؛ مدرستي تحتوي قوائم مخفية كثيرة في المودالات والقوائم العامة.
+    // نربط اللوحة بقائمة الواجبات نفسها عبر أول بطاقة واجب مؤكدة.
+    const firstAssignmentCard = document.querySelector(indexCardSelector);
+    const assignmentList = firstAssignmentCard?.closest('.list-group') || null;
+    const assignmentSection = firstAssignmentCard?.closest('.card') || null;
+
+    if (assignmentList?.parentElement) {
+      assignmentList.parentElement.insertBefore(panel, assignmentList);
+    } else if (assignmentSection) {
+      assignmentSection.prepend(panel);
+    } else {
+      (document.querySelector('#mainDiv .card-body') || document.querySelector('#mainDiv') || document.body).prepend(panel);
+    }
+
+    panel.querySelector(`[data-${APP.toLowerCase()}-index-collapse]`)?.addEventListener('click', () => {
+      setIndexCollapsed(panel, !panel.classList.contains(`${APP}-idx-collapsed`));
+    });
+
+    panel.addEventListener('click', async (event) => {
+      const btn = event.target.closest?.(`[data-${APP.toLowerCase()}-index-action]`);
+      if (!btn || btn.disabled || indexState.busy) return;
+      const action = btn.dataset[`${APP.toLowerCase()}IndexAction`];
+      if (!action) return;
+
+      try {
+        if (action === 'refresh') {
+          setIndexBusy(true, 'جاري تحديث سجل الواجبات من جميع الصفحات…');
+          await collectAllIndexAssignments();
+          loadIndexPublicationsCache();
+          loadIndexDeepCache();
+          renderIndexPanel();
+          toast(`تمت قراءة ${indexState.assignments.length} واجبًا من ${indexState.indexPagesScanned || 1} صفحة.`, 'success');
+        } else if (action === 'publications') {
+          await auditIndexPublications();
+        } else if (action === 'deep') {
+          await runIndexDeepAnalysis();
+        } else if (action === 'print') {
+          printIndexReport();
+        } else if (action === 'csv') {
+          exportIndexCSV();
+        } else if (action === 'excel') {
+          exportIndexExcel();
+        }
+      } catch (e) {
+        console.error('[MAI v1.4.2] Index action failed:', action, e);
+        toast(String(e?.message || e), 'error');
+      } finally {
+        setIndexBusy(false);
+      }
+    });
+
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(INDEX_COLLAPSE_KEY) === '1'; } catch {}
+    setIndexCollapsed(panel, collapsed);
+    return panel;
+  };
+
+  const extractGradeLinksFromPublishedDocument = (doc, meta = {}) => {
+    const found = [];
+    const push = (href, context = '') => {
+      const abs = safeAbsoluteUrl(href);
+      if (!/\/Teacher\/Assignments\/GradeAssignment\/[A-F0-9]{32}/i.test(abs)) return;
+      if (!found.some(x => x.href === abs)) {
+        found.push({
+          href: abs,
+          context: clean(context).slice(0, 520),
+          publicationState: meta.publicationState || '',
+          isDue: meta.isDue ?? null,
+          pageNumber: meta.pageNumber || 1
+        });
+      }
+    };
+
+    for (const a of doc.querySelectorAll('a[href*="/Teacher/Assignments/GradeAssignment/"]')) {
+      push(a.getAttribute('href'), a.closest('.dga-defualt-card,.card,tr,.list-group-item')?.innerText || a.parentElement?.innerText || a.innerText);
+    }
+
+    for (const el of doc.querySelectorAll('[onclick]')) {
+      const onclick = el.getAttribute('onclick') || '';
+      const m = onclick.match(/(\/Teacher\/Assignments\/GradeAssignment\/[A-F0-9]{32}[^'"\s)]*)/i);
+      if (m) push(m[1], el.closest('.dga-defualt-card,.card,tr,.list-group-item')?.innerText || el.innerText);
+    }
+
+    return found;
+  };
+
+  const publishedPageCount = (doc) => {
+    const text = clean(doc?.body?.innerText || '');
+    const fromText = num(text.match(/صفحة\s+[\d٠-٩۰-۹]+\s+من\s+([\d٠-٩۰-۹]+)/i)?.[1]);
+    if (Number.isFinite(fromText) && fromText > 0) return Math.min(50, Math.max(1, Math.trunc(fromText)));
+
+    const nums = [...(doc?.querySelectorAll?.('a[href]') || [])]
+      .map(a => {
+        try { return Number(new URL(a.getAttribute('href'), location.origin).searchParams.get('pageNumber')); }
+        catch { return 0; }
+      })
+      .filter(n => Number.isFinite(n) && n > 0);
+    return nums.length ? Math.min(50, Math.max(...nums)) : 1;
+  };
+
+  const publicationStatusUrl = (row, isDue, pageNumber = 1) => {
+    const url = new URL(row.publishedUrl, location.origin);
+    // نوحد أسماء مفاتيح الاستعلام لأن مدرستي تستخدم AssignmentId/assignmentId بالتبادل.
+    for (const key of [...url.searchParams.keys()]) {
+      if (key.toLowerCase() === 'assignmentid') url.searchParams.delete(key);
+      if (key.toLowerCase() === 'isdue') url.searchParams.delete(key);
+      if (key.toLowerCase() === 'pagenumber') url.searchParams.delete(key);
+    }
+    url.searchParams.set('AssignmentId', row.assignmentGuid);
+    url.searchParams.set('pageNumber', String(pageNumber));
+    url.searchParams.set('IsDue', isDue ? 'True' : 'False');
+    if (![...url.searchParams.keys()].some(k => k.toLowerCase() === 'searchclassroom')) url.searchParams.set('searchClassRoom', '0');
+    if (![...url.searchParams.keys()].some(k => k.toLowerCase() === 'type')) url.searchParams.set('type', '0');
+    return url.href;
+  };
+
+  async function scanPublicationBucket(row, isDue) {
+    const publicationState = isDue ? 'منتهي' : 'حالي';
+    const gradeLinks = [];
+    const errors = [];
+    let totalPages = 1;
+    let emptyMessage = '';
+
+    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
+      const url = publicationStatusUrl(row, isDue, pageNumber);
+      try {
+        const doc = await fetchTextDocument(url);
+        if (pageNumber === 1) totalPages = publishedPageCount(doc);
+        const bodyText = clean(doc.body?.innerText || '');
+        if (/لا\s+توجد\s+واجبات\s+(?:حالية|منتهية)/i.test(bodyText)) {
+          emptyMessage = bodyText.match(/لا\s+توجد\s+واجبات\s+(?:حالية|منتهية)/i)?.[0] || '';
+        }
+        const links = extractGradeLinksFromPublishedDocument(doc, { publicationState, isDue, pageNumber });
+        for (const link of links) if (!gradeLinks.some(x => x.href === link.href)) gradeLinks.push(link);
+      } catch (e) {
+        errors.push(`صفحة ${pageNumber}: ${String(e?.message || e)}`);
+        if (pageNumber === 1) break;
+      }
     }
 
     return {
-      name,
-      normalizedName: norm(name),
-      className,
-      normalizedClass: norm(className),
-      status,
-      account,
-      accountNormalized: account.toLowerCase(),
-      userGuid
-    };
-  };
-
-  const detectTotalStudentPages = (doc) => {
-    const text = clean(doc.querySelector('#pagination-container')?.innerText || '');
-    const m = text.match(/من\s+(\d+)/);
-    if (m) return Math.max(1, Number(m[1]) || 1);
-
-    const nums = [...doc.querySelectorAll('.pagination a[href*="PageNumber="]')]
-      .map(a => {
-        try { return Number(new URL(a.href, location.origin).searchParams.get('PageNumber')); }
-        catch { return 0; }
-      })
-      .filter(Boolean);
-
-    return nums.length ? Math.max(...nums) : 1;
-  };
-
-  async function fetchStudentRegistry(force = false) {
-    const schoolId = currentSchoolId();
-    if (!schoolId) throw new Error('تعذر تحديد SchoolId.');
-
-    const cached = loadJSON(STORE.registry);
-    if (!force && cached?.schoolId === schoolId && Array.isArray(cached.students) && cached.students.length) {
-      state.registry = cached;
-      return cached;
-    }
-
-    const firstUrl = `/SchoolManagment/Actions/MyStudents?PageNumber=1&schoolId=${encodeURIComponent(schoolId)}`;
-    const firstRes = await fetch(firstUrl, { credentials: 'same-origin' });
-    if (!firstRes.ok) throw new Error(`تعذر جلب قائمة الطلاب (${firstRes.status}).`);
-    const firstHtml = await firstRes.text();
-    const firstDoc = new DOMParser().parseFromString(firstHtml, 'text/html');
-    const totalPages = detectTotalStudentPages(firstDoc);
-
-    const all = [];
-    const pages = [];
-
-    const parseDoc = (doc, pageNumber) => {
-      const students = [...doc.querySelectorAll('#studentsDiv .card.p-3')]
-        .map(parseStudentCard)
-        .filter(s => s.name && s.account);
-      all.push(...students);
-      pages.push({ pageNumber, count: students.length, ok: true });
-    };
-
-    parseDoc(firstDoc, 1);
-
-    for (let p = 2; p <= totalPages; p++) {
-      const url = `/SchoolManagment/Actions/MyStudents?PageNumber=${p}&schoolId=${encodeURIComponent(schoolId)}`;
-      try {
-        const res = await fetch(url, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error(String(res.status));
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        parseDoc(doc, p);
-      } catch (e) {
-        pages.push({ pageNumber: p, count: 0, ok: false, error: String(e?.message || e) });
-      }
-    }
-
-    const unique = new Map();
-    for (const s of all) {
-      const key = s.userGuid
-        ? `u:${s.userGuid}`
-        : s.accountNormalized
-          ? `a:${s.accountNormalized}`
-          : `n:${s.normalizedName}|${s.normalizedClass}`;
-      if (!unique.has(key)) unique.set(key, s);
-    }
-
-    const registry = {
-      schoolId,
+      publicationState,
+      isDue,
       totalPages,
-      fetchedRows: all.length,
-      uniqueStudents: unique.size,
-      failedPages: pages.filter(p => !p.ok),
-      pages,
-      students: [...unique.values()],
-      savedAt: new Date().toISOString()
+      gradeLinks,
+      count: gradeLinks.length,
+      emptyMessage,
+      errors
     };
-
-    state.registry = registry;
-    saveJSON(STORE.registry, registry);
-    return registry;
   }
 
-  // -----------------------------
-  // Assignment roster / identity bridge
-  // -----------------------------
-  const assignmentRoster = () => {
-    const select = document.querySelector('#studentsFilter');
-    if (!select) return [];
+  async function auditIndexPublications() {
+    if (!indexState.assignments.length) await collectAllIndexAssignments();
+    if (!indexState.assignments.length) throw new Error('لم أجد واجبات في صفحة إدارة الواجبات.');
 
-    return [...select.options]
-      .filter(o => o.value && /^\d+$/.test(o.value))
-      .map(o => ({
-        studentId: o.value,
-        assignmentStudentId: o.value,
-        name: clean(o.textContent),
-        normalizedName: norm(o.textContent)
+    setIndexBusy(true, 'جاري فحص الواجبات الحالية والمنتهية…');
+    const byGuid = {};
+    const concurrency = 2;
+
+    for (let i = 0; i < indexState.assignments.length; i += concurrency) {
+      const batch = indexState.assignments.slice(i, i + concurrency);
+      const part = await Promise.all(batch.map(async (row) => {
+        if (!row.publishedUrl) {
+          return [row.assignmentGuid, {
+            title: row.title,
+            fetchedAt: new Date().toISOString(),
+            gradeLinks: [],
+            scanComplete: false,
+            error: 'لا يوجد رابط للواجبات المرسلة'
+          }];
+        }
+
+        const [current, ended] = await Promise.all([
+          scanPublicationBucket(row, false),
+          scanPublicationBucket(row, true)
+        ]);
+
+        const gradeLinks = [];
+        for (const link of [...current.gradeLinks, ...ended.gradeLinks]) {
+          if (!gradeLinks.some(x => x.href === link.href)) gradeLinks.push(link);
+        }
+
+        const errors = [...current.errors.map(x => `الحالية: ${x}`), ...ended.errors.map(x => `المنتهية: ${x}`)];
+        return [row.assignmentGuid, {
+          title: row.title,
+          fetchedAt: new Date().toISOString(),
+          gradeLinks,
+          current,
+          ended,
+          currentGradeLinks: current.gradeLinks.length,
+          endedGradeLinks: ended.gradeLinks.length,
+          scanComplete: current.errors.length === 0 && ended.errors.length === 0,
+          error: errors.length && !gradeLinks.length ? errors.join(' | ') : '',
+          warnings: errors
+        }];
       }));
-  };
-
-  const currentStudentClassMap = () => {
-    const out = new Map();
-
-    const inputs = [...document.querySelectorAll('[name$=".StudentId"]')];
-    for (const input of inputs) {
-      const studentId = clean(input.value);
-      if (!studentId) continue;
-
-      let node = input;
-      let best = '';
-      for (let i = 0; i < 10 && node; i++, node = node.parentElement) {
-        const t = clean(node.innerText);
-        if (/الفصل\s+المدرسي\s*:/i.test(t) && t.length < 2500) {
-          best = t;
-          break;
-        }
-      }
-
-      const cls = best.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة|\s+الإجابة|\s+ملاحظات|$)/i)?.[1]?.trim() || '';
-      if (cls) out.set(studentId, cls);
+      for (const [guid, value] of part) byGuid[guid] = value;
+      setIndexBusy(true, `فحص الحالية والمنتهية ${Math.min(i + concurrency, indexState.assignments.length)} / ${indexState.assignments.length}`);
     }
 
-    return out;
-  };
+    const cache = { pageUrl: indexScopeUrl(), savedAt: new Date().toISOString(), schemaVersion: 5, byGuid };
+    indexState.publications = cache;
+    saveIndexPublicationsCache(cache);
+    indexState.deep = null;
+    try { localStorage.removeItem(INDEX_DEEP_CACHE_KEY); } catch {}
+    renderIndexPanel();
 
-  async function buildIdentityBridge(forceRegistry = false, gradeRows = []) {
-    const registry = await fetchStudentRegistry(forceRegistry);
-    const roster = assignmentRoster();
-
-    const byName = new Map();
-    for (const s of registry.students) {
-      const key = s.normalizedName || norm(s.name);
-      if (!byName.has(key)) byName.set(key, []);
-      byName.get(key).push(s);
-    }
-
-    // الفصل الظاهر حاليًا + الفصول المستخرجة من جلب طلاب الواجب كاملًا.
-    const classHints = currentStudentClassMap();
-    for (const g of gradeRows || []) {
-      if (g.assignmentStudentId && g.className) {
-        classHints.set(String(g.assignmentStudentId), g.className);
-      }
-    }
-
-    const rows = roster.map(r => {
-      const candidates = byName.get(r.normalizedName) || [];
-      let winner = null;
-      let method = '';
-
-      if (candidates.length === 1) {
-        winner = candidates[0];
-        method = 'name';
-      } else if (candidates.length > 1) {
-        const hintedClass = classHints.get(r.assignmentStudentId) || '';
-        if (hintedClass) {
-          const exact = candidates.filter(c => norm(c.className) === norm(hintedClass));
-          if (exact.length === 1) {
-            winner = exact[0];
-            method = 'name+class';
-          }
-        }
-      }
-
-      return {
-        ...r,
-        matched: !!winner,
-        matchCount: candidates.length,
-        resolutionMethod: method,
-        account: winner?.account || '',
-        userGuid: winner?.userGuid || '',
-        className: winner?.className || '',
-        candidates: candidates.map(c => ({
-          className: c.className,
-          account: c.account,
-          userGuid: c.userGuid
-        }))
-      };
-    });
-
-    // الأسماء المكررة التي لم تُحسم من الصفحة الحالية:
-    // نسأل خدمة الواجب عن الطالب نفسه، ثم نستخدم الفصل كعامل حسم.
-    for (const row of rows.filter(x => !x.matched && x.matchCount > 1)) {
-      try {
-        const assignmentClass = await resolveAssignmentStudentClass(row.assignmentStudentId);
-        if (!assignmentClass) continue;
-
-        const exact = row.candidates.filter(c => norm(c.className) === norm(assignmentClass));
-        if (exact.length === 1) {
-          row.matched = true;
-          row.matchCount = 1;
-          row.resolutionMethod = 'name+class-query';
-          row.account = exact[0].account || '';
-          row.userGuid = exact[0].userGuid || '';
-          row.className = exact[0].className || '';
-          row.resolvedAssignmentClass = assignmentClass;
-        }
-      } catch {}
-    }
-
-    const bridge = {
-      schoolId: registry.schoolId,
-      total: rows.length,
-      matched: rows.filter(x => x.matched).length,
-      unmatched: rows.filter(x => x.matchCount === 0).length,
-      ambiguous: rows.filter(x => !x.matched && x.matchCount > 1).length,
-      rows,
-      savedAt: new Date().toISOString()
-    };
-    bridge.percentage = pct(bridge.matched, bridge.total);
-
-    state.bridge = bridge;
-    saveJSON(STORE.bridge, bridge);
-    return bridge;
+    const summary = summarizeIndexAssignments();
+    toast(`اكتمل الفحص: ${summary.publicationLinks} رابط رصد عبر ${summary.publishedAssignments} واجب.`, 'success');
+    return cache;
   }
 
-  // -----------------------------
-  // GradeAssignment endpoint
-  // -----------------------------
-  const extractLoadStudentsParams = () => {
-    const fn = globalThis.loadStudents;
-    if (typeof fn !== 'function') return null;
 
-    const src = String(fn);
+  const extractGradePageParamsFromDocument = (doc) => {
+    const scripts = [...(doc?.scripts || [])]
+      .map(s => s.textContent || '')
+      .filter(text => /GetGradeStudentsList|loadStudents/i.test(text));
+    const src = scripts.join('\n');
+    if (!src) return null;
 
     const get = (key) => {
       const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const quoted = src.match(new RegExp(`${k}\\s*:\\s*['"]([^'"]*)['"]`));
-      if (quoted) return quoted[1];
-
-      const raw = src.match(new RegExp(`${k}\\s*:\\s*([\\d.]+)`));
-      return raw ? raw[1] : '';
+      return src.match(new RegExp(`${k}\\s*:\\s*['"]([^'"]*)['"]`))?.[1] ??
+        src.match(new RegExp(`${k}\\s*:\\s*(true|false|[\\d.]+)`, 'i'))?.[1] ?? '';
     };
 
-    return {
-      schoolId: get('schoolId'),
-      subjectId: get('subjectId'),
-      teacherId: get('teacherId'),
-      semesterId: get('semesterId'),
-      assignmentId: get('assignmentId'),
-      publishedAssignmentId: get('publishedAssignmentId'),
-      lectureClassId: get('lectureClassId'),
-      isGradebook: get('isGradebook'),
-      isPublished: get('isPublished'),
-      isCurrentTeacher: get('isCurrentTeacher'),
-      isQuran: get('isQuran'),
-      assigmentStarts: get('assigmentStarts'),
-      grade: get('grade'),
-      solvingType: get('solvingType')
+    const out = {
+      schoolId: get('schoolId'), subjectId: get('subjectId'), teacherId: get('teacherId'), semesterId: get('semesterId'),
+      assignmentId: get('assignmentId'), publishedAssignmentId: get('publishedAssignmentId'), lectureClassId: get('lectureClassId'),
+      isGradebook: get('isGradebook'), isPublished: get('isPublished'), isCurrentTeacher: get('isCurrentTeacher'), isQuran: get('isQuran'),
+      assigmentStarts: get('assigmentStarts'), grade: get('grade'), solvingType: get('solvingType')
     };
+    return out.assignmentId || out.publishedAssignmentId ? out : null;
   };
 
-  const postForm = (url, data) => new Promise((resolve, reject) => {
-    if (globalThis.jQuery?.post) {
-      globalThis.jQuery.post(url, data)
-        .done(resolve)
-        .fail((xhr, status, err) => reject(new Error(err || status || `HTTP ${xhr?.status || ''}`)));
-      return;
-    }
-
-    fetch(url, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: new URLSearchParams(data)
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then(resolve, reject);
-  });
-
-  const responseHtml = (response) => {
-    if (typeof response === 'string') return response;
-    if (response && typeof response.html === 'string') return response.html;
-    return String(response ?? '');
-  };
-
-  const findStudentBlock = (input) => {
+  const findIndexStudentBlock = (input) => {
     let node = input;
-    let fallback = input.parentElement;
-
+    let fallback = input?.parentElement || null;
     for (let i = 0; i < 12 && node; i++, node = node.parentElement) {
-      const text = clean(node.innerText);
+      const text = clean(node.innerText || '');
       if (/الفصل\s+المدرسي\s*:/i.test(text) && text.length < 3500) return node;
       if (node.matches?.('.card,tr,.row,.list-group-item')) fallback = node;
     }
     return fallback;
   };
 
-  const parseGradeStudentsHtml = (html, rosterMap) => {
+  const parseIndexGradeStudentsHtml = (html) => {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const groups = new Map();
-
     [...doc.querySelectorAll('[name^="List["]')].forEach(el => {
-      const m = el.name.match(/^List\[(\d+)\]\.(.+)$/);
+      const m = el.name?.match(/^List\[(\d+)\]\.(.+)$/);
       if (!m) return;
       const index = Number(m[1]);
-      const field = m[2];
       if (!groups.has(index)) groups.set(index, {});
-      groups.get(index)[field] = el.value;
+      groups.get(index)[m[2]] = el.value;
     });
 
     const rows = [];
-
     for (const [index, fields] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
       const studentId = clean(fields.StudentId);
       if (!studentId) continue;
-
       const input = doc.querySelector(`[name="List[${index}].StudentId"]`);
-      const block = input ? findStudentBlock(input) : null;
-      const blockText = clean(block?.innerText);
-
-      const className =
-        blockText.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة|\s+الإجابة|\s+ملاحظات|$)/i)?.[1]?.trim() || '';
-
+      const block = input ? findIndexStudentBlock(input) : null;
+      const blockText = clean(block?.innerText || '');
+      const className = blockText.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة|\s+الإجابة|\s+ملاحظات|$)/i)?.[1]?.trim() || '';
       const resultLink = block
-        ? [...block.querySelectorAll('a[href]')].find(a => /StudentAssignmentResult/i.test(a.href || a.getAttribute('href') || ''))
+        ? [...block.querySelectorAll('a[href]')].find(a => /StudentAssignmentResult/i.test(a.getAttribute('href') || ''))
         : null;
-
-      const hasAnswer = String(fields.hasAnswer).toLowerCase() === 'true';
-      const isApproved = String(fields.IsApproved).toLowerCase() === 'true';
-      const solvingType = clean(fields.SolvingType);
-      const maxGrade = num(fields.TotalGrade);
-      const autoGrade = num(fields.AutoGrade);
-      const currentGrade = num(fields.Grade);
-      const achievedGrade = currentGrade ?? (isApproved ? autoGrade : null);
-      const gradeRecorded = Number.isFinite(achievedGrade) || isApproved;
-      const outsideSystem = solvingType === '3';
-
-      const submissionState = outsideSystem
-        ? 'outside_unverified'
-        : (hasAnswer ? 'submitted' : 'not_submitted');
-
-      const gradeState = gradeRecorded
-        ? 'recorded'
-        : (!outsideSystem && hasAnswer ? 'pending' : 'none');
-
-      const status = outsideSystem
-        ? (gradeRecorded ? 'graded_outside' : 'outside_unverified')
-        : (!hasAnswer ? 'not_solved' : (gradeRecorded ? 'graded' : 'submitted'));
-
       rows.push({
-        index,
         studentId,
-        assignmentStudentId: studentId,
-        name: rosterMap.get(studentId)?.name || '',
-        className,
-        hasAnswer,
-        isApproved,
-        solvingType,
         recordId: clean(fields.Id),
-        studentAssignmentRecordId: clean(fields.Id),
-        answerText: clean(fields.AnswerText),
-        feedback: clean(fields.feedBack),
-        maxGrade,
-        autoGradeRaw: autoGrade,
-        currentGrade,
-        achievedGrade,
-        gradeState,
-        submissionState,
-        resultUrl: resultLink ? new URL(resultLink.getAttribute('href'), location.origin).href : '',
-        rawFields: { ...fields },
-        status
+        className,
+        hasAnswer: String(fields.hasAnswer).toLowerCase() === 'true',
+        isApproved: String(fields.IsApproved).toLowerCase() === 'true',
+        solvingType: clean(fields.SolvingType),
+        maxGrade: num(fields.TotalGrade),
+        currentGrade: num(fields.Grade),
+        autoGrade: num(fields.AutoGrade),
+        resultUrl: resultLink ? safeAbsoluteUrl(resultLink.getAttribute('href')) : '',
+        resolvedGrade: num(fields.Grade),
+        resolvedMaxGrade: num(fields.TotalGrade),
+        gradeDiscrepancy: false
       });
     }
-
     return rows;
   };
 
-  async function fetchAllGradeStudents() {
-    const params = extractLoadStudentsParams();
-    if (!params) throw new Error('تعذر قراءة إعدادات loadStudents من الصفحة.');
+  async function fetchIndexGradeRows(gradeUrl) {
+    const doc = await fetchTextDocument(gradeUrl);
+    const timing = getGradePublicationTiming(doc);
+    const params = extractGradePageParamsFromDocument(doc);
+    if (!params) throw new Error('تعذر قراءة إعدادات صفحة رصد الدرجات.');
 
-    const roster = assignmentRoster();
-    const rosterMap = new Map(roster.map(r => [String(r.studentId || r.assignmentStudentId), r]));
     const merged = new Map();
-    const pageSize = 200;
-    let stagnantPages = 0;
-
-    for (let p = 1; p <= 100; p++) {
-      const response = await postForm('/Teacher/Assignments/GetGradeStudentsList', {
-        ...params,
-        pageNumber: p,
-        pageSize,
-        studentIds: '',
-        status: '',
-        sortBy: ''
+    let stagnant = 0;
+    for (let pageNumber = 1; pageNumber <= 30; pageNumber++) {
+      const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+        ...params, pageNumber, pageSize: 200, studentIds: '', status: '', sortBy: ''
       });
-      const rows = parseGradeStudentsHtml(responseHtml(response), rosterMap);
+      const rows = parseIndexGradeStudentsHtml(responseHtmlEnhanced(response));
       let added = 0;
-      for (const r of rows) {
-        const key = String(r.studentId || r.assignmentStudentId);
+      for (const row of rows) {
+        const key = String(row.studentId);
         if (!merged.has(key)) added++;
-        merged.set(key, r);
+        merged.set(key, row);
       }
-
-      if (roster.length && merged.size >= roster.length) break;
       if (!rows.length) break;
-      if (!added) stagnantPages++; else stagnantPages = 0;
-      if (stagnantPages >= 2) break;
-
-      const declaredTotalPages = Number(response?.totalPages);
-      if (Number.isFinite(declaredTotalPages) && declaredTotalPages > 0 && p >= declaredTotalPages) break;
+      if (!added) stagnant++; else stagnant = 0;
+      if (stagnant >= 2) break;
+      const totalPages = Number(response?.totalPages);
+      if (Number.isFinite(totalPages) && totalPages > 0 && pageNumber >= totalPages) break;
     }
+    return { doc, params, timing, rows: [...merged.values()] };
+  };
 
-    return [...merged.values()];
-  }
-
-
-
-
-  async function resolveAssignmentStudentClass(studentId) {
-    const params = extractLoadStudentsParams();
-    if (!params || !studentId) return '';
-
-    const response = await postForm('/Teacher/Assignments/GetGradeStudentsList', {
-      ...params,
-      pageNumber: 1,
-      pageSize: 10,
-      studentIds: [String(studentId)],
-      status: '',
-      sortBy: ''
+  const resolveIndexSingleResultLink = async (row, params) => {
+    if (!row?.studentId) return '';
+    const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+      ...params, pageNumber: 1, pageSize: 10, studentIds: [String(row.studentId)], status: '', sortBy: ''
     });
-
-    const html = responseHtml(response);
-    const rosterMap = new Map([[String(studentId), { name: '' }]]);
-    const parsed = parseGradeStudentsHtml(html, rosterMap);
-    const row = parsed.find(x => String(x.assignmentStudentId) === String(studentId));
-
-    if (row?.className) return row.className;
-
-    // احتياط إضافي إذا تغيرت بنية البطاقة.
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const text = clean(doc.body?.innerText || '');
-    return text.match(
-      /الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة|\s+الإجابة|\s+ملاحظات|$)/i
-    )?.[1]?.trim() || '';
-  }
-
-  const detectAssignmentMode = (students = []) => {
-    const pageText = clean(document.body?.innerText || '');
-    const rawSolvingTypes = [...new Set(
-      (students || [])
-        .map(s => clean(s.solvingType))
-        .filter(Boolean)
-    )];
-
-    const outsideSystem =
-      /خارج\s+النظام/i.test(pageText) ||
-      (students || []).some(s => /خارج\s+النظام/i.test(clean(s.answerText)));
-
-    const hasQuestionResults =
-      (students || []).some(s => !!s.resultUrl) ||
-      !!document.querySelector('.dga-defualt-card,.qQuestion,input.qid');
-
-    let key = 'unknown';
-    let label = 'غير محدد بعد';
-
-    if (outsideSystem) {
-      key = 'outside_system';
-      label = 'خارج النظام';
-    } else if (hasQuestionResults) {
-      key = 'online_questions';
-      label = 'أسئلة داخل مدرستي';
-    }
-
-    return {
-      key,
-      label,
-      rawSolvingTypes,
-      evidence: {
-        outsideSystemText: outsideSystem,
-        hasQuestionResults
-      }
-    };
+    const doc = new DOMParser().parseFromString(responseHtmlEnhanced(response), 'text/html');
+    const link = doc.querySelector('a[href*="StudentAssignmentResult"]');
+    return link ? safeAbsoluteUrl(link.getAttribute('href')) : '';
   };
 
-  // -----------------------------
-  // Merge + analytics
-  // -----------------------------
-  const mergeDataset = (gradeRows, bridge) => {
-    const idMap = new Map((bridge?.rows || []).map(r => [String(r.assignmentStudentId || r.studentId), r]));
-
-    return gradeRows.map(g => {
-      const id = idMap.get(String(g.studentId || g.assignmentStudentId));
-      return {
-        ...g,
-        account: id?.account || '',
-        accountNormalized: normalizeAccount(id?.account || ''),
-        userGuid: id?.userGuid || '',
-        className: g.className || id?.className || '',
-        identityMatched: !!id?.matched,
-        identityResolutionMethod: id?.resolutionMethod || '',
-        identityCandidates: id?.candidates || []
-      };
-    });
-  };
-
-  const getStudentStatusLabel = (s, mode) => {
-    if (mode?.key === 'outside_system') {
-      if (s.gradeState === 'recorded') return 'درجة مرصودة';
-      return 'التسليم غير قابل للتحقق داخل مدرستي';
-    }
-    if (s.gradeState === 'recorded') return 'مرصود/مصحح';
-    if (s.submissionState === 'submitted') return 'بانتظار رصد الدرجة';
-    if (s.submissionState === 'not_submitted') return 'لم يحل';
-    return 'غير محدد';
-  };
-
-  const summarizeStudents = (students, assignmentMode) => {
-    const total = students.length;
-    const outside = assignmentMode?.key === 'outside_system';
-
-    const submittedRows = outside
-      ? []
-      : students.filter(s => s.submissionState === 'submitted');
-
-    const gradedRows = students.filter(
-      s => s.gradeState === 'recorded' &&
-           Number.isFinite(s.achievedGrade) &&
-           Number.isFinite(s.maxGrade) &&
-           s.maxGrade > 0
+  async function verifyFractionalIndexResults(rows, params) {
+    const candidates = rows.filter(row =>
+      row.solvingType === '4' && row.hasAnswer && Number.isFinite(row.maxGrade) &&
+      (!Number.isInteger(row.maxGrade) || row.maxGrade < 1)
     );
+    if (!candidates.length) return;
 
-    const percScores = gradedRows
-      .map(s => (s.achievedGrade / s.maxGrade) * 100)
-      .filter(Number.isFinite);
+    const concurrency = 4;
+    for (let i = 0; i < candidates.length; i += concurrency) {
+      const batch = candidates.slice(i, i + concurrency);
+      await Promise.all(batch.map(async row => {
+        try {
+          const resultUrl = await resolveIndexSingleResultLink(row, params);
+          if (!resultUrl) return;
+          const resultDoc = await fetchTextDocument(resultUrl);
+          const summary = parseResultSummaryEnhanced(resultDoc);
+          if (Number.isFinite(summary.resultScore)) {
+            const pageGrade = row.currentGrade;
+            row.resolvedGrade = summary.resultScore;
+            if (Number.isFinite(summary.resultMaxScore) && summary.resultMaxScore > 0) row.resolvedMaxGrade = summary.resultMaxScore;
+            row.gradeDiscrepancy = Number.isFinite(pageGrade) && !nearlyEqual(pageGrade, summary.resultScore);
+          }
+        } catch (e) {
+          console.warn('[MAI v1.4.2] Fractional result verification skipped:', e);
+        }
+      }));
+    }
+  };
 
-    const avg = percScores.length
-      ? percScores.reduce((a, b) => a + b, 0) / percScores.length
-      : null;
+  async function analyzeIndexGradePage(gradeUrl) {
+    const { params, rows, timing } = await fetchIndexGradeRows(gradeUrl);
+
+    if (timing.status !== 'ended') {
+      return {
+        gradeUrl,
+        excluded: true,
+        publicationStatus: timing.status,
+        exclusionReason: timing.status === 'receiving'
+          ? `قيد الاستقبال حتى ${formatGradeTimingDate(timing.endDate)}`
+          : 'تعذر التحقق من وقت نهاية النشر من صفحة الرصد',
+        serverDateTime: timing.serverRaw,
+        publishedEndTime: timing.endRaw
+      };
+    }
+
+    if (!rows.length) throw new Error('لم يتم العثور على سجلات طلاب في صفحة الرصد.');
+    await verifyFractionalIndexResults(rows, params);
+
+    const outside = rows.length ? rows.every(row => row.solvingType === '3') : String(params.solvingType) === '3';
+    const submitted = outside ? [] : rows.filter(row => row.hasAnswer);
+    const scoredPercents = rows.map(row => {
+      const achieved = Number.isFinite(row.resolvedGrade) ? row.resolvedGrade : row.currentGrade;
+      const max = Number.isFinite(row.resolvedMaxGrade) ? row.resolvedMaxGrade : row.maxGrade;
+      return Number.isFinite(achieved) && Number.isFinite(max) && max > 0 ? (achieved / max) * 100 : null;
+    }).filter(Number.isFinite);
+    const classes = [...new Set(rows.map(row => clean(row.className)).filter(Boolean))];
 
     return {
-      total,
+      gradeUrl,
+      studentRecords: rows.length,
       submissionVerifiable: !outside,
-      solved: outside ? null : submittedRows.length,
-      submittedCount: outside ? null : submittedRows.length,
-      unsolved: outside ? null : total - submittedRows.length,
-      notSubmittedCount: outside ? null : total - submittedRows.length,
-      unverifiedSubmissionCount: outside ? total : 0,
-      graded: gradedRows.length,
-      pendingGrade: outside ? null : submittedRows.filter(s => s.gradeState !== 'recorded').length,
-      completionRate: outside ? null : pct(submittedRows.length, total),
-      submissionRate: outside ? null : pct(submittedRows.length, total),
-      gradingRate: pct(gradedRows.length, total),
-      gradingOfSubmittedRate: outside ? null : pct(gradedRows.length, submittedRows.length),
-      averagePercent: avg == null ? null : Number(avg.toFixed(2)),
-      medianPercent: median(percScores),
-      minPercent: percScores.length ? Math.min(...percScores) : null,
-      maxPercent: percScores.length ? Math.max(...percScores) : null,
-      stdDevPercent: stdDev(percScores),
-      scoredStudents: percScores.length,
-      assignmentMode,
-      distribution: [
-        { label: '0–59', min: 0, max: 59.999, count: percScores.filter(x => x < 60).length },
-        { label: '60–69', min: 60, max: 69.999, count: percScores.filter(x => x >= 60 && x < 70).length },
-        { label: '70–79', min: 70, max: 79.999, count: percScores.filter(x => x >= 70 && x < 80).length },
-        { label: '80–89', min: 80, max: 89.999, count: percScores.filter(x => x >= 80 && x < 90).length },
-        { label: '90–100', min: 90, max: 100, count: percScores.filter(x => x >= 90).length }
-      ]
+      submitted: outside ? 0 : submitted.length,
+      notSubmitted: outside ? 0 : Math.max(0, rows.length - submitted.length),
+      submissionRate: outside ? null : pct(submitted.length, rows.length),
+      scoreCount: scoredPercents.length,
+      scorePercentSum: scoredPercents.reduce((a, b) => a + b, 0),
+      averagePercent: scoredPercents.length ? scoredPercents.reduce((a, b) => a + b, 0) / scoredPercents.length : null,
+      highestPercent: scoredPercents.length ? Math.max(...scoredPercents) : null,
+      lowestPercent: scoredPercents.length ? Math.min(...scoredPercents) : null,
+      gradeDiscrepancies: rows.filter(row => row.gradeDiscrepancy).length,
+      classes,
+      solvingType: rows.find(row => row.solvingType)?.solvingType || params.solvingType || ''
     };
   };
 
-  async function refreshAll(forceRegistry = false) {
-    setBusy(true, 'جاري جمع بيانات الواجب…');
-    try {
-      const gradeRows = await fetchAllGradeStudents();
-      const bridge = await buildIdentityBridge(forceRegistry, gradeRows);
-      const students = mergeDataset(gradeRows, bridge);
-      const assignmentMode = detectAssignmentMode(students);
-      const summary = summarizeStudents(students, assignmentMode);
+  const aggregateIndexDeepAssignment = (assignment, pages) => {
+    const receiving = pages.filter(p => p?.excluded && p.publicationStatus === 'receiving');
+    const unverified = pages.filter(p => p?.excluded && p.publicationStatus !== 'receiving');
 
-      const data = {
-        schoolId: currentSchoolId(),
-        pageUrl: location.href,
-        title: clean(document.querySelector('h1,h2,h3,.page-title,.card-title')?.innerText) || 'الواجب',
-        collectedAt: new Date().toISOString(),
-        assignmentMode,
-        bridge,
-        summary,
-        students
+    // إذا كانت أي مرة نشر ما زالت جارية، نؤجل تقرير الواجب كله حتى تنتهي.
+    if (receiving.length || unverified.length) {
+      return {
+        title: assignment.title,
+        analysisAvailable: false,
+        reportStatus: receiving.length ? 'receiving_server_verified' : 'timing_unverified',
+        exclusionReason: receiving.length
+          ? 'قيد الاستقبال حسب ServerDateTime و PublishedEndTime في صفحة الرصد'
+          : 'تعذر التحقق من وقت نهاية إحدى مرات النشر',
+        publicationsAnalyzed: 0,
+        publicationErrors: pages.filter(p => p.error).length,
+        studentRecords: null,
+        submissionVerifiable: null,
+        submitted: null,
+        notSubmitted: null,
+        submissionRate: null,
+        scoreCount: 0,
+        scorePercentSum: 0,
+        averagePercent: null,
+        highestPercent: null,
+        lowestPercent: null,
+        gradeDiscrepancies: 0,
+        classes: [],
+        pages
       };
-
-      state.gradeData = data;
-      saveJSON(STORE.snapshot, data);
-      renderSummaryInline(data);
-      toast(`تم جمع بيانات ${students.length} طالبًا.`, 'success');
-      return data;
-    } finally {
-      setBusy(false);
     }
-  }
 
-  // -----------------------------
-  // Question/result parser
-  // -----------------------------
-  const parseQuestionCards = (doc) => {
-    const cards = [...doc.querySelectorAll('.dga-defualt-card')];
-    return cards.map((card, idx) => {
-      const qid = card.querySelector('input.qid');
-      const qtype = card.querySelector('input.qidtype');
-      const questionText = clean(card.querySelector('.qQuestion')?.innerText || card.querySelector('[id="divQuestion"]')?.innerText || '');
+    const good = pages.filter(p => !p.error && !p.excluded);
+    if (!good.length) {
+      return {
+        title: assignment.title,
+        analysisAvailable: false,
+        publicationsAnalyzed: 0,
+        publicationErrors: pages.filter(p => p.error).length,
+        studentRecords: null,
+        submissionVerifiable: null,
+        submitted: null,
+        notSubmitted: null,
+        submissionRate: null,
+        scoreCount: 0,
+        scorePercentSum: 0,
+        averagePercent: null,
+        highestPercent: null,
+        lowestPercent: null,
+        gradeDiscrepancies: 0,
+        classes: [],
+        pages
+      };
+    }
+    const submissionVerifiable = good.every(p => p.submissionVerifiable);
+    const studentRecords = good.reduce((sum, p) => sum + (p.studentRecords || 0), 0);
+    const submitted = good.reduce((sum, p) => sum + (p.submitted || 0), 0);
+    const notSubmitted = good.reduce((sum, p) => sum + (p.notSubmitted || 0), 0);
+    const scoreCount = good.reduce((sum, p) => sum + (p.scoreCount || 0), 0);
+    const scorePercentSum = good.reduce((sum, p) => sum + (p.scorePercentSum || 0), 0);
+    const highs = good.map(p => p.highestPercent).filter(Number.isFinite);
+    const lows = good.map(p => p.lowestPercent).filter(Number.isFinite);
+    const classes = [...new Set(good.flatMap(p => p.classes || []).filter(Boolean))];
+    return {
+      title: assignment.title,
+      analysisAvailable: true,
+      publicationsAnalyzed: good.length,
+      publicationErrors: pages.filter(p => p.error).length,
+      studentRecords,
+      submissionVerifiable,
+      submitted,
+      notSubmitted,
+      submissionRate: submissionVerifiable ? pct(submitted, studentRecords) : null,
+      scoreCount,
+      scorePercentSum,
+      averagePercent: scoreCount ? scorePercentSum / scoreCount : null,
+      highestPercent: highs.length ? Math.max(...highs) : null,
+      lowestPercent: lows.length ? Math.min(...lows) : null,
+      gradeDiscrepancies: good.reduce((sum, p) => sum + (p.gradeDiscrepancies || 0), 0),
+      classes,
+      pages
+    };
+  };
 
-      const headerText = clean(card.querySelector('[id="divQuestion"]')?.innerText || '');
-      const maxScore =
-        num(headerText.match(/(?:الدرجة|درجة|نقطة|نقاط)\s*[:：]?\s*([\d٠-٩۰-۹.]+)/i)?.[1]) ??
-        num(card.innerText.match(/(?:الدرجة|درجة السؤال)\s*[:：]?\s*([\d٠-٩۰-۹.]+)/i)?.[1]);
+  async function runIndexDeepAnalysis() {
+    if (!indexState.assignments.length) await collectAllIndexAssignments();
+    if (!indexState.publications) await auditIndexPublications();
 
-      const options = [...card.querySelectorAll('.eldetail')].map((opt, oi) => {
-        const input = opt.querySelector('input#qaid,input[type="radio"],input[type="checkbox"]');
-        const cs = opt.querySelector('.cs-input') || opt;
-        const cls = `${opt.className} ${cs.className}`.toLowerCase();
+    const eligibleAssignments = indexState.assignments.filter(row => reportEligibilityFor(row).eligible);
+    const receivingAssignments = indexState.assignments.filter(row => reportEligibilityFor(row).status === 'receiving');
+    const totalGradeLinks = eligibleAssignments.reduce((sum, row) => {
+      const pub = publicationInfoFor(row);
+      return sum + (pub?.ended?.gradeLinks?.length || 0);
+    }, 0);
 
-        return {
-          index: oi + 1,
-          answerId: input?.getAttribute('name') || input?.value || '',
-          text: clean(opt.innerText),
-          selected: !!input?.checked,
-          markedCorrect: /\bsuccess\b/.test(cls),
-          markedWrong: /(danger|error|wrong|incorrect)/.test(cls)
+    if (!totalGradeLinks) {
+      if (receivingAssignments.length) {
+        throw new Error(`لا توجد واجبات منتهية جاهزة للتقرير حاليًا. يوجد ${receivingAssignments.length} واجب قيد استقبال الحلول، وسيظهر تقريره بعد انتهاء جميع مرات النشر.`);
+      }
+      throw new Error('لم يتم العثور على واجبات منتهية تحتوي على روابط رصد جاهزة للتقرير.');
+    }
+
+    setIndexBusy(true, `بدء تحليل الواجبات المنتهية فقط: ${totalGradeLinks} صفحة رصد…`);
+    const byGuid = {};
+    let completed = 0;
+
+    for (const assignment of indexState.assignments) {
+      const eligibility = reportEligibilityFor(assignment);
+      if (!eligibility.eligible) {
+        byGuid[assignment.assignmentGuid] = {
+          title: assignment.title,
+          analysisAvailable: false,
+          reportStatus: eligibility.status,
+          exclusionReason: eligibility.label,
+          publicationsAnalyzed: 0,
+          publicationErrors: 0,
+          studentRecords: null,
+          submissionVerifiable: null,
+          submitted: null,
+          notSubmitted: null,
+          submissionRate: null,
+          scoreCount: 0,
+          scorePercentSum: 0,
+          averagePercent: null,
+          highestPercent: null,
+          lowestPercent: null,
+          gradeDiscrepancies: 0,
+          classes: [],
+          pages: []
         };
-      });
-
-      const selected = options.filter(o => o.selected);
-      const correct = options.filter(o => o.markedCorrect);
-      const wrong = options.filter(o => o.markedWrong);
-
-      let isCorrect = null;
-      if (selected.length && correct.length) {
-        const selectedIds = selected.map(o => o.answerId || norm(o.text)).sort();
-        const correctIds = correct.map(o => o.answerId || norm(o.text)).sort();
-        isCorrect = JSON.stringify(selectedIds) === JSON.stringify(correctIds);
-      } else if (selected.length && wrong.length) {
-        isCorrect = false;
+        continue;
       }
 
-      return {
-        number: idx + 1,
-        questionId: qid?.getAttribute('name') || qid?.value || '',
-        type: qtype?.getAttribute('name') || qtype?.value || '',
-        text: questionText,
-        maxScore,
-        options,
-        selectedText: selected.map(o => o.text).join('، '),
-        correctText: correct.map(o => o.text).join('، '),
-        isCorrect
-      };
-    });
-  };
+      // نحلل روابط «المنتهية» فقط. الروابط الحالية لا تدخل التقرير النهائي إطلاقًا.
+      const links = publicationInfoFor(assignment)?.ended?.gradeLinks || [];
+      if (!links.length) continue;
+      const pages = [];
+      for (let i = 0; i < links.length; i += 2) {
+        const batch = links.slice(i, i + 2);
+        const part = await Promise.all(batch.map(async link => {
+          try { return await analyzeIndexGradePage(link.href); }
+          catch (e) { return { gradeUrl: link.href, error: String(e?.message || e) }; }
+        }));
+        pages.push(...part);
+        completed += batch.length;
+        setIndexBusy(true, `تحليل الواجبات المنتهية ${completed} / ${totalGradeLinks}`);
+      }
+      const aggregate = aggregateIndexDeepAssignment(assignment, pages);
+      if (aggregate.analysisAvailable !== false) {
+        aggregate.reportStatus = 'complete';
+        aggregate.exclusionReason = '';
+      }
+      byGuid[assignment.assignmentGuid] = aggregate;
+    }
 
-  const parseResultDocument = (doc, meta = {}) => {
-    const questions = parseQuestionCards(doc);
-    const pageText = clean(doc.body?.innerText || '');
+    const cache = { pageUrl: indexScopeUrl(), savedAt: new Date().toISOString(), schemaVersion: 5, byGuid };
+    indexState.deep = cache;
+    saveIndexDeepCache(cache);
+    renderIndexPanel();
+    const summary = summarizeIndexAssignments();
+    toast(`اكتمل تحليل ${summary.reportReadyCount} واجب منتهي: ${summary.deepStudentRecords} سجل طالب${summary.reportReceivingCount ? ` · تم تأجيل ${summary.reportReceivingCount} واجب قيد الاستقبال` : ''}${Number.isFinite(summary.deepAveragePercent) ? ` · متوسط ${fmt(summary.deepAveragePercent)}%` : ''}.`, 'success');
+    return cache;
+  }
 
-    const studentGrade =
-      num(pageText.match(/(?:درجة الطالب|الدرجة)\s*[:：]?\s*([\d٠-٩۰-۹.]+)/i)?.[1]);
-
-    const totalMaxScore =
-      questions.map(q => q.maxScore).filter(Number.isFinite).reduce((a, b) => a + b, 0) || null;
-
+  const indexExportRows = () => (indexState.assignments || []).map(row => {
+    const pub = publicationInfoFor(row);
+    const deep = deepInfoFor(row);
+    const reportState = reportEligibilityFor(row);
     return {
-      ...meta,
-      studentGrade,
-      totalMaxScore,
-      questions
+      '#': row.index,
+      'اسم الواجب': row.title,
+      'المقرر': row.course,
+      'الوحدة': row.unit,
+      'الموضوع': row.topic,
+      'المسار الدراسي': row.curriculumPath,
+      'مصدر الواجب': row.source,
+      'طريقة العرض': row.displayMode,
+      'درجة الواجب': Number.isFinite(row.grade) ? row.grade : '',
+      'الحالة': indexStatusLabel(row),
+      'Assignment GUID': row.assignmentGuid,
+      'Assignment ID': row.internalId,
+      'روابط الرصد المكتشفة': pub ? ((pub.gradeLinks?.length || 0) || 'لا يوجد') : '',
+      'حالة التقرير': reportState.label,
+      'سجلات الطلاب': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep?.studentRecords ?? ''),
+      'نسبة الحل': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionVerifiable ? deep.submissionRate : 'غير متاح') : ''),
+      'متوسط الأداء': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep && Number.isFinite(deep.averagePercent) ? deep.averagePercent : ''),
+      'لم يحل': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionVerifiable ? deep.notSubmitted : '') : ''),
+      'تعارضات الدرجة': deep?.gradeDiscrepancies ?? '',
+      'الفصول المنشورة': deep?.classes?.join('، ') || '',
+      'رابط الاستعراض': row.viewUrl,
+      'رابط الواجبات المرسلة': row.publishedUrl
     };
-  };
-
-  const findDetailsUrl = () => {
-    const a = [...document.querySelectorAll('a[href]')]
-      .find(x => /تفاصيل\s+الواجب/i.test(clean(x.innerText)));
-    return a ? new URL(a.getAttribute('href'), location.origin).href : '';
-  };
-
-  async function getQuestionTemplate() {
-    if (state.questions?.length) return state.questions;
-
-    const solvedWithLink = state.gradeData?.students?.find(s => s.resultUrl);
-    if (solvedWithLink) {
-      const res = await fetch(solvedWithLink.resultUrl, { credentials: 'same-origin' });
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const parsed = parseResultDocument(doc);
-      if (parsed.questions.length) {
-        state.questions = parsed.questions;
-        return state.questions;
-      }
-    }
-
-    const detailsUrl = findDetailsUrl();
-    if (detailsUrl) {
-      const res = await fetch(detailsUrl, { credentials: 'same-origin' });
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const questions = parseQuestionCards(doc);
-      if (questions.length) {
-        state.questions = questions;
-        return questions;
-      }
-    }
-
-    const current = parseQuestionCards(document);
-    if (current.length) {
-      state.questions = current;
-      return current;
-    }
-
-    throw new Error('لم أتمكن من العثور على بنية الأسئلة في الصفحات المتاحة.');
-  }
-
-  async function runDeepQuestionAnalysis() {
-    if (!state.gradeData) await refreshAll(false);
-
-    const candidates = state.gradeData.students.filter(s => s.resultUrl);
-    if (!candidates.length) throw new Error('لا توجد روابط نتائج طلاب متاحة للتحليل العميق في هذا الواجب.');
-
-    setBusy(true, `تحليل إجابات ${candidates.length} طالبًا…`);
-    try {
-      const results = [];
-      for (const s of candidates) {
-        try {
-          const res = await fetch(s.resultUrl, { credentials: 'same-origin' });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const html = await res.text();
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          results.push(parseResultDocument(doc, {
-            assignmentStudentId: s.assignmentStudentId,
-            name: s.name,
-            account: s.account
-          }));
-        } catch (e) {
-          results.push({
-            assignmentStudentId: s.assignmentStudentId,
-            name: s.name,
-            error: String(e?.message || e),
-            questions: []
-          });
-        }
-      }
-
-      const questionMap = new Map();
-
-      for (const r of results) {
-        for (const q of r.questions || []) {
-          const key = q.questionId || `n:${q.number}:${norm(q.text)}`;
-          if (!questionMap.has(key)) {
-            questionMap.set(key, {
-              questionId: q.questionId,
-              number: q.number,
-              text: q.text,
-              type: q.type,
-              maxScore: q.maxScore,
-              correctText: q.correctText,
-              attempts: 0,
-              correct: 0,
-              incorrect: 0,
-              unknown: 0
-            });
-          }
-          const agg = questionMap.get(key);
-          agg.attempts++;
-          if (q.isCorrect === true) agg.correct++;
-          else if (q.isCorrect === false) agg.incorrect++;
-          else agg.unknown++;
-        }
-      }
-
-      const questions = [...questionMap.values()].map(q => ({
-        ...q,
-        correctRate: pct(q.correct, q.attempts),
-        incorrectRate: pct(q.incorrect, q.attempts),
-        difficulty:
-          q.attempts === 0 ? 'غير محدد' :
-          pct(q.correct, q.attempts) < 50 ? 'صعب' :
-          pct(q.correct, q.attempts) < 75 ? 'متوسط' : 'سهل'
-      }));
-
-      state.questionAnalytics = { results, questions };
-      if (!state.questions?.length && results[0]?.questions?.length) state.questions = results[0].questions;
-      toast(`تم تحليل ${results.filter(r => !r.error).length} نتيجة طالب.`, 'success');
-      return state.questionAnalytics;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-
-  // -----------------------------
-  // Smart Grade Importer (XLSX / CSV)
-  // -----------------------------
-  const HEADER_ALIASES = {
-    account: [
-      'حساب الطالب','حساب','البريد','البريد الالكتروني','البريد الإلكتروني','الايميل','الإيميل',
-      'email','e-mail','account','username','student account','student email','user name'
-    ],
-    studentId: [
-      'studentid','student id','معرف الطالب','رقم الطالب','student number','student no'
-    ],
-    userGuid: [
-      'userguid','user guid','userid','user id','معرف المستخدم'
-    ],
-    name: [
-      'اسم الطالب','الطالب','الاسم','student name','name','full name'
-    ],
-    className: [
-      'الفصل','الفصل المدرسي','الشعبة','class','classroom','section','grade class'
-    ],
-    score: [
-      'الدرجة','درجة الطالب','الدرجه','النتيجة','النقاط','score','grade','points','total score','student score'
-    ],
-    feedback: [
-      'ملاحظة','ملاحظات','ملاحظات المعلم','التغذية الراجعة','تعليق','feedback','comment','comments','teacher feedback'
-    ],
-    submissionStatus: [
-      'الحالة','حالة التسليم','حالة الواجب','حالة الطالب','التسليم','submission status','status','submission','turn in status'
-    ]
-  };
-
-  const normHeader = (v) => norm(v)
-    .replace(/[()\[\]{}:：|/\\_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const headerKind = (value) => {
-    const h = normHeader(value);
-    if (!h) return '';
-    for (const [kind, aliases] of Object.entries(HEADER_ALIASES)) {
-      if (aliases.some(a => {
-        const n = normHeader(a);
-        return h === n || h.includes(n) || n.includes(h);
-      })) return kind;
-    }
-    return '';
-  };
-
-  const detectHeaderRow = (aoa) => {
-    let best = { index: 0, score: -1 };
-    for (let i = 0; i < Math.min(20, aoa.length); i++) {
-      const row = aoa[i] || [];
-      const kinds = new Set(row.map(headerKind).filter(Boolean));
-      let score = kinds.size * 3;
-      if (kinds.has('score')) score += 4;
-      if (kinds.has('account') || kinds.has('studentId') || kinds.has('name')) score += 4;
-      const nonEmpty = row.filter(x => clean(x) !== '').length;
-      score += Math.min(nonEmpty, 8) * .1;
-      if (score > best.score) best = { index: i, score };
-    }
-    return best.index;
-  };
-
-  const detectColumns = (headers) => {
-    const out = { account: -1, studentId: -1, userGuid: -1, name: -1, className: -1, score: -1, feedback: -1, submissionStatus: -1 };
-    headers.forEach((h, i) => {
-      const k = headerKind(h);
-      if (k && out[k] === -1) out[k] = i;
-    });
-    return out;
-  };
-
-  const parseCsv = (text) => {
-    const sample = String(text || '').split(/\r?\n/).find(x => clean(x)) || '';
-    const delimiter = [',',';','\t']
-      .map(d => [d, sample.split(d).length - 1])
-      .sort((a,b) => b[1] - a[1])[0]?.[0] || ',';
-
-    const rows = [];
-    let row = [];
-    let cell = '';
-    let quoted = false;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (quoted) {
-        if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
-        else if (ch === '"') quoted = false;
-        else cell += ch;
-      } else {
-        if (ch === '"') quoted = true;
-        else if (ch === delimiter) { row.push(cell); cell = ''; }
-        else if (ch === '\n') { row.push(cell.replace(/\r$/, '')); rows.push(row); row = []; cell = ''; }
-        else cell += ch;
-      }
-    }
-    row.push(cell.replace(/\r$/, ''));
-    if (row.some(x => clean(x) !== '')) rows.push(row);
-    return rows;
-  };
-
-  const parseScoreCell = (value) => {
-    let text = englishDigits(clean(value));
-    if (!text) return { value: null, total: null };
-    // دعم الفاصلة العشرية في ملفات CSV الأوروبية (8,5 -> 8.5).
-    text = text.replace(/(-?\d+),(\d+)/g, '$1.$2');
-
-    const frac = text.match(/(-?\d+(?:\.\d+)?)\s*(?:\/|من|of)\s*(\d+(?:\.\d+)?)/i);
-    if (frac) return { value: Number(frac[1]), total: Number(frac[2]) };
-
-    const n = num(text);
-    return { value: n, total: null };
-  };
-
-  const targetTotalGrade = () => {
-    const params = extractLoadStudentsParams();
-    const fromParams = num(params?.grade);
-    if (Number.isFinite(fromParams) && fromParams > 0) return fromParams;
-    const vals = (state.gradeData?.students || []).map(s => s.maxGrade).filter(v => Number.isFinite(v) && v > 0);
-    return vals.length ? Math.max(...vals) : null;
-  };
-
-  const modalRefs = () => ({
-    modal: document.getElementById(`${APP}-modal`),
-    body: document.getElementById(`${APP}-modal-body`),
-    title: document.getElementById(`${APP}-modal-title`)
   });
 
-  const showMainModal = (title, html) => {
-    const { modal, body, title: titleEl } = modalRefs();
-    if (titleEl) titleEl.textContent = title;
-    if (body) body.innerHTML = html;
-    if (modal) modal.hidden = false;
-  };
-
-  const getIdentityMaps = () => {
-    const students = state.gradeData?.students || [];
-    const registry = state.registry?.students || [];
-
-    const byStudentId = new Map();
-    const byAccount = new Map();
-    const byUserGuid = new Map();
-    const byNameClass = new Map();
-    const byName = new Map();
-
-    const addMulti = (map, key, item) => {
-      if (!key) return;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(item);
-    };
-
-    for (const s of students) {
-      byStudentId.set(String(s.studentId || s.assignmentStudentId), s);
-      addMulti(byAccount, normalizeAccount(s.account), s);
-      addMulti(byUserGuid, clean(s.userGuid).toLowerCase(), s);
-      addMulti(byNameClass, `${norm(s.name)}|${norm(s.className)}`, s);
-      addMulti(byName, norm(s.name), s);
-    }
-
-    // إذا كانت خريطة الواجب لا تحتوي الحساب مباشرة، نستخدم سجل المدرسة كجسر account -> userGuid.
-    const registryAccountToGuid = new Map();
-    for (const r of registry) {
-      const a = normalizeAccount(r.account);
-      const g = clean(r.userGuid).toLowerCase();
-      if (a && g) registryAccountToGuid.set(a, g);
-    }
-
-    return { byStudentId, byAccount, byUserGuid, byNameClass, byName, registryAccountToGuid };
-  };
-
-  const singleMatch = (arr) => Array.isArray(arr) && arr.length === 1 ? arr[0] : null;
-
-  const matchImportedIdentity = (raw, maps, allowUniqueName) => {
-    const studentId = clean(raw.studentId);
-    if (studentId && maps.byStudentId.has(studentId)) {
-      return { student: maps.byStudentId.get(studentId), method: 'StudentId', confidence: 'exact' };
-    }
-
-    const account = normalizeAccount(raw.account);
-    if (account) {
-      const direct = singleMatch(maps.byAccount.get(account));
-      if (direct) return { student: direct, method: 'الحساب', confidence: 'exact' };
-
-      const guid = maps.registryAccountToGuid.get(account);
-      if (guid) {
-        const bridged = singleMatch(maps.byUserGuid.get(guid));
-        if (bridged) return { student: bridged, method: 'الحساب → UserGuid', confidence: 'exact' };
-      }
-      const arr = maps.byAccount.get(account);
-      if (arr?.length > 1) return { student: null, method: 'الحساب', confidence: 'ambiguous', candidates: arr };
-    }
-
-    const userGuid = clean(raw.userGuid).toLowerCase();
-    if (userGuid) {
-      const direct = singleMatch(maps.byUserGuid.get(userGuid));
-      if (direct) return { student: direct, method: 'UserGuid', confidence: 'exact' };
-      const arr = maps.byUserGuid.get(userGuid);
-      if (arr?.length > 1) return { student: null, method: 'UserGuid', confidence: 'ambiguous', candidates: arr };
-    }
-
-    const name = norm(raw.name);
-    const cls = norm(raw.className);
-    if (name && cls) {
-      const arr = maps.byNameClass.get(`${name}|${cls}`) || [];
-      if (arr.length === 1) return { student: arr[0], method: 'الاسم + الفصل', confidence: 'exact' };
-      if (arr.length > 1) return { student: null, method: 'الاسم + الفصل', confidence: 'ambiguous', candidates: arr };
-    }
-
-    if (name) {
-      const arr = maps.byName.get(name) || [];
-      if (arr.length === 1) {
-        return { student: arr[0], method: 'اسم فريد', confidence: allowUniqueName ? 'exact' : 'review' };
-      }
-      if (arr.length > 1) return { student: null, method: 'اسم مكرر', confidence: 'ambiguous', candidates: arr };
-    }
-
-    return { student: null, method: 'غير مطابق', confidence: 'none' };
-  };
-
-  const importCell = (row, index) => index >= 0 ? row[index] : '';
-
-  // ملاحظات تلقائية مبنية على نسبة درجة الطالب من الدرجة الكلية للواجب.
-  // الاختيار بين العبارات حتمي لكل طالب حتى لا تتغير الملاحظة كلما أُعيدت المعاينة.
-  const AUTO_FEEDBACK_BANDS = [
-    {
-      min: 90,
-      label: 'متميز',
-      phrases: [
-        'أداء متميز، أحسنت وواصل تميزك.',
-        'ممتاز، إتقان واضح للمهارات، استمر بهذا التميز.',
-        'عمل رائع ومستوى متميز، واصل تقدمك.',
-        'أداء متقن، بارك الله في جهودك وواصل التألق.'
-      ]
-    },
-    {
-      min: 80,
-      label: 'رائع',
-      phrases: [
-        'أداء رائع، استمر بهذا المستوى.',
-        'مستوى رائع وجهد واضح، واصل التقدم.',
-        'أحسنت، أداء قوي وقريب من التميز.',
-        'نتيجة رائعة، استمر في المراجعة للحفاظ على هذا المستوى.'
-      ]
-    },
-    {
-      min: 70,
-      label: 'جيد',
-      phrases: [
-        'أداء جيد، وبمزيد من المراجعة ستكون أفضل.',
-        'نتيجة جيدة، واصل التدريب لرفع مستوى الإتقان.',
-        'أحسنت، لديك أساس جيد ويحتاج إلى مزيد من المراجعة.',
-        'مستوى جيد، ركز على النقاط التي تحتاج تعزيزًا.'
-      ]
-    },
-    {
-      min: 60,
-      label: 'مقبول',
-      phrases: [
-        'أداء مقبول، تحتاج إلى مراجعة بعض المهارات.',
-        'لديك تقدم جيد، وراجع المهارات التي لم تتقنها بعد.',
-        'واصل المحاولة، مع مزيد من المراجعة سيتحسن أداؤك.',
-        'نتيجة مقبولة، ركز على مراجعة الدرس والتدرب أكثر.'
-      ]
-    },
-    {
-      min: 50,
-      label: 'يحتاج تعزيز',
-      phrases: [
-        'بداية جيدة، ركز على مراجعة الدرس وتدرب أكثر.',
-        'تحتاج إلى تعزيز بعض المهارات، والمراجعة ستساعدك على التحسن.',
-        'واصل التدريب ولا تتوقف، لديك فرصة جيدة لرفع مستواك.',
-        'راجع الأفكار الأساسية وحاول حل تدريبات إضافية.'
-      ]
-    },
-    {
-      min: -Infinity,
-      label: 'يحتاج مراجعة',
-      phrases: [
-        'تحتاج إلى مزيد من المراجعة والتدريب، وتستطيع التحسن.',
-        'راجع الدرس من جديد وركز على المهارات الأساسية ثم أعد التدريب.',
-        'تحتاج إلى تدريب إضافي، واصل المحاولة وستتحسن نتائجك.',
-        'ركز على فهم الأساسيات واطلب المساعدة في النقاط غير الواضحة.'
-      ]
-    }
-  ];
-
-
-  // توحيد حالة التسليم القادمة من Excel/CSV.
-  // لا نستنتج "لم يسلّم" من الدرجة صفر؛ نعتمد على عمود الحالة إن كان موجودًا.
-  const normalizeSubmissionStatus = (value) => {
-    const s = norm(value);
-    if (!s) return { code: 'unknown', label: '' };
-
-    if (
-      /لم\s*يسلم|لم\s*يتم\s*التسليم|غير\s*مسلم|بدون\s*تسليم|not\s*submitted|not\s*turned\s*in|missing|no\s*submission/.test(s)
-    ) {
-      return { code: 'not_submitted', label: clean(value) };
-    }
-
-    if (
-      /تسليم\s*مبكر|سلم\s*مبكر|early\s*submission|submitted\s*early|turned\s*in\s*early/.test(s)
-    ) {
-      return { code: 'early', label: clean(value) };
-    }
-
-    if (
-      /تم\s*التسليم|تم\s*تسليم|مسلم|submitted|turned\s*in|complete|completed/.test(s)
-    ) {
-      return { code: 'submitted', label: clean(value) };
-    }
-
-    return { code: 'other', label: clean(value) };
-  };
-
-  // مفتاح ثابت لقرار المعلم حول درجة الصفر عند غياب حالة التسليم.
-  const zeroDecisionKeyForRow = (sourceRowNumber, studentId = '', account = '', name = '') =>
-    [sourceRowNumber, clean(studentId), normalizeAccount(account), norm(name)].join('|');
-
-  const getManualZeroDecision = (session, key) => {
-    const value = session?.zeroDecisions?.[key];
-    return value === 'submitted' || value === 'not_submitted' ? value : '';
-  };
-
-  const effectiveSubmissionState = (session, rawStatus, newGrade, zeroDecisionKey) => {
-    const parsed = normalizeSubmissionStatus(rawStatus);
-    const isZero = Number.isFinite(newGrade) && nearlyEqual(newGrade, 0);
-
-    // الحالات الواضحة القادمة من الملف لها الأولوية ولا نطلب قراراً يدوياً.
-    if (parsed.code === 'not_submitted' || parsed.code === 'submitted' || parsed.code === 'early') {
-      return {
-        code: parsed.code,
-        label: parsed.label,
-        source: 'file',
-        needsDecision: false,
-        decision: ''
-      };
-    }
-
-    // الدرجة غير الصفرية لا تحتاج قرار تسليم حتى لو لم يوجد عمود حالة.
-    if (!isZero) {
-      return {
-        code: parsed.code,
-        label: parsed.label,
-        source: parsed.label ? 'file-unknown' : 'none',
-        needsDecision: false,
-        decision: ''
-      };
-    }
-
-    // الصفر دون حالة واضحة لا نسمح بتمريره للتطبيق حتى يقرر المعلم.
-    const manual = getManualZeroDecision(session, zeroDecisionKey);
-    if (manual) {
-      return {
-        code: manual,
-        label: manual === 'submitted' ? 'تم التسليم — قرار المعلم' : 'لم يسلّم — قرار المعلم',
-        source: 'teacher',
-        needsDecision: false,
-        decision: manual
-      };
-    }
-
-    return {
-      code: 'unknown',
-      label: parsed.label,
-      source: 'none',
-      needsDecision: true,
-      decision: ''
-    };
-  };
-
-  const ZERO_SUBMITTED_FEEDBACK = [
-    'تم تسليم الواجب، لكن الإجابات تحتاج إلى مراجعة شاملة.',
-    'تم تسليم الواجب، ولم تحقق الإجابات درجات صحيحة؛ راجع الدرس وحاول من جديد.',
-    'أكملت التسليم، لكن تحتاج إلى مراجعة المفاهيم الأساسية والتدرب عليها أكثر.',
-    'تم التسليم، ونحتاج الآن إلى مراجعة الإجابات وفهم الأخطاء قبل المحاولة القادمة.'
-  ];
-
-  const NOT_SUBMITTED_FEEDBACK = [
-    'لم يتم تسليم الواجب.',
-    'لم يتم تسليم الواجب، احرص على متابعة المهام وتسليمها في الوقت المحدد.',
-    'الواجب غير مسلّم حتى الآن؛ احرص على استكمال المهام القادمة في موعدها.'
-  ];
-
-  const stableTextHash = (value) => {
-    const text = String(value ?? '');
-    let h = 2166136261;
-    for (let i = 0; i < text.length; i++) {
-      h ^= text.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  };
-
-  const autoFeedbackForGrade = (grade, total, studentKey = '', submissionCode = 'unknown') => {
-    if (!Number.isFinite(grade) || !Number.isFinite(total) || total <= 0) {
-      return { text: '', percentage: null, band: '', reason: '' };
-    }
-
-    const percentage = Math.max(0, Math.min(100, (grade / total) * 100));
-
-    // "لم يسلّم" حالة مستقلة عن مستوى الأداء.
-    if (submissionCode === 'not_submitted') {
-      const seed = `${studentKey}|not_submitted`;
-      const phrase = NOT_SUBMITTED_FEEDBACK[stableTextHash(seed) % NOT_SUBMITTED_FEEDBACK.length];
-      return {
-        text: phrase,
-        percentage: Number(percentage.toFixed(1)),
-        band: 'لم يسلّم',
-        reason: 'submission'
-      };
-    }
-
-    // الصفر بعد تسليم فعلي يعني أن الواجب سُلّم لكن الإجابات لم تحقق درجات.
-    if ((submissionCode === 'submitted' || submissionCode === 'early') && nearlyEqual(grade, 0)) {
-      const seed = `${studentKey}|submitted_zero|${submissionCode}`;
-      const phrase = ZERO_SUBMITTED_FEEDBACK[stableTextHash(seed) % ZERO_SUBMITTED_FEEDBACK.length];
-      return {
-        text: phrase,
-        percentage: 0,
-        band: 'سلّم بدرجة صفر',
-        reason: 'submitted-zero'
-      };
-    }
-
-    const band = AUTO_FEEDBACK_BANDS.find(x => percentage >= x.min) || AUTO_FEEDBACK_BANDS[AUTO_FEEDBACK_BANDS.length - 1];
-    const seed = `${studentKey}|${Number(grade).toFixed(4)}|${Number(total).toFixed(4)}|${band.label}`;
-    const phrase = band.phrases[stableTextHash(seed) % band.phrases.length];
-
-    return {
-      text: phrase,
-      percentage: Number(percentage.toFixed(1)),
-      band: band.label,
-      reason: 'percentage'
-    };
-  };
-
-  const buildImportPreview = (session) => {
-    const maps = getIdentityMaps();
-    const targetTotal = session.targetTotal;
-    const sourceTotalControl = num(session.sourceTotal);
-    const rows = [];
-
-    for (let i = session.headerRow + 1; i < session.aoa.length; i++) {
-      const sourceRow = session.aoa[i] || [];
-      if (!sourceRow.some(x => clean(x) !== '')) continue;
-
-      const raw = {
-        account: importCell(sourceRow, session.mapping.account),
-        studentId: importCell(sourceRow, session.mapping.studentId),
-        userGuid: importCell(sourceRow, session.mapping.userGuid),
-        name: importCell(sourceRow, session.mapping.name),
-        className: importCell(sourceRow, session.mapping.className),
-        score: importCell(sourceRow, session.mapping.score),
-        feedback: importCell(sourceRow, session.mapping.feedback),
-        submissionStatus: importCell(sourceRow, session.mapping.submissionStatus)
-      };
-
-      const identity = matchImportedIdentity(raw, maps, session.allowUniqueName);
-      const parsed = parseScoreCell(raw.score);
-      const rowSourceTotal = parsed.total || sourceTotalControl;
-      let newGrade = parsed.value;
-      let issue = '';
-
-      if (!Number.isFinite(newGrade)) issue = 'درجة غير صالحة';
-      if (!Number.isFinite(targetTotal) || targetTotal <= 0) issue = issue || 'تعذر تحديد درجة الواجب';
-
-      if (!issue && session.scale && Number.isFinite(rowSourceTotal) && rowSourceTotal > 0 && !nearlyEqual(rowSourceTotal, targetTotal)) {
-        newGrade = (newGrade / rowSourceTotal) * targetTotal;
-      }
-
-      if (!issue && session.roundStep > 0) newGrade = roundToStep(newGrade, session.roundStep);
-      if (Number.isFinite(newGrade)) newGrade = Number(newGrade.toFixed(4));
-
-      if (!issue && (newGrade < 0 || newGrade > targetTotal + 1e-9)) {
-        issue = newGrade < 0 ? 'درجة سالبة' : `تتجاوز درجة الواجب (${targetTotal})`;
-      }
-
-      const student = identity.student;
-      const zeroDecisionKey = zeroDecisionKeyForRow(
-        i + 1,
-        student?.studentId || student?.assignmentStudentId || raw.studentId,
-        student?.account || raw.account,
-        student?.name || raw.name
-      );
-      const submission = effectiveSubmissionState(session, raw.submissionStatus, newGrade, zeroDecisionKey);
-
-      if (!issue && submission.code === 'not_submitted' && Number.isFinite(newGrade) && newGrade > 0) {
-        issue = 'تعارض: الحالة «لم يسلّم» لكن الدرجة أكبر من صفر';
-      }
-
-      const existingGrade = student?.currentGrade ?? student?.achievedGrade ?? null;
-      const existingFeedback = clean(student?.feedback || '');
-      const importedFeedback = clean(raw.feedback);
-      const studentFeedbackKey = student
-        ? String(student.studentId || student.assignmentStudentId || student.account || student.name || i)
-        : String(raw.studentId || raw.account || raw.name || i);
-      const generatedFeedback = session.autoFeedback
-        ? autoFeedbackForGrade(newGrade, targetTotal, studentFeedbackKey, submission.code)
-        : { text: '', percentage: null, band: '', reason: '' };
-      const nextFeedback = importedFeedback !== ''
-        ? importedFeedback
-        : (session.autoFeedback && generatedFeedback.text
-            ? generatedFeedback.text
-            : existingFeedback);
-      const feedbackSource = importedFeedback !== ''
-        ? 'file'
-        : (session.autoFeedback && generatedFeedback.text ? 'auto' : (existingFeedback ? 'existing' : 'none'));
-
-      let status = 'unmatched';
-      let applicable = false;
-      let changed = false;
-
-      if (identity.confidence === 'ambiguous') status = 'ambiguous';
-      else if (identity.confidence === 'review') status = 'review';
-      else if (!student) status = 'unmatched';
-      else if (issue) status = 'invalid';
-      else if (submission.needsDecision) status = 'zeroDecision';
-      else {
-        const gradeSame = Number.isFinite(existingGrade) && nearlyEqual(existingGrade, newGrade);
-        const feedbackSame = nextFeedback === existingFeedback;
-        if (gradeSame && feedbackSame) status = 'unchanged';
-        else {
-          changed = Number.isFinite(existingGrade);
-          status = changed ? 'changed' : 'ready';
-          applicable = true;
-        }
-      }
-
-      rows.push({
-        sourceRowNumber: i + 1,
-        raw,
-        identity,
-        student,
-        sourceScore: parsed.value,
-        sourceTotal: rowSourceTotal,
-        targetTotal,
-        newGrade,
-        existingGrade,
-        existingFeedback,
-        nextFeedback,
-        feedbackSource,
-        feedbackPercentage: generatedFeedback.percentage,
-        feedbackBand: generatedFeedback.band,
-        feedbackReason: generatedFeedback.reason,
-        submissionStatusRaw: clean(raw.submissionStatus),
-        submissionStatusCode: submission.code,
-        submissionStatusLabel: submission.label,
-        submissionStatusSource: submission.source,
-        zeroDecisionKey,
-        zeroDecisionRequired: !!submission.needsDecision,
-        zeroDecision: submission.decision,
-        issue,
-        status,
-        applicable,
-        changed
-      });
-    }
-
-    // كشف تكرار الطالب نفسه داخل الملف بعد المطابقة.
-    const targetGroups = new Map();
-    for (const r of rows) {
-      const sid = r.student ? String(r.student.studentId || r.student.assignmentStudentId) : '';
-      if (!sid) continue;
-      if (!targetGroups.has(sid)) targetGroups.set(sid, []);
-      targetGroups.get(sid).push(r);
-    }
-    for (const group of targetGroups.values()) {
-      if (group.length <= 1) continue;
-      for (const r of group) {
-        r.status = 'duplicate';
-        r.applicable = false;
-        r.issue = 'الطالب مكرر داخل ملف الاستيراد';
-      }
-    }
-
-    const counts = {
-      totalRows: rows.length,
-      ready: rows.filter(r => r.status === 'ready').length,
-      changed: rows.filter(r => r.status === 'changed').length,
-      unchanged: rows.filter(r => r.status === 'unchanged').length,
-      review: rows.filter(r => r.status === 'review').length,
-      ambiguous: rows.filter(r => r.status === 'ambiguous').length,
-      unmatched: rows.filter(r => r.status === 'unmatched').length,
-      duplicate: rows.filter(r => r.status === 'duplicate').length,
-      invalid: rows.filter(r => r.status === 'invalid').length,
-      zeroDecision: rows.filter(r => r.status === 'zeroDecision').length,
-      notSubmitted: rows.filter(r => r.submissionStatusCode === 'not_submitted').length,
-      submittedZero: rows.filter(r => (r.submissionStatusCode === 'submitted' || r.submissionStatusCode === 'early') && Number.isFinite(r.newGrade) && nearlyEqual(r.newGrade, 0)).length,
-      applicable: rows.filter(r => r.applicable).length
-    };
-
-    return { rows, counts, targetTotal };
-  };
-
-  const STATUS_META = {
-    ready: ['🟢', 'جاهز'],
-    changed: ['🟠', 'درجة مختلفة'],
-    unchanged: ['🔵', 'لا تغيير'],
-    review: ['🟡', 'مطابقة تحتاج مراجعة'],
-    ambiguous: ['🟣', 'اسم/هوية مكررة'],
-    unmatched: ['🔴', 'غير مطابق'],
-    duplicate: ['🟣', 'مكرر في الملف'],
-    invalid: ['🔴', 'درجة غير صالحة'],
-    zeroDecision: ['🟡', 'حدد حالة درجة الصفر']
-  };
-
-  const columnSelectHtml = (key, label, session) => {
-    const options = ['<option value="-1">— غير مستخدم —</option>']
-      .concat(session.headers.map((h, i) => `<option value="${i}" ${session.mapping[key] === i ? 'selected' : ''}>${esc(h || `عمود ${i + 1}`)}</option>`))
-      .join('');
-    return `<label class="${APP}-field"><span>${label}</span><select data-import-col="${key}">${options}</select></label>`;
-  };
-
-  const syncImportSettingsFromUI = () => {
-    const s = state.importSession;
-    if (!s) return;
-    document.querySelectorAll('[data-import-col]').forEach(el => {
-      s.mapping[el.dataset.importCol] = Number(el.value);
-    });
-    s.sourceTotal = document.getElementById(`${APP}-source-total`)?.value || '';
-    s.scale = !!document.getElementById(`${APP}-scale`)?.checked;
-    s.roundStep = Number(document.getElementById(`${APP}-round`)?.value || 0);
-    s.allowUniqueName = !!document.getElementById(`${APP}-unique-name`)?.checked;
-    s.autoFeedback = !!document.getElementById(`${APP}-auto-feedback`)?.checked;
-    saveJSON(STORE.importPrefs, {
-      scale: s.scale,
-      roundStep: s.roundStep,
-      allowUniqueName: s.allowUniqueName,
-      autoFeedback: s.autoFeedback
-    });
-  };
-
-  const zeroDecisionHtml = (r) => {
-    if (!r.zeroDecisionRequired) {
-      if (r.submissionStatusSource === 'teacher') {
-        return `<div>${esc(r.submissionStatusLabel || '—')}</div><div class="${APP}-tiny">قرار المعلم</div>`;
-      }
-      return esc(r.submissionStatusRaw || r.submissionStatusLabel || '—');
-    }
-
-    return `
-      <div class="${APP}-zero-decision">
-        <div class="${APP}-tiny ${APP}-danger-text" style="margin-bottom:6px">درجة صفر بدون حالة تسليم. اختر قبل التطبيق:</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button type="button" class="${APP}-btn" style="padding:5px 9px"
-            data-${APP.toLowerCase()}-action="zeroDecision"
-            data-zero-key="${esc(r.zeroDecisionKey)}"
-            data-zero-value="submitted">سلّم</button>
-          <button type="button" class="${APP}-btn" style="padding:5px 9px"
-            data-${APP.toLowerCase()}-action="zeroDecision"
-            data-zero-key="${esc(r.zeroDecisionKey)}"
-            data-zero-value="not_submitted">لم يسلّم</button>
-        </div>
-      </div>`;
-  };
-
-  const setZeroDecision = (key, value) => {
-    const s = state.importSession;
-    if (!s || !key || !['submitted','not_submitted'].includes(value)) return;
-    s.zeroDecisions = s.zeroDecisions || {};
-    s.zeroDecisions[key] = value;
-    renderImportPreview();
-  };
-
-  const setAllPendingZeroDecisions = (value) => {
-    const s = state.importSession;
-    const preview = state.importPreview;
-    if (!s || !preview || !['submitted','not_submitted'].includes(value)) return;
-    s.zeroDecisions = s.zeroDecisions || {};
-    for (const r of preview.rows || []) {
-      if (r.zeroDecisionRequired && r.zeroDecisionKey) {
-        s.zeroDecisions[r.zeroDecisionKey] = value;
-      }
-    }
-    renderImportPreview();
-  };
-
-  const renderImportPreview = () => {
-    const s = state.importSession;
-    if (!s) return;
-    const preview = buildImportPreview(s);
-    state.importPreview = preview;
-
-    const counts = preview.counts;
-    const rowsHtml = preview.rows.map(r => {
-      const meta = STATUS_META[r.status] || ['', r.status];
-      const student = r.student;
-      const candidates = r.identity?.candidates || [];
-      const matchText = student
-        ? `${esc(student.name)}<div class="${APP}-tiny">${esc(student.className)} · ${esc(student.account)}</div>`
-        : candidates.length
-          ? candidates.map(c => `${esc(c.name)} — ${esc(c.className)} — ${esc(c.account)}`).join('<br>')
-          : '—';
-      return `<tr data-status="${r.status}">
-        <td>${r.sourceRowNumber}</td>
-        <td>${esc(r.raw.name || r.raw.account || r.raw.studentId || '—')}</td>
-        <td>${zeroDecisionHtml(r)}</td>
-        <td>${matchText}</td>
-        <td>${esc(r.identity?.method || '—')}</td>
-        <td>${r.existingGrade ?? '—'}</td>
-        <td><b>${Number.isFinite(r.newGrade) ? r.newGrade : '—'}</b>${r.sourceTotal && r.sourceTotal !== r.targetTotal ? `<div class="${APP}-tiny">المصدر: ${r.sourceScore}/${r.sourceTotal}</div>` : ''}</td>
-        <td>${esc(r.nextFeedback)}${r.feedbackSource === 'auto' ? `<div class="${APP}-tiny">${r.feedbackReason === 'submission' ? 'تلقائية حسب حالة التسليم' : r.feedbackReason === 'submitted-zero' ? 'تلقائية: تم التسليم بدرجة صفر' : Number.isFinite(r.feedbackPercentage) ? `تلقائية حسب ${r.feedbackPercentage}% · ${esc(r.feedbackBand)}` : 'ملاحظة تلقائية'}</div>` : r.feedbackSource === 'file' ? `<div class="${APP}-tiny">من ملف الاستيراد</div>` : ''}</td>
-        <td><span class="${APP}-status-pill ${APP}-${r.status}">${meta[0]} ${meta[1]}</span>${r.issue ? `<div class="${APP}-tiny ${APP}-danger-text">${esc(r.issue)}</div>` : ''}</td>
-      </tr>`;
-    }).join('');
-
-    const box = document.getElementById(`${APP}-import-preview`);
-    if (!box) return;
-    box.innerHTML = `
-      <div class="${APP}-import-stats">
-        <div><b>${counts.applicable}</b><span>جاهز للتطبيق</span></div>
-        <div><b>${counts.changed}</b><span>درجات مختلفة</span></div>
-        <div><b>${counts.unchanged}</b><span>لا تغيير</span></div>
-        <div><b>${counts.review + counts.ambiguous}</b><span>تحتاج مراجعة</span></div>
-        <div><b>${counts.unmatched}</b><span>غير مطابق</span></div>
-        <div><b>${counts.duplicate + counts.invalid}</b><span>تعارض/خطأ</span></div>
-        <div><b>${counts.zeroDecision}</b><span>أصفار تنتظر قرارك</span></div>
-        <div><b>${counts.notSubmitted}</b><span>لم يسلّم</span></div>
-        <div><b>${counts.submittedZero}</b><span>سلّم بدرجة صفر</span></div>
-      </div>
-      <div class="${APP}-table-wrap">
-        <table class="${APP}-table">
-          <thead><tr><th>صف</th><th>من الملف</th><th>حالة التسليم</th><th>مطابقة مدرستي</th><th>طريقة المطابقة</th><th>الحالية</th><th>الجديدة</th><th>الملاحظة</th><th>الحالة</th></tr></thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-      </div>
-      ${counts.zeroDecision ? `
-      <div class="${APP}-card ${APP}-notice" style="margin-top:12px">
-        <b>⚠️ يوجد ${counts.zeroDecision} طالبًا درجتهم صفر ولا توجد لهم حالة تسليم واضحة.</b>
-        <div class="${APP}-sub">لن يسمح السكربت بالتطبيق حتى تحدد لكل واحد: «سلّم» أو «لم يسلّم». يمكنك الحسم من الصف نفسه، أو استخدام قرار جماعي ثم تعديل أي طالب بشكل فردي.</div>
-        <div class="${APP}-toolbar" style="margin-top:8px">
-          <button type="button" class="${APP}-btn" data-${APP.toLowerCase()}-action="zeroDecisionAll" data-zero-value="submitted">اعتبر كل الأصفار: سلّموا</button>
-          <button type="button" class="${APP}-btn" data-${APP.toLowerCase()}-action="zeroDecisionAll" data-zero-value="not_submitted">اعتبر كل الأصفار: لم يسلّموا</button>
-        </div>
-      </div>` : ''}
-      <div class="${APP}-toolbar" style="margin-top:14px">
-        <button class="${APP}-btn ${APP}-primary" id="${APP}-apply-import" data-${APP.toLowerCase()}-action="applyImport" ${(counts.applicable && !counts.zeroDecision) ? '' : 'disabled'}>${counts.zeroDecision ? `احسم ${counts.zeroDecision} درجة صفر أولًا` : `تطبيق ${counts.applicable} تغييرًا مؤكدًا`}</button>
-        <button class="${APP}-btn" id="${APP}-export-import-preview">تصدير المعاينة Excel</button>
-        <button class="${APP}-btn" id="${APP}-show-backup">آخر نسخة احتياطية</button>
-      </div>`;
-
-    document.getElementById(`${APP}-export-import-preview`)?.addEventListener('click', exportImportPreview);
-    document.getElementById(`${APP}-show-backup`)?.addEventListener('click', showLastImportBackup);
-  };
-
-  const renderImportSession = () => {
-    const s = state.importSession;
-    if (!s) return;
-    const { body, title } = modalRefs();
-    if (title) title.textContent = 'استيراد درجات Excel / CSV';
-
-    body.innerHTML = `
-      <div class="${APP}-card ${APP}-notice">
-        <b>المطابقة الآمنة</b>
-        <div class="${APP}-sub">الأولوية: StudentId ← حساب الطالب ← UserGuid ← الاسم + الفصل. الاسم الفريد وحده لا يطبّق تلقائيًا إلا إذا سمحت به.</div>
-      </div>
-      <div class="${APP}-grid ${APP}-import-grid" style="margin-top:10px">
-        ${columnSelectHtml('account', 'حساب/بريد الطالب', s)}
-        ${columnSelectHtml('studentId', 'StudentId', s)}
-        ${columnSelectHtml('userGuid', 'UserGuid', s)}
-        ${columnSelectHtml('name', 'اسم الطالب', s)}
-        ${columnSelectHtml('className', 'الفصل', s)}
-        ${columnSelectHtml('score', 'الدرجة', s)}
-        ${columnSelectHtml('submissionStatus', 'حالة التسليم', s)}
-        ${columnSelectHtml('feedback', 'الملاحظة', s)}
-        <label class="${APP}-field"><span>درجة الملف من</span><input id="${APP}-source-total" type="number" min="0" step="0.01" value="${esc(s.sourceTotal)}" placeholder="مثال: 20"></label>
-        <label class="${APP}-field"><span>درجة الواجب في مدرستي</span><input type="text" value="${esc(s.targetTotal ?? 'غير محدد')}" readonly></label>
-        <label class="${APP}-field"><span>التقريب</span><select id="${APP}-round"><option value="0" ${s.roundStep === 0 ? 'selected' : ''}>بدون تقريب</option><option value="0.25" ${s.roundStep === .25 ? 'selected' : ''}>إلى 0.25</option><option value="0.5" ${s.roundStep === .5 ? 'selected' : ''}>إلى 0.5</option><option value="1" ${s.roundStep === 1 ? 'selected' : ''}>إلى عدد صحيح</option></select></label>
-      </div>
-      <div class="${APP}-checks">
-        <label><input id="${APP}-scale" type="checkbox" ${s.scale ? 'checked' : ''}> تحويل النسبة تلقائيًا إذا اختلف مجموع الملف عن درجة الواجب</label>
-        <label><input id="${APP}-auto-feedback" type="checkbox" ${s.autoFeedback ? 'checked' : ''}> إنشاء ملاحظات تلقائية حسب نسبة الدرجة عند عدم وجود ملاحظة في الملف</label>
-        <label><input id="${APP}-unique-name" type="checkbox" ${s.allowUniqueName ? 'checked' : ''}> السماح بالمطابقة التلقائية بالاسم الفريد فقط</label>
-        <span class="${APP}-sub">أولوية الملاحظة: ملاحظة Excel ← حالة التسليم (إن وجدت) ← قرار المعلم للصفر عند غياب الحالة ← نسبة الدرجة ← الملاحظة الحالية في مدرستي. إذا كانت درجة الطالب صفرًا ولا توجد حالة تسليم واضحة فلن يسمح السكربت بالتطبيق حتى تحدد هل سلّم أم لم يسلّم.</span>
-        <span class="${APP}-sub">الملف: ${esc(s.fileName)} · ورقة: ${esc(s.sheetName)} · صف العناوين: ${s.headerRow + 1}</span>
-      </div>
-      <div class="${APP}-toolbar"><button class="${APP}-btn ${APP}-primary" id="${APP}-rebuild-preview">تحديث المعاينة</button></div>
-      <div id="${APP}-import-preview"></div>`;
-
-    document.getElementById(`${APP}-rebuild-preview`)?.addEventListener('click', () => {
-      syncImportSettingsFromUI();
-      renderImportPreview();
-    });
-    renderImportPreview();
-  };
-
-  const readGradeFile = async (file) => {
-    if (!file) return;
-    const ext = (file.name.split('.').pop() || '').toLowerCase();
-    let aoa = [];
-    let sheetName = 'Sheet1';
-
-    if (ext === 'csv') {
-      const text = await file.text();
-      aoa = parseCsv(text.replace(/^\uFEFF/, ''));
-      sheetName = 'CSV';
-    } else {
-      if (!globalThis.XLSX) throw new Error('مكتبة Excel لم تُحمّل. أعد تحميل الصفحة ثم جرّب مرة أخرى.');
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array', cellDates: false });
-      sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error('ملف Excel لا يحتوي أوراقًا قابلة للقراءة.');
-      aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '', raw: false });
-    }
-
-    if (!aoa.length) throw new Error('الملف فارغ.');
-    const headerRow = detectHeaderRow(aoa);
-    const headers = (aoa[headerRow] || []).map((x, i) => clean(x) || `عمود ${i + 1}`);
-    const mapping = detectColumns(headers);
-    if (mapping.score < 0) throw new Error('لم أتعرف على عمود الدرجة. يمكنك إعادة تسمية العمود إلى «الدرجة» أو Score.');
-
-    const denominators = [];
-    for (let i = headerRow + 1; i < Math.min(aoa.length, headerRow + 100); i++) {
-      const p = parseScoreCell(importCell(aoa[i] || [], mapping.score));
-      if (Number.isFinite(p.total) && p.total > 0) denominators.push(p.total);
-    }
-    const denomCounts = new Map();
-    denominators.forEach(x => denomCounts.set(x, (denomCounts.get(x) || 0) + 1));
-    const dominantDenom = [...denomCounts.entries()].sort((a,b) => b[1]-a[1])[0]?.[0] || '';
-    const headerDenom = num(String(headers[mapping.score] || '').match(/(?:\/|من|of)\s*(\d+(?:[.,]\d+)?)/i)?.[1]?.replace(',', '.'));
-    const prefs = loadJSON(STORE.importPrefs, {});
-    const targetTotal = targetTotalGrade();
-
-    state.importSession = {
-      fileName: file.name,
-      sheetName,
-      aoa,
-      headerRow,
-      headers,
-      mapping,
-      sourceTotal: dominantDenom || headerDenom || targetTotal || '',
-      targetTotal,
-      scale: prefs.scale ?? (!!dominantDenom && !!targetTotal && !nearlyEqual(dominantDenom, targetTotal)),
-      roundStep: Number(prefs.roundStep || 0),
-      allowUniqueName: !!prefs.allowUniqueName,
-      autoFeedback: prefs.autoFeedback ?? true,
-      zeroDecisions: {}
-    };
-
-    renderImportSession();
-  };
-
-  const openImportWizard = async () => {
-    if (!state.gradeData) await refreshAll(false);
-    if (!state.registry) await fetchStudentRegistry(false);
-    if (!state.bridge) state.bridge = state.gradeData?.bridge || await buildIdentityBridge(false, state.gradeData?.students || []);
-
-    showMainModal('استيراد درجات Excel / CSV', `
-      <div class="${APP}-card ${APP}-notice">
-        <b>استيراد ذكي وآمن</b>
-        <div class="${APP}-sub">يدعم XLSX / XLS / CSV. لا تُكتب أي درجة قبل المعاينة والتأكيد. إذا وجد «حالة التسليم» في الملف يستخدمها لتمييز عدم التسليم عن التسليم بدرجة صفر. وإذا لم توجد حالة واضحة لأي طالب درجته صفر، يتوقف التطبيق حتى يقرر المعلم هل سلّم أم لم يسلّم. المطابقة بالحساب أو StudentId هي الأعلى ثقة، والأسماء المكررة لا تُحسم تلقائيًا.</div>
-      </div>
-      <div class="${APP}-drop" id="${APP}-drop">
-        <input id="${APP}-grade-file" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        <b>اختر ملف الدرجات</b>
-        <span>Excel أو CSV</span>
-      </div>
-      <div class="${APP}-toolbar"><button class="${APP}-btn" id="${APP}-show-backup">آخر نسخة احتياطية</button></div>`);
-
-    const input = document.getElementById(`${APP}-grade-file`);
-    input?.addEventListener('change', async () => {
-      try {
-        setBusy(true, 'جاري قراءة ملف الدرجات…');
-        await readGradeFile(input.files?.[0]);
-      } catch (e) {
-        toast(String(e?.message || e), 'error');
-      } finally {
-        setBusy(false);
-      }
-    });
-    document.getElementById(`${APP}-show-backup`)?.addEventListener('click', showLastImportBackup);
-  };
-
-  const globalGradeFormFields = () => {
-    const form = document.querySelector('form#GradeAssignment');
-    const out = [];
-    if (!form) return out;
-
-    [...form.elements].forEach(el => {
-      if (!el.name || /^List\[/i.test(el.name)) return;
-      if (el.disabled || ['button','submit','reset','file'].includes(el.type)) return;
-      if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
-      out.push([el.name, el.value ?? '']);
-    });
-
-    // مدرستي تضيف الحقول المخفية الموجودة في الصفحة عند الحفظ عبر AJAX.
-    // نضيف الحقول العامة فقط ونستبعد List الحالية حتى لا تتعارض مع دفعة الاستيراد.
-    document.querySelectorAll('input[type="hidden"][name]').forEach(el => {
-      if (!el.name || /^List\[/i.test(el.name) || el.disabled) return;
-      out.push([el.name, el.value ?? '']);
-    });
-
-    return out;
-  };
-
-  const buildGradePostData = (rows) => {
-    const params = new URLSearchParams();
-    globalGradeFormFields().forEach(([k,v]) => params.append(k, v));
-
-    const preferred = ['AutoGrade','StudentId','TotalGrade','hasAnswer','SolvingType','Id','IsApproved','AnswerText','IsOutSideSystem','Grade','feedBack'];
-    rows.forEach((row, index) => {
-      const fields = { ...(row.rawFields || {}) };
-      fields.StudentId = String(row.studentId || row.assignmentStudentId || fields.StudentId || '');
-      fields.Id = row.studentAssignmentRecordId || row.recordId || fields.Id || '';
-      fields.TotalGrade = Number.isFinite(row.maxGrade) ? row.maxGrade : (fields.TotalGrade ?? '');
-      fields.Grade = Number.isFinite(row.currentGrade) ? row.currentGrade : '';
-      fields.feedBack = row.feedback ?? fields.feedBack ?? '';
-
-      const keys = [...new Set([...preferred, ...Object.keys(fields)])];
-      keys.forEach(key => {
-        if (!(key in fields)) return;
-        const value = fields[key];
-        if (value === undefined || value === null) return;
-        params.append(`List[${index}].${key}`, String(value));
-      });
-    });
-    return params;
-  };
-
-  const IMPORT_TRACE_KEY = 'MAI_GRADE_IMPORT_TRACE_V2';
-
-  const safePostSummary = (url, body, rows) => {
-    const entries = [];
-    for (const [key, value] of body.entries()) {
-      if (/RequestVerificationToken/i.test(key)) continue;
-      if (/^List\[\d+\]\.(StudentId|Id|Grade|TotalGrade|AutoGrade|hasAnswer|IsApproved|SolvingType|feedBack|AnswerText)$/i.test(key) ||
-          /^(SchoolId|Published|pageNumber|PublishedEndTime|hSchoolId)$/i.test(key)) {
-        entries.push([key, String(value ?? '')]);
-      }
-    }
-    return {
-      at: new Date().toISOString(),
-      url,
-      rowCount: rows.length,
-      students: rows.map(r => ({
-        studentId: String(r.studentId || r.assignmentStudentId || ''),
-        recordId: String(r.studentAssignmentRecordId || r.recordId || ''),
-        grade: Number.isFinite(r.currentGrade) ? r.currentGrade : null,
-        feedback: r.feedback || ''
-      })),
-      entries
-    };
-  };
-
-  const appendGradeImportTrace = (event) => {
-    let trace = [];
-    try { trace = JSON.parse(sessionStorage.getItem(IMPORT_TRACE_KEY) || '[]'); } catch {}
-    if (!Array.isArray(trace)) trace = [];
-    trace.push(event);
-    trace = trace.slice(-60);
-    sessionStorage.setItem(IMPORT_TRACE_KEY, JSON.stringify(trace));
-    globalThis.MAI_GRADE_IMPORT_TRACE = trace;
-  };
-
-  const postGradeRows = async (rows) => {
-    // مهم: الحفظ اليدوي الحقيقي في مدرستي يرسل إلى location.href كاملاً
-    // بما في ذلك SchoolId و published في query string. form.action لا يحتفظ بهما دائماً.
-    const url = `${location.origin}${location.pathname}${location.search || ''}`;
-    const body = buildGradePostData(rows);
-
-    appendGradeImportTrace({ type: 'POST_PREPARED', ...safePostSummary(url, body, rows) });
-
-    if (globalThis.jQuery?.ajax) {
-      return new Promise((resolve, reject) => {
-        globalThis.jQuery.ajax({
-          url,
-          method: 'POST',
-          data: body.toString(),
-          contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
-          success: (data, textStatus, xhr) => {
-            appendGradeImportTrace({
-              type: 'POST_COMPLETE',
-              at: new Date().toISOString(),
-              url,
-              status: xhr?.status || 200,
-              responseLength: typeof data === 'string' ? data.length : JSON.stringify(data ?? '').length
-            });
-            resolve(data);
-          },
-          error: (xhr, status, err) => {
-            appendGradeImportTrace({
-              type: 'POST_ERROR',
-              at: new Date().toISOString(),
-              url,
-              status: xhr?.status || 0,
-              error: String(err || status || '')
-            });
-            reject(new Error(err || status || `HTTP ${xhr?.status || ''}`));
-          }
-        });
-      });
-    }
-
-    const res = await fetch(url, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: body.toString()
-    });
-    const text = await res.text();
-    appendGradeImportTrace({
-      type: res.ok ? 'POST_COMPLETE' : 'POST_ERROR',
-      at: new Date().toISOString(),
-      url,
-      status: res.status,
-      responseLength: text.length
-    });
-    if (!res.ok) throw new Error(`فشل حفظ الدرجات (HTTP ${res.status}).`);
-    return text;
-  };
-
-  async function fetchGradeRowsByStudentIds(studentIds) {
-    const params = extractLoadStudentsParams();
-    if (!params) throw new Error('تعذر قراءة إعدادات رصد الدرجات من الصفحة.');
-
-    const ids = [...new Set((studentIds || []).map(String).filter(Boolean))].slice(0, 10);
-    if (!ids.length) return [];
-
-    const roster = assignmentRoster();
-    const rosterMap = new Map(roster.map(r => [String(r.studentId || r.assignmentStudentId), r]));
-
-    const response = await postForm('/Teacher/Assignments/GetGradeStudentsList', {
-      ...params,
-      pageNumber: 1,
-      pageSize: 10,
-      studentIds: ids,
-      status: 'All',
-      sortBy: 'name_asc'
-    });
-
-    return parseGradeStudentsHtml(responseHtml(response), rosterMap);
-  }
-
-  const chunkArray = (arr, size = 10) => {
-    const out = [];
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-  };
-
-  const patchVisibleGradeFields = (changes) => {
-    let patched = 0;
-    for (const ch of changes) {
-      const sid = String(ch.student.studentId || ch.student.assignmentStudentId || '');
-      if (!sid) continue;
-
-      const gradeInput = [...document.querySelectorAll('.gradeAssignment[data-student-id]')]
-        .find(el => String(el.dataset.studentId || '') === sid);
-
-      let index = null;
-      if (gradeInput) {
-        gradeInput.value = String(ch.newGrade);
-        gradeInput.dispatchEvent(new Event('input', { bubbles: true }));
-        gradeInput.dispatchEvent(new Event('change', { bubbles: true }));
-        index = gradeInput.name?.match(/^List\[(\d+)\]\.Grade$/)?.[1] ?? null;
-        patched++;
-      } else {
-        const hiddenStudent = [...document.querySelectorAll('input[type="hidden"][name$=".StudentId"]')]
-          .find(el => String(el.value || '') === sid);
-        index = hiddenStudent?.name?.match(/^List\[(\d+)\]\.StudentId$/)?.[1] ?? null;
-      }
-
-      if (index !== null && index !== undefined) {
-        const feedback = document.querySelector(`[name="List[${index}].feedBack"]`);
-        if (feedback && ch.nextFeedback !== undefined) {
-          feedback.value = ch.nextFeedback ?? '';
-          feedback.dispatchEvent(new Event('input', { bubbles: true }));
-          feedback.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }
-    }
-    return patched;
-  };
-
-  const saveImportBackup = (rows, changes, fileName) => {
-    const ids = new Set(changes.map(c => String(c.student.studentId || c.student.assignmentStudentId)));
-    const before = rows.filter(r => ids.has(String(r.studentId || r.assignmentStudentId))).map(r => ({
-      studentId: String(r.studentId || r.assignmentStudentId),
-      recordId: r.studentAssignmentRecordId || r.recordId || '',
-      name: r.name,
-      className: r.className,
-      account: r.account,
-      grade: r.currentGrade,
-      feedback: r.feedback,
-      isApproved: r.isApproved,
-      maxGrade: r.maxGrade
-    }));
-    const backup = {
-      version: VERSION,
-      createdAt: new Date().toISOString(),
-      pageUrl: location.href,
-      assignment: extractLoadStudentsParams(),
-      sourceFile: fileName,
-      before
-    };
-    saveJSON(STORE.importBackup, backup);
-    return backup;
-  };
-
-  const appendImportHistory = (entry) => {
-    const history = loadJSON(STORE.importHistory, []);
-    history.unshift(entry);
-    saveJSON(STORE.importHistory, history.slice(0, 20));
-  };
-
-  // لا نستخدم window.confirm هنا لأن مدرستي قد تستبدله بنافذة غير متزامنة
-  // ترجع undefined فوراً؛ وهذا كان يجعل applyImportPreview تنتهي قبل ضغط "نعم".
-  const confirmImportApply = (message) => new Promise((resolve) => {
-    const old = document.getElementById(`${APP}-import-confirm`);
-    if (old) old.remove();
-
-    const overlay = document.createElement('div');
-    overlay.id = `${APP}-import-confirm`;
-    overlay.style.cssText = [
-      'position:fixed',
-      'inset:0',
-      'z-index:2147483647',
-      'background:rgba(17,24,39,.55)',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
-      'padding:18px',
-      'direction:rtl'
-    ].join(';');
-
-    const box = document.createElement('div');
-    box.style.cssText = [
-      'width:min(700px,96vw)',
-      'background:#fff',
-      'border-radius:18px',
-      'box-shadow:0 24px 80px rgba(0,0,0,.3)',
-      'padding:24px',
-      'font-family:Tahoma,Arial,sans-serif',
-      'color:#1f2937'
-    ].join(';');
-
-    const text = document.createElement('div');
-    text.style.cssText = 'white-space:pre-line;font-size:16px;line-height:1.9;text-align:center;margin-bottom:22px';
-    text.textContent = message;
-
-    const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;justify-content:center;gap:12px';
-
-    const yes = document.createElement('button');
-    yes.type = 'button';
-    yes.textContent = 'نعم';
-    yes.style.cssText = 'border:0;border-radius:9px;padding:11px 28px;background:#198754;color:#fff;font-weight:700;cursor:pointer;font-size:16px';
-
-    const no = document.createElement('button');
-    no.type = 'button';
-    no.textContent = 'لا';
-    no.style.cssText = 'border:0;border-radius:9px;padding:11px 28px;background:#dc2626;color:#fff;font-weight:700;cursor:pointer;font-size:16px';
-
-    const finish = (value) => {
-      overlay.remove();
-      resolve(value);
-    };
-
-    yes.addEventListener('click', () => finish(true), { once: true });
-    no.addEventListener('click', () => finish(false), { once: true });
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay) finish(false);
-    });
-
-    actions.append(yes, no);
-    box.append(text, actions);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    yes.focus();
-  });
-
-  async function applyImportPreview() {
-    const preview = state.importPreview;
-    const session = state.importSession;
-    if (!preview || !session) return;
-
-    if (preview.counts?.zeroDecision > 0) {
-      return toast(`يوجد ${preview.counts.zeroDecision} طالبًا بدرجة صفر يحتاجون قرار «سلّم / لم يسلّم» قبل التطبيق.`, 'error');
-    }
-
-    const changes = preview.rows.filter(r => r.applicable);
-    if (!changes.length) return toast('لا توجد تغييرات مؤكدة للتطبيق.', 'info');
-
-    // نسجل دخول الدالة فوراً حتى يكون التشخيص واضحاً حتى قبل أي طلب شبكي.
-    appendGradeImportTrace({
-      type: 'APPLY_ENTER',
-      at: new Date().toISOString(),
-      changes: changes.length,
-      visibleInputs: document.querySelectorAll('.gradeAssignment[data-student-id]').length
-    });
-
-    const changedCount = changes.filter(r => r.status === 'changed').length;
-    appendGradeImportTrace({
-      type: 'CONFIRM_OPEN',
-      at: new Date().toISOString(),
-      changes: changes.length
-    });
-
-    const ok = await confirmImportApply(
-      `سيتم تطبيق ${changes.length} تغييرًا فقط من الصفوف المؤكدة.\n` +
-      `${changedCount ? `منها ${changedCount} درجة ستتغير عن قيمة موجودة.\n` : ''}` +
-      `سيتم حفظ نسخة احتياطية أولاً. بعد الموافقة ستظهر الدرجات والملاحظات في الخانات الظاهرة فورًا، ثم يبدأ الحفظ على مدرستي.\n\nمتابعة؟`
-    );
-
-    appendGradeImportTrace({
-      type: 'CONFIRM_RESULT',
-      at: new Date().toISOString(),
-      confirmed: !!ok
-    });
-    if (!ok) return;
-
-    // نظهر الدرجات في الصفحة الحالية أولاً وبشكل متزامن.
-    // هذا السلوك مثبت بالفحص المباشر ويعطي المستخدم دليلاً فورياً أن المطابقة صحيحة.
-    sessionStorage.setItem(IMPORT_TRACE_KEY, '[]');
-    globalThis.MAI_GRADE_IMPORT_TRACE = [];
-    appendGradeImportTrace({
-      type: 'APPLY_CONFIRMED',
-      at: new Date().toISOString(),
-      changes: changes.length
-    });
-    const visiblePatched = patchVisibleGradeFields(changes);
-    appendGradeImportTrace({
-      type: 'VISIBLE_PATCH',
-      at: new Date().toISOString(),
-      patched: visiblePatched
-    });
-
-    setBusy(true, 'جاري تجهيز وحفظ درجات مدرستي…');
-    try {
-      const latest = await fetchAllGradeStudents();
-      saveImportBackup(latest, changes, session.fileName);
-
-      const changeBatches = chunkArray(changes, 10);
-      const skipped = [];
-      const batchErrors = [];
-      let postedRowsCount = 0;
-
-      for (let i = 0; i < changeBatches.length; i++) {
-        const batchChanges = changeBatches[i];
-        const ids = batchChanges
-          .map(ch => String(ch.student.studentId || ch.student.assignmentStudentId || ''))
-          .filter(Boolean);
-
-        setBusy(true, `قراءة دفعة ${i + 1} من ${changeBatches.length} من مدرستي…`);
-
-        // لا نبني List[] من بيانات مخزنة؛ نقرأ صفوف هؤلاء الطلاب مباشرة من endpoint
-        // حتى تكون Id/StudentId/hasAnswer/IsApproved/SolvingType مطابقة للحظة الحفظ.
-        const serverRows = await fetchGradeRowsByStudentIds(ids);
-        const byId = new Map(serverRows.map(r => [String(r.studentId || r.assignmentStudentId), r]));
-        const rowsToPost = [];
-
-        for (const ch of batchChanges) {
-          const sid = String(ch.student.studentId || ch.student.assignmentStudentId || '');
-          const original = byId.get(sid);
-
-          if (!original) {
-            skipped.push({ sid, name: ch.student.name, reason: 'لم يرجع الطالب من GetGradeStudentsList لحظة الحفظ.' });
-            continue;
-          }
-
-          const row = {
-            ...original,
-            rawFields: { ...(original.rawFields || {}) },
-            currentGrade: ch.newGrade,
-            achievedGrade: ch.newGrade,
-            feedback: ch.nextFeedback ?? original.feedback ?? ''
-          };
-
-          row.rawFields.Grade = String(ch.newGrade);
-          row.rawFields.feedBack = row.feedback;
-          rowsToPost.push(row);
-        }
-
-        if (!rowsToPost.length) continue;
-
-        setBusy(true, `حفظ دفعة ${i + 1} من ${changeBatches.length}…`);
-        try {
-          await postGradeRows(rowsToPost);
-          postedRowsCount += rowsToPost.length;
-        } catch (e) {
-          batchErrors.push({ batch: i + 1, error: String(e?.message || e) });
-          break;
-        }
-      }
-
-      if (!postedRowsCount) {
-        throw new Error('لم تصل أي دفعة قابلة للحفظ إلى مدرستي.');
-      }
-
-      setBusy(true, 'التحقق من الدرجات بعد الحفظ…');
-      const verify = await fetchAllGradeStudents();
-      const verifyMap = new Map(verify.map(r => [String(r.studentId || r.assignmentStudentId), r]));
-      const mismatches = [];
-
-      for (const ch of changes) {
-        const sid = String(ch.student.studentId || ch.student.assignmentStudentId || '');
-        const actual = verifyMap.get(sid)?.currentGrade ?? verifyMap.get(sid)?.achievedGrade ?? null;
-        if (!Number.isFinite(actual) || !nearlyEqual(actual, ch.newGrade, 1e-4)) {
-          mismatches.push({ sid, name: ch.student.name, expected: ch.newGrade, actual });
-        }
-      }
-
-      appendGradeImportTrace({
-        type: 'VERIFY',
-        at: new Date().toISOString(),
-        requested: changes.length,
-        postedRowsCount,
-        verified: changes.length - mismatches.length,
-        mismatches
-      });
-
-      appendImportHistory({
-        createdAt: new Date().toISOString(),
-        sourceFile: session.fileName,
-        attempted: changes.length,
-        postedRowsCount,
-        verified: changes.length - mismatches.length,
-        visiblePatched,
-        batches: changeBatches.length,
-        skipped,
-        batchErrors,
-        mismatches
-      });
-
-      await refreshAll(false);
-      patchVisibleGradeFields(changes.filter(ch => {
-        const sid = String(ch.student.studentId || ch.student.assignmentStudentId || '');
-        const actual = verifyMap.get(sid)?.currentGrade ?? verifyMap.get(sid)?.achievedGrade ?? null;
-        return Number.isFinite(actual) && nearlyEqual(actual, ch.newGrade, 1e-4);
-      }));
-
-      if (batchErrors.length || skipped.length || mismatches.length) {
-        showMainModal('نتيجة استيراد الدرجات', `
-          <div class="${APP}-card"><b>اكتملت محاولة الحفظ مع وجود عناصر تحتاج مراجعة.</b>
-            <div>المطلوب: ${changes.length}</div>
-            <div>أُرسلت للسيرفر: ${postedRowsCount}</div>
-            <div>تم التحقق من: ${changes.length - mismatches.length}</div>
-            <div>غير متطابق بعد القراءة: ${mismatches.length}</div>
-            <div>لم يرجع من خدمة الرصد: ${skipped.length}</div>
-          </div>
-          ${batchErrors.length ? `<div class="${APP}-danger-box"><b>خطأ في دفعة الحفظ:</b><div>${esc(batchErrors[0].error)}</div></div>` : ''}
-          ${mismatches.length ? `<table class="${APP}-table"><thead><tr><th>الطالب</th><th>المتوقع</th><th>المقروء بعد الحفظ</th></tr></thead><tbody>
-            ${mismatches.map(x => `<tr><td>${esc(x.name)}</td><td>${x.expected}</td><td>${x.actual ?? '—'}</td></tr>`).join('')}
-          </tbody></table>` : ''}
-          <div class="${APP}-toolbar"><button class="${APP}-btn" id="${APP}-copy-import-trace">نسخ سجل تشخيص الحفظ</button></div>`);
-
-        document.getElementById(`${APP}-copy-import-trace`)?.addEventListener('click', async () => {
-          const txt = sessionStorage.getItem(IMPORT_TRACE_KEY) || '[]';
-          try { await navigator.clipboard.writeText(txt); toast('تم نسخ سجل التشخيص.', 'success'); }
-          catch { prompt('انسخ السجل:', txt); }
-        });
-        toast('بعض الدرجات لم تُثبت؛ راجع نتيجة الاستيراد.', 'info');
-      } else {
-        showMainModal('تم استيراد الدرجات', `
-          <div class="${APP}-success-box"><b>تم تطبيق والتحقق من ${changes.length} تغييرًا بنجاح.</b>
-            <div>المصدر: ${esc(session.fileName)}</div>
-            <div>أُرسلت ${postedRowsCount} خانة درجة/تغيير للسيرفر.</div>
-            <div>الحفظ تم على ${changeBatches.length} دفعة/دفعات.</div>
-            <div>حُفظت نسخة احتياطية قبل العملية.</div>
-          </div>`);
-        toast(`تم استيراد ${changes.length} درجة/تغيير بنجاح.`, 'success');
-      }
-    } catch (e) {
-      appendGradeImportTrace({
-        type: 'APPLY_ERROR',
-        at: new Date().toISOString(),
-        error: String(e?.message || e)
-      });
-      // لا نمسح القيم التي ظهرت في خانات الصفحة الحالية؛ يمكن للمستخدم حينها
-      // حفظها بزر مدرستي الأصلي كخطة احتياطية بينما نعرض سبب فشل الحفظ الآلي.
-      showMainModal('تعذر تطبيق درجات Excel', `
-        <div class="${APP}-danger-box"><b>لم تكتمل عملية الحفظ.</b><div>${esc(String(e?.message || e))}</div></div>
-        <div class="${APP}-card">تم الاحتفاظ بالمعاينة والنسخة الاحتياطية وسجل تشخيص الحفظ.</div>
-        <div class="${APP}-toolbar"><button class="${APP}-btn" id="${APP}-copy-import-trace">نسخ سجل تشخيص الحفظ</button></div>`);
-
-      document.getElementById(`${APP}-copy-import-trace`)?.addEventListener('click', async () => {
-        const txt = sessionStorage.getItem(IMPORT_TRACE_KEY) || '[]';
-        try { await navigator.clipboard.writeText(txt); toast('تم نسخ سجل التشخيص.', 'success'); }
-        catch { prompt('انسخ السجل:', txt); }
-      });
-      toast(String(e?.message || e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const exportImportPreview = () => {
-    const p = state.importPreview;
-    if (!p) return;
-    const data = p.rows.map(r => ({
-      'صف الملف': r.sourceRowNumber,
-      'اسم/هوية من الملف': clean(r.raw.name || r.raw.account || r.raw.studentId),
-      'الطالب في مدرستي': r.student?.name || '',
-      'الفصل': r.student?.className || '',
-      'الحساب': r.student?.account || '',
-      'StudentId': r.student?.studentId || r.student?.assignmentStudentId || '',
-      'طريقة المطابقة': r.identity?.method || '',
-      'الدرجة الحالية': r.existingGrade ?? '',
-      'الدرجة الجديدة': r.newGrade ?? '',
-      'حالة التسليم من الملف': r.submissionStatusRaw || '',
-      'تصنيف التسليم': r.submissionStatusCode || '',
-      'الملاحظة': r.nextFeedback || '',
-      'مصدر الملاحظة': r.feedbackReason === 'submission' ? 'حالة التسليم' : r.feedbackReason === 'submitted-zero' ? 'تسليم بدرجة صفر' : r.feedbackSource === 'auto' ? 'نسبة الدرجة' : r.feedbackSource === 'file' ? 'ملف الاستيراد' : '',
-      'الحالة': STATUS_META[r.status]?.[1] || r.status,
-      'التنبيه': r.issue || ''
-    }));
-    if (globalThis.XLSX) {
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Import Preview');
-      XLSX.writeFile(wb, `madrasati-import-preview-${todayStamp()}.xlsx`);
-    } else {
-      const headers = Object.keys(data[0] || {});
-      const lines = [headers.map(csvCell).join(','), ...data.map(r => headers.map(h => csvCell(r[h])).join(','))];
-      downloadText(`madrasati-import-preview-${todayStamp()}.csv`, '\uFEFF' + lines.join('\n'), 'text/csv;charset=utf-8');
-    }
-  };
-
-  const showLastImportBackup = () => {
-    const b = loadJSON(STORE.importBackup);
-    if (!b) return toast('لا توجد نسخة احتياطية محفوظة بعد.', 'info');
-    showMainModal('آخر نسخة احتياطية قبل الاستيراد', `
-      <div class="${APP}-card"><b>${esc(b.sourceFile || '—')}</b><div class="${APP}-sub">${esc(b.createdAt || '')} · ${b.before?.length || 0} طالب</div></div>
-      <table class="${APP}-table"><thead><tr><th>الطالب</th><th>الفصل</th><th>الحساب</th><th>الدرجة السابقة</th><th>الملاحظة السابقة</th></tr></thead><tbody>
-        ${(b.before || []).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.className)}</td><td>${esc(x.account)}</td><td>${x.grade ?? '—'}</td><td>${esc(x.feedback)}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="${APP}-toolbar"><button class="${APP}-btn" id="${APP}-download-backup">تنزيل النسخة JSON</button></div>`);
-    document.getElementById(`${APP}-download-backup`)?.addEventListener('click', () => {
-      downloadText(`madrasati-grade-backup-${todayStamp()}.json`, JSON.stringify(b, null, 2), 'application/json;charset=utf-8');
-    });
-  };
-
-  // -----------------------------
-  // Print / export
-  // -----------------------------
-  const printWindow = (title, bodyHtml) => {
-    const w = window.open('', '_blank', 'noopener,noreferrer');
-    if (!w) throw new Error('المتصفح منع نافذة الطباعة.');
-
-    w.document.write(`<!doctype html>
-<html dir="rtl" lang="ar">
-<head>
-<meta charset="utf-8">
-<title>${esc(title)}</title>
-<style>
-  body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:28px}
-  h1,h2,h3{margin:0 0 14px}
-  .meta{color:#6b7280;margin-bottom:20px}
-  .q{border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:14px 0;break-inside:avoid}
-  .qhead{display:flex;justify-content:space-between;gap:12px;font-weight:700}
-  .opts{margin:12px 0 0;padding:0;list-style:none}
-  .opts li{padding:5px 0}
-  .correct{font-weight:700}
-  table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{border:1px solid #d1d5db;padding:7px;text-align:right}
-  th{background:#f3f4f6}
-  @media print{body{margin:12mm}.noprint{display:none}}
-</style>
-</head>
-<body>
-<h1>${esc(title)}</h1>
-<div class="meta">مدرستي — ${new Date().toLocaleString('en-GB')}</div>
-${bodyHtml}
-<script>window.onload=()=>window.print();<\/script>
-</body>
-</html>`);
-    w.document.close();
-  };
-
-  async function printQuestions(answerKey = false) {
-    const questions = await getQuestionTemplate();
-    const html = questions.map(q => `
-      <section class="q">
-        <div class="qhead">
-          <span>السؤال ${q.number}: ${esc(q.text)}</span>
-          <span>${Number.isFinite(q.maxScore) ? `${q.maxScore} درجة` : ''}</span>
-        </div>
-        ${q.options?.length ? `
-          <ul class="opts">
-            ${q.options.map(o => `
-              <li class="${answerKey && o.markedCorrect ? 'correct' : ''}">
-                ${answerKey && o.markedCorrect ? '✓ ' : '○ '}${esc(o.text)}
-              </li>`).join('')}
-          </ul>` : ''}
-        ${answerKey && q.correctText ? `<div class="correct">الإجابة الصحيحة: ${esc(q.correctText)}</div>` : ''}
-      </section>`).join('');
-
-    printWindow(answerKey ? 'نموذج إجابة الواجب' : 'أسئلة الواجب', html);
-  }
-
-  function printStudentsReport() {
-    if (!state.gradeData) throw new Error('حدّث بيانات الواجب أولًا.');
-    const mode = state.gradeData.assignmentMode;
-
-    const rows = state.gradeData.students.map((s, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${esc(s.name)}</td>
-        <td>${esc(s.className)}</td>
-        <td>${esc(s.account)}</td>
-        <td>${esc(getStudentStatusLabel(s, mode))}</td>
-        <td>${s.achievedGrade ?? ''}</td>
-        <td>${s.maxGrade ?? ''}</td>
-        <td>${s.gradeState === 'recorded' ? 'مرصود' : 'غير مرصود'}</td>
-      </tr>`).join('');
-
-    printWindow('تقرير طلاب الواجب', `
-      <table>
-        <thead><tr>
-          <th>#</th><th>الطالب</th><th>الفصل</th><th>الحساب</th>
-          <th>الحالة</th><th>الدرجة</th><th>من</th><th>الرصد</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`);
-  }
-
-  const exportRows = () => {
-    if (!state.gradeData) throw new Error('حدّث بيانات الواجب أولًا.');
-    const mode = state.gradeData.assignmentMode;
-    return state.gradeData.students.map(s => {
-      const percent = Number.isFinite(s.achievedGrade) && Number.isFinite(s.maxGrade) && s.maxGrade > 0
-        ? Number(((s.achievedGrade / s.maxGrade) * 100).toFixed(2))
-        : '';
-      return {
-        'الطالب': s.name,
-        'الفصل': s.className,
-        'حساب الطالب': s.account,
-        'UserGuid': s.userGuid,
-        'StudentId': s.studentId || s.assignmentStudentId,
-        'StudentAssignmentRecordId': s.studentAssignmentRecordId || s.recordId,
-        'الحالة': getStudentStatusLabel(s, mode),
-        'حالة الرصد': s.gradeState === 'recorded' ? 'مرصود' : 'غير مرصود',
-        'الدرجة': s.achievedGrade ?? '',
-        'الدرجة الكلية': s.maxGrade ?? '',
-        'النسبة': percent,
-        'الملاحظة': s.feedback || '',
-        'طريقة ربط الهوية': s.identityResolutionMethod || ''
-      };
-    });
-  };
-
-  function exportCSV() {
-    const data = exportRows();
-    const headers = Object.keys(data[0] || {});
+  function exportIndexCSV() {
+    const data = indexExportRows();
+    if (!data.length) throw new Error('لا توجد واجبات قابلة للتصدير.');
+    const headers = Object.keys(data[0]);
     const lines = [headers.map(csvCell).join(',')];
-    data.forEach(r => lines.push(headers.map(h => csvCell(r[h])).join(',')));
-    downloadText(`madrasati-assignment-${todayStamp()}.csv`, '\uFEFF' + lines.join('\n'), 'text/csv;charset=utf-8');
+    for (const row of data) lines.push(headers.map(h => csvCell(row[h])).join(','));
+    downloadText(`madrasati-assignments-register-${dateStamp()}.csv`, '\uFEFF' + lines.join('\n'), 'text/csv;charset=utf-8');
   }
 
-  function exportExcel() {
-    const data = exportRows();
-    if (!globalThis.XLSX) {
-      exportCSV();
-      toast('تعذر تحميل مكتبة XLSX؛ تم التصدير CSV بدلًا منها.', 'info');
-      return;
-    }
-    const ws = XLSX.utils.json_to_sheet(data);
+  function exportIndexExcel() {
+    const data = indexExportRows();
+    if (!data.length) throw new Error('لا توجد واجبات قابلة للتصدير.');
+    if (!globalThis.XLSX) return exportIndexCSV();
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Students');
-    XLSX.writeFile(wb, `madrasati-assignment-${todayStamp()}.xlsx`);
-  }
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = [
+      { wch: 5 }, { wch: 28 }, { wch: 20 }, { wch: 24 }, { wch: 24 }, { wch: 60 }, { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 16 }, { wch: 20 }, { wch: 60 }, { wch: 60 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Assignments');
 
-  // -----------------------------
-  // UI
-  // -----------------------------
-  const addStyles = () => {
-    if (document.getElementById(`${APP}-style`)) return;
-    const style = document.createElement('style');
-    style.id = `${APP}-style`;
-    style.textContent = `
-      #${APP}-panel{direction:rtl;font-family:Tahoma,Arial,sans-serif;background:#fff;border:1px solid #e5e7eb;border-radius:16px;margin:16px 0;padding:16px;box-shadow:0 6px 22px rgba(0,0,0,.06)}
-      #${APP}-panel *,.${APP}-modal *{box-sizing:border-box}
-      .${APP}-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-      .${APP}-title{font-size:18px;font-weight:800;color:#111827}
-      .${APP}-sub,.${APP}-tiny{font-size:12px;color:#6b7280;margin-top:3px}.${APP}-tiny{font-size:10px}
-      .${APP}-status{font-size:12px;padding:6px 10px;border-radius:999px;background:#f3f4f6;color:#374151}
-      .${APP}-status[data-busy="1"]{background:#fff7ed;color:#9a3412}
-      .${APP}-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-      .${APP}-btn{border:1px solid #d1d5db;background:#fff;color:#111827;border-radius:10px;padding:8px 11px;font-size:12px;font-weight:700;cursor:pointer}
-      .${APP}-btn:hover{background:#f9fafb}.${APP}-btn:disabled{opacity:.55;cursor:not-allowed}
-      .${APP}-primary{background:#111827;color:#fff;border-color:#111827}.${APP}-primary:hover{background:#1f2937}
-      #${APP}-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:14px}
-      .${APP}-metric{border:1px solid #e5e7eb;border-radius:12px;padding:10px;background:#fafafa}.${APP}-metric b{display:block;font-size:18px;color:#111827}.${APP}-metric span{font-size:11px;color:#6b7280}
-      .${APP}-modal{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:24px}
-      .${APP}-modal[hidden]{display:none}.${APP}-dialog{direction:rtl;width:min(1280px,97vw);max-height:92vh;overflow:auto;background:#fff;border-radius:18px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
-      .${APP}-dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.${APP}-close{border:0;background:#f3f4f6;border-radius:10px;padding:8px 12px;cursor:pointer}
-      .${APP}-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.${APP}-card{border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#fff}
-      .${APP}-notice{background:#f8fafc}.${APP}-success-box{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:14px;padding:18px;line-height:1.9}
-      .${APP}-table-wrap{max-height:52vh;overflow:auto;border:1px solid #e5e7eb;border-radius:12px;margin-top:10px}
-      .${APP}-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}.${APP}-table-wrap .${APP}-table{margin-top:0}
-      .${APP}-table th,.${APP}-table td{border-bottom:1px solid #e5e7eb;padding:8px;text-align:right;vertical-align:top}.${APP}-table th{position:sticky;top:0;background:#f9fafb;z-index:1}
-      .${APP}-bar{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:5px}.${APP}-bar>i{display:block;height:100%;background:currentColor}.${APP}-pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#f3f4f6;font-size:10px}
-      .${APP}-field{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:700}.${APP}-field input,.${APP}-field select{width:100%;border:1px solid #d1d5db;border-radius:9px;padding:8px;background:#fff;font:12px Tahoma,Arial}
-      .${APP}-checks{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px;border:1px dashed #d1d5db;border-radius:12px}.${APP}-checks label{font-size:12px;font-weight:700}
-      .${APP}-drop{border:2px dashed #cbd5e1;border-radius:16px;padding:28px;text-align:center;margin-top:14px;position:relative;background:#f8fafc}.${APP}-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}.${APP}-drop b,.${APP}-drop span{display:block}.${APP}-drop span{font-size:12px;color:#64748b;margin-top:5px}
-      .${APP}-import-stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:12px}.${APP}-import-stats>div{border:1px solid #e5e7eb;border-radius:10px;padding:9px;background:#fafafa}.${APP}-import-stats b{display:block;font-size:18px}.${APP}-import-stats span{font-size:10px;color:#6b7280}
-      .${APP}-status-pill{display:inline-block;border-radius:999px;padding:4px 7px;font-size:10px;white-space:nowrap}.${APP}-ready{background:#dcfce7}.${APP}-changed{background:#ffedd5}.${APP}-unchanged{background:#dbeafe}.${APP}-review{background:#fef9c3}.${APP}-ambiguous,.${APP}-duplicate{background:#f3e8ff}.${APP}-unmatched,.${APP}-invalid{background:#fee2e2}.${APP}-danger-text{color:#b91c1c}
-      .${APP}-rights{border-top:1px solid #e5e7eb;margin-top:14px;padding-top:10px;font-size:10px;color:#6b7280;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.${APP}-rights a{color:inherit;text-decoration:none}
-      #${APP}-toast{position:fixed;left:20px;bottom:20px;z-index:2147483647;opacity:0;transform:translateY(10px);transition:.2s;background:#111827;color:#fff;border-radius:10px;padding:10px 14px;font:12px Tahoma,Arial}
-      #${APP}-toast.show{opacity:1;transform:none}#${APP}-toast.success{background:#065f46}#${APP}-toast.error{background:#991b1b}
-      @media(max-width:1000px){#${APP}-summary,.${APP}-grid,.${APP}-import-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:560px){#${APP}-summary,.${APP}-grid,.${APP}-import-stats{grid-template-columns:1fr}.${APP}-modal{padding:8px}}
-    `;
-    document.head.appendChild(style);
-  };
-
-  const findMount = () =>
-    document.querySelector('main .container-fluid,main .container,main,.container-fluid,.container') || document.body;
-
-  const renderSummaryInline = (data) => {
-    const el = document.getElementById(`${APP}-summary`);
-    if (!el) return;
-
-    const s = data.summary;
-    const mode = data.assignmentMode || s.assignmentMode || { key: 'unknown', label: 'غير محدد', rawSolvingTypes: [] };
-    const fmt = v => v == null ? '—' : String(Number(v.toFixed ? v.toFixed(2) : v));
-    const rawType = mode.rawSolvingTypes?.length ? ` | SolvingType: ${mode.rawSolvingTypes.join(', ')}` : '';
-
-    if (mode.key === 'outside_system') {
-      el.innerHTML = `
-        <div class="${APP}-metric"><b>${s.total}</b><span>الطلاب</span></div>
-        <div class="${APP}-metric"><b>${s.unverifiedSubmissionCount}</b><span>التسليم غير قابل للتحقق</span></div>
-        <div class="${APP}-metric"><b>${s.graded}</b><span>درجات مرصودة</span></div>
-        <div class="${APP}-metric"><b>${s.gradingRate}%</b><span>نسبة رصد الدرجات</span></div>
-        <div class="${APP}-metric"><b>${fmt(s.averagePercent)}${s.averagePercent == null ? '' : '%'}</b><span>متوسط الدرجات المرصودة</span></div>
-        <div class="${APP}-metric"><b>${data.bridge?.percentage ?? 0}%</b><span>ربط الهوية</span></div>
-        <div class="${APP}-metric"><b style="font-size:13px">${esc(mode.label)}</b><span>نوع الواجب${esc(rawType)}</span></div>
-      `;
-      return;
+    if (indexState.publications) {
+      const pubRows = [];
+      for (const row of indexState.assignments) {
+        const pub = publicationInfoFor(row);
+        for (const link of pub?.current?.gradeLinks || []) pubRows.push({ 'الواجب': row.title, 'Assignment GUID': row.assignmentGuid, 'حالة النشر': 'حالي - مستبعد من التقرير النهائي', 'رابط الرصد': link.href, 'سياق': link.context || '' });
+        for (const link of pub?.ended?.gradeLinks || []) pubRows.push({ 'الواجب': row.title, 'Assignment GUID': row.assignmentGuid, 'حالة النشر': 'منتهي', 'رابط الرصد': link.href, 'سياق': link.context || '' });
+      }
+      if (pubRows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pubRows), 'Publications');
     }
 
-    el.innerHTML = `
-      <div class="${APP}-metric"><b>${s.total}</b><span>الطلاب</span></div>
-      <div class="${APP}-metric"><b>${s.submittedCount ?? '—'}</b><span>تم الحل/التسليم</span></div>
-      <div class="${APP}-metric"><b>${s.notSubmittedCount ?? '—'}</b><span>لم يحل</span></div>
-      <div class="${APP}-metric"><b>${s.submissionRate ?? '—'}${s.submissionRate == null ? '' : '%'}</b><span>نسبة الإنجاز</span></div>
-      <div class="${APP}-metric"><b>${s.graded}</b><span>درجات مرصودة</span></div>
-      <div class="${APP}-metric"><b>${fmt(s.averagePercent)}${s.averagePercent == null ? '' : '%'}</b><span>متوسط الدرجات المرصودة</span></div>
-      <div class="${APP}-metric"><b>${data.bridge?.percentage ?? 0}%</b><span>ربط الهوية</span></div>
-      <div class="${APP}-metric"><b style="font-size:13px">${esc(mode.label)}</b><span>نوع الواجب${esc(rawType)}</span></div>
-    `;
-  };
+    XLSX.writeFile(wb, `madrasati-assignments-register-${dateStamp()}.xlsx`);
+  }
 
-  const openDashboard = () => {
-    if (!state.gradeData) throw new Error('حدّث بيانات الواجب أولًا.');
+  const indexPrintCss = `
+    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:0;font-size:10px;line-height:1.55}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #111827;padding-bottom:10px;margin-bottom:12px}.head h1{font-size:22px;margin:0}.muted{color:#64748b}.small{font-size:9px}
+    .cards{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:10px 0 12px}.card{border:1px solid #d1d5db;border-radius:8px;padding:8px;text-align:center}.card b{display:block;font-size:18px}.card span{font-size:9px;color:#475569}
+    table{width:100%;border-collapse:collapse}th,td{border:1px solid #d1d5db;padding:5px;text-align:right;vertical-align:top}th{background:#f3f4f6;font-weight:800}.src{margin:8px 0 10px}.src span{display:inline-block;border:1px solid #d1d5db;border-radius:999px;padding:2px 6px;margin-left:4px}
+    .footer{margin-top:10px;border-top:1px solid #d1d5db;padding-top:6px;display:flex;justify-content:space-between;color:#64748b;font-size:8px}.actions{position:fixed;left:12px;bottom:12px}.actions button{border:0;border-radius:8px;background:#111827;color:#fff;padding:9px 14px;font-weight:800;cursor:pointer}@media print{.actions{display:none}}
+  `;
 
-    const s = state.gradeData.summary;
-    const mode = state.gradeData.assignmentMode;
-    const distMax = Math.max(1, ...s.distribution.map(x => x.count));
-    const submissionCard = mode?.key === 'outside_system'
-      ? `<div class="${APP}-card"><b>حالة التسليم</b><div style="font-size:20px;font-weight:800">غير قابلة للتحقق</div><div class="${APP}-sub">لا نستخدم hasAnswer في واجب خارج النظام.</div></div>`
-      : `<div class="${APP}-card"><b>نسبة الإنجاز</b><div style="font-size:28px;font-weight:800">${s.submissionRate ?? '—'}%</div></div>`;
+  function printIndexReport() {
+    if (!indexState.assignments.length) collectIndexAssignments();
+    if (!indexState.assignments.length) throw new Error('لا توجد واجبات للطباعة.');
+    const w = window.open('', '_blank');
+    if (!w) throw new Error('تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة لهذا الموقع.');
 
-    const cards = `
-      <div class="${APP}-grid">
-        <div class="${APP}-card"><b>نوع الواجب</b><div style="font-size:15px;font-weight:800">${esc(mode?.label || 'غير محدد')}</div><div class="${APP}-sub">SolvingType: ${esc((mode?.rawSolvingTypes || []).join(', ') || '—')}</div></div>
-        ${submissionCard}
-        <div class="${APP}-card"><b>نسبة الدرجات المرصودة</b><div style="font-size:28px;font-weight:800">${s.gradingRate}%</div></div>
-        <div class="${APP}-card"><b>متوسط الدرجات المرصودة</b><div style="font-size:28px;font-weight:800">${s.averagePercent == null ? '—' : `${s.averagePercent}%`}</div></div>
-        <div class="${APP}-card"><b>الوسيط</b><div style="font-size:28px;font-weight:800">${s.medianPercent == null ? '—' : Number(s.medianPercent.toFixed(2))}%</div></div>
-        <div class="${APP}-card"><b>الانحراف المعياري</b><div style="font-size:28px;font-weight:800">${s.stdDevPercent == null ? '—' : Number(s.stdDevPercent.toFixed(2))}</div></div>
-      </div>
-      <div class="${APP}-card" style="margin-top:10px">
-        <b>توزيع الدرجات المرصودة</b>
-        ${s.distribution.map(d => `<div style="margin-top:9px"><div style="display:flex;justify-content:space-between"><span>${d.label}%</span><span>${d.count}</span></div><div class="${APP}-bar"><i style="width:${(d.count / distMax) * 100}%"></i></div></div>`).join('')}
-      </div>`;
-
-    const tableRows = state.gradeData.students.map((st, i) => {
-      const p = Number.isFinite(st.achievedGrade) && Number.isFinite(st.maxGrade) && st.maxGrade > 0
-        ? Number(((st.achievedGrade / st.maxGrade) * 100).toFixed(2))
-        : null;
-      return `<tr data-search="${esc(norm(`${st.name} ${st.className} ${st.account} ${getStudentStatusLabel(st, mode)}`))}">
-        <td>${i + 1}</td><td>${esc(st.name)}</td><td>${esc(st.className)}</td><td>${esc(st.account)}</td>
-        <td>${esc(getStudentStatusLabel(st, mode))}</td><td>${st.achievedGrade ?? '—'} / ${st.maxGrade ?? '—'}</td><td>${p == null ? '—' : `${p}%`}</td><td>${esc(st.identityResolutionMethod || '—')}</td>
-      </tr>`;
+    const s = summarizeIndexAssignments();
+    const sourceHtml = Object.entries(s.sourceCounts).map(([name, count]) => `<span>${esc(name)}: <b>${count}</b></span>`).join('');
+    const rows = indexState.assignments.map(row => {
+      const pub = publicationInfoFor(row);
+      const deep = deepInfoFor(row);
+      const reportState = reportEligibilityFor(row);
+      const deepAvailable = reportState.eligible && deep && deep.analysisAvailable !== false;
+      return `<tr><td>${row.index}</td><td><b>${esc(row.title)}</b></td><td>${esc(row.course || '—')}</td><td>${esc(row.unit || '—')}</td><td>${esc(row.topic || '—')}</td><td>${esc(row.source || '—')}</td><td>${Number.isFinite(row.grade) ? fmt(row.grade,4) : '—'}</td><td>${esc(indexStatusLabel(row))}</td><td>${pub ? (pub.gradeLinks?.length || 0) : '—'}</td><td>${esc(reportState.label)}</td><td>${deepAvailable ? (deep.submissionVerifiable ? `${fmt(deep.submissionRate)}%` : 'غير متاح') : '—'}</td><td>${deepAvailable && Number.isFinite(deep.averagePercent) ? `${fmt(deep.averagePercent)}%` : '—'}</td><td>${deepAvailable ? (deep.submissionVerifiable ? deep.notSubmitted : '—') : '—'}</td></tr>`;
     }).join('');
 
-    showMainModal('لوحة مدير الواجبات', `${cards}
-      <div class="${APP}-toolbar"><input id="${APP}-dash-search" style="min-width:260px;border:1px solid #d1d5db;border-radius:10px;padding:8px" placeholder="بحث باسم الطالب أو الحساب أو الفصل"></div>
-      <div class="${APP}-table-wrap"><table class="${APP}-table"><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحساب</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>ربط الهوية</th></tr></thead><tbody id="${APP}-dash-body">${tableRows}</tbody></table></div>`);
+    const body = `
+      <div class="actions"><button onclick="window.print()">طباعة / حفظ PDF</button></div>
+      <div class="head"><div><h1>سجل الواجبات</h1><div class="muted">لوحة الواجبات الشاملة — تقارير الأداء للواجبات المنتهية فقط</div></div><div class="small">${esc(document.querySelector('#mainTitle')?.textContent || 'إدارة الواجبات')}<br>${new Date().toLocaleString('ar-SA')}</div></div>
+      <div class="cards">
+        <div class="card"><b>${s.total}</b><span>إجمالي الواجبات</span></div>
+        <div class="card"><b>${s.activeCount}</b><span>مفعّلة</span></div>
+        <div class="card"><b>${fmt(s.totalGrade,4)}</b><span>مجموع الدرجات</span></div>
+        <div class="card"><b>${Number.isFinite(s.averageGrade) ? fmt(s.averageGrade,4) : '—'}</b><span>متوسط الدرجة</span></div>
+        <div class="card"><b>${Number.isFinite(s.highestGrade) ? fmt(s.highestGrade,4) : '—'}</b><span>أعلى درجة</span></div>
+        <div class="card"><b>${Number.isFinite(s.lowestGrade) ? fmt(s.lowestGrade,4) : '—'}</b><span>أقل درجة</span></div>
+        <div class="card"><b>${s.deepScanned ? s.deepStudentRecords : '—'}</b><span>سجلات الطلاب</span></div>
+        <div class="card"><b>${s.deepScanned && Number.isFinite(s.deepAveragePercent) ? `${fmt(s.deepAveragePercent)}%` : '—'}</b><span>متوسط الأداء</span></div>
+      </div>
+      <div class="src"><b>المصادر:</b> ${sourceHtml}</div>
+      <table><thead><tr><th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة</th><th>الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>روابط الرصد</th><th>حالة التقرير</th><th>نسبة الحل</th><th>المتوسط</th><th>لم يحل</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="footer"><span>Madrasati Assignment Intelligence v${VERSION}</span><span>Mohammed Almalki (M0HM3D85)</span></div>`;
 
-    document.getElementById(`${APP}-dash-search`)?.addEventListener('input', e => {
-      const q = norm(e.target.value);
-      document.querySelectorAll(`#${APP}-dash-body tr`).forEach(tr => {
-        tr.hidden = q && !String(tr.dataset.search || '').includes(q);
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>سجل الواجبات</title><style>${indexPrintCss}</style></head><body>${body}</body></html>`);
+    w.document.close();
+    w.setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 350);
+  }
+
+  async function bootstrapIndex() {
+    try { if (base) base.version = VERSION; } catch {}
+    addIndexStyles();
+
+    // انتظر بطاقات Index لأنها قد تتأخر قليلًا بعد تحميل الصفحة.
+    for (let i = 0; i < 80 && !document.querySelector(indexCardSelector); i++) await sleep(100);
+
+    // اعرض الصفحة الحالية سريعًا أولًا، ثم اجمع جميع الصفحات قبل تمكين الأزرار.
+    collectIndexAssignments();
+    const panel = createIndexPanel();
+    renderIndexPanel();
+
+    if (panel) {
+      panel.style.display = 'block';
+      panel.hidden = false;
+      setIndexBusy(true, 'جاري جمع جميع صفحات إدارة الواجبات…');
+    }
+
+    try {
+      await collectAllIndexAssignments();
+      loadIndexPublicationsCache();
+      loadIndexDeepCache();
+      renderIndexPanel();
+      console.info(`[MAI v${VERSION}] Index panel mounted`, {
+        assignments: indexState.assignments.length,
+        pages: indexState.indexPagesScanned,
+        stopReason: indexState.indexStopReason,
+        panel
       });
-    });
-  };
-
-  const openQuestionAnalytics = async () => {
-    const data = state.questionAnalytics || await runDeepQuestionAnalysis();
-    const modal = document.getElementById(`${APP}-modal`);
-    const body = document.getElementById(`${APP}-modal-body`);
-
-    const rows = data.questions.map(q => `<tr>
-      <td>${q.number}</td>
-      <td>${esc(q.text)}</td>
-      <td>${esc(q.type)}</td>
-      <td>${q.attempts}</td>
-      <td>${q.correct}</td>
-      <td>${q.incorrect}</td>
-      <td>${q.correctRate}%</td>
-      <td>${q.difficulty}</td>
-      <td>${esc(q.correctText)}</td>
-    </tr>`).join('');
-
-    body.innerHTML = `
-      <div class="${APP}-card">
-        <b>تحليل مستوى الأسئلة</b>
-        <div class="${APP}-sub">الأسئلة ذات نسبة صحة أقل من 50% تستحق المراجعة وإعادة التدريس.</div>
-      </div>
-      <table class="${APP}-table">
-        <thead><tr>
-          <th>#</th><th>السؤال</th><th>النوع</th><th>المحاولات</th>
-          <th>صحيح</th><th>خطأ</th><th>نسبة الصحة</th><th>الصعوبة</th><th>الإجابة الصحيحة</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-
-    modal.hidden = false;
-  };
-
-  const injectUI = () => {
-    if (document.getElementById(`${APP}-panel`)) return;
-    addStyles();
-
-    const panel = document.createElement('section');
-    panel.id = `${APP}-panel`;
-    panel.innerHTML = `
-      <div class="${APP}-head">
-        <div>
-          <div class="${APP}-title">مدير الواجبات الذكي</div>
-          <div class="${APP}-sub">هوية دقيقة + استيراد Excel/CSV + درجات + تقارير + تحليل — v${VERSION}</div>
-        </div>
-        <div id="${APP}-status" class="${APP}-status">جاهز</div>
-      </div>
-
-      <div class="${APP}-toolbar">
-        <button class="${APP}-btn ${APP}-primary" data-${APP.toLowerCase()}-action="refresh">تحديث البيانات</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="identity">مزامنة الهوية</button>
-        <button class="${APP}-btn ${APP}-primary" data-${APP.toLowerCase()}-action="importGrades">استيراد درجات Excel / CSV</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="dashboard">لوحة التحليل</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="questions">تحليل الأسئلة</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="printQuestions">طباعة الأسئلة</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="answerKey">نموذج الإجابة</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="printStudents">تقرير الطلاب</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="csv">CSV</button>
-        <button class="${APP}-btn" data-${APP.toLowerCase()}-action="excel">Excel</button>
-      </div>
-
-      <div id="${APP}-summary"></div>
-      <div class="${APP}-rights">
-        <span>تصميم وتطوير: <b>Mohammed Almalki (M0HM3D85)</b> · © 2026</span>
-        <span><a href="https://greasyfork.org/en/users/1636459-m0hm3d85" target="_blank">GreasyFork</a> · <a href="https://x.com/M0HM3D85" target="_blank">X</a> · <a href="https://www.snapchat.com/add/M0HM3D85" target="_blank">Snapchat</a></span>
-      </div>
-    `;
-
-    const mount = findMount();
-    mount.insertBefore(panel, mount.firstChild);
-
-    const modal = document.createElement('div');
-    modal.id = `${APP}-modal`;
-    modal.className = `${APP}-modal`;
-    modal.hidden = true;
-    modal.innerHTML = `
-      <div class="${APP}-dialog">
-        <div class="${APP}-dialog-head">
-          <div class="${APP}-title" id="${APP}-modal-title">لوحة مدير الواجبات</div>
-          <button class="${APP}-close" id="${APP}-close">إغلاق</button>
-        </div>
-        <div id="${APP}-modal-body"></div>
-      </div>`;
-    document.body.appendChild(modal);
-
-    modal.addEventListener('click', async e => {
-      if (e.target === modal) {
-        modal.hidden = true;
-        return;
-      }
-
-      // تفويض أحداث أزرار النوافذ المتغيرة. هذا يمنع ضياع مستمع زر
-      // تطبيق الدرجات عندما يعاد بناء HTML الخاص بالمعاينة.
-      const btn = e.target.closest?.(`[data-${APP.toLowerCase()}-action]`);
-      if (!btn || state.busy) return;
-
-      const action = btn.dataset[`${APP.toLowerCase()}Action`];
-
-      if (action === 'zeroDecision') {
-        e.preventDefault();
-        setZeroDecision(btn.dataset.zeroKey || '', btn.dataset.zeroValue || '');
-        return;
-      }
-
-      if (action === 'zeroDecisionAll') {
-        e.preventDefault();
-        setAllPendingZeroDecisions(btn.dataset.zeroValue || '');
-        return;
-      }
-
-      if (action === 'applyImport') {
-        e.preventDefault();
-        try {
-          await applyImportPreview();
-        } catch (err) {
-          toast(String(err?.message || err), 'error');
-        }
-      }
-    });
-    document.getElementById(`${APP}-close`).onclick = () => { modal.hidden = true; };
-
-    panel.addEventListener('click', async (e) => {
-      const btn = e.target.closest(`[data-${APP.toLowerCase()}-action]`);
-      if (!btn || state.busy) return;
-      const action = btn.dataset[`${APP.toLowerCase()}Action`];
-
-      try {
-        if (action === 'refresh') await refreshAll(false);
-        else if (action === 'identity') {
-          setBusy(true, 'جاري مزامنة جميع طلاب المدرسة…');
-          try {
-            const b = await buildIdentityBridge(true, state.gradeData?.students || []);
-            toast(`تم ربط ${b.matched}/${b.total} طالبًا (${b.percentage}%).`, b.percentage === 100 ? 'success' : 'info');
-          } finally {
-            setBusy(false);
-          }
-        }
-        else if (action === 'importGrades') await openImportWizard();
-        else if (action === 'dashboard') openDashboard();
-        else if (action === 'questions') await openQuestionAnalytics();
-        else if (action === 'printQuestions') await printQuestions(false);
-        else if (action === 'answerKey') await printQuestions(true);
-        else if (action === 'printStudents') printStudentsReport();
-        else if (action === 'csv') exportCSV();
-        else if (action === 'excel') exportExcel();
-      } catch (err) {
-        toast(String(err?.message || err), 'error');
-      }
-    });
-
-    const cached = loadJSON(STORE.snapshot);
-    if (cached?.pageUrl === location.href) {
-      state.gradeData = cached;
-      state.bridge = cached.bridge || null;
-      renderSummaryInline(cached);
-    }
-  };
-
-  // -----------------------------
-  // Auto behavior per page
-  // -----------------------------
-  const isGradeAssignment = /\/Teacher\/Assignments\/GradeAssignment\//i.test(location.pathname);
-  const isMyStudents = /\/SchoolManagment\/Actions\/MyStudents/i.test(location.pathname);
-
-  if (isGradeAssignment) {
-    injectUI();
-  }
-
-  // On MyStudents we quietly preserve the current page registry fragment.
-  // Full registry is fetched from GradeAssignment when needed.
-  if (isMyStudents) {
-    const cards = [...document.querySelectorAll('#studentsDiv .card.p-3')];
-    if (cards.length) {
-      globalThis.MADRASATI_STUDENT_PAGE = cards.map(parseStudentCard);
+    } catch (e) {
+      console.error(`[MAI v${VERSION}] Index bootstrap failed:`, e);
+      toast(`تعذر جمع جميع صفحات الواجبات: ${String(e?.message || e)}`, 'error');
+      loadIndexPublicationsCache();
+      loadIndexDeepCache();
+      renderIndexPanel();
+    } finally {
+      setIndexBusy(false);
     }
   }
 
-  // Expose safe inspection helpers.
-  globalThis.MadrasatiAssignmentIntelligence = {
+
+  // أدوات فحص آمنة للإصدارات القادمة.
+  globalThis.MadrasatiAssignmentIntelligenceEnhanced = {
     version: VERSION,
+    baseVersion: BASE_REQUIRED_VERSION,
     state,
-    fetchStudentRegistry,
-    buildIdentityBridge,
-    fetchAllGradeStudents,
-    detectAssignmentMode,
-    resolveAssignmentStudentClass,
-    refreshAll,
-    getQuestionTemplate,
-    runDeepQuestionAnalysis,
-    openImportWizard,
-    buildImportPreview,
-    applyImportPreview,
-    showLastImportBackup
+    refresh: refreshEnhanced,
+    parseQuestionCards: parseQuestionCardsEnhanced,
+    runDeepQuestionAnalysis: runDeepQuestionAnalysisEnhanced,
+    getQuestionAnalytics,
+    studentLevel,
+    printAssignmentReport: printAssignmentReportEnhanced,
+    printQuestions: printQuestionsEnhanced,
+    resolveAssignmentName: resolveAssignmentNameEnhanced,
+    getGradePublicationTiming,
+    gradeReportGate,
+    render: renderInlineAnalysis,
+    indexState,
+    collectIndexAssignments,
+    collectAllIndexAssignments,
+    auditIndexPublications,
+    runIndexDeepAnalysis,
+    renderIndexPanel
   };
+
+  if (isAssignmentsIndex) bootstrapIndex();
+  else if (isGradeAssignment) bootstrapGrade();
 })();
