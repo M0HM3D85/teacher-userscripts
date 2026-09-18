@@ -39,3 +39,5 @@ jobs:
           git rm -r .release-tmp
           git commit -m 'feat: assemble Madrasati Assignment Intelligence v1.4.2'
           git push origin HEAD:release-mai-1.4.2
+
+# trigger after deterministic payload restore
