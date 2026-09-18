@@ -2,9 +2,10 @@ name: Temp Release MAI 1.4.2
 
 on:
   push:
-    branches: [release-mai-1.4.2]
+    branches:
+      - release-mai-1.4.2
     paths:
-      - '.github/workflows/temp-release-mai-142.yml'
+      - .github/workflows/temp-release-mai-142.yml
 
 permissions:
   contents: write
@@ -19,160 +20,22 @@ jobs:
           ref: release-mai-1.4.2
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Assemble v1.4.2 and update release metadata
+      - name: Assemble v1.4.2 userscript
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import base64, gzip, json, shutil
-
-          root = Path('.')
-          script_path = root / 'scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js'
-          readme_path = root / 'scripts/madrasati-assignment-intelligence/README.md'
-          changelog_path = root / 'scripts/madrasati-assignment-intelligence/CHANGELOG.md'
-          catalog_path = root / 'scripts/catalog.json'
-
-          parts = [root / f'.release-tmp/mai142.part{i}' for i in range(1, 7)]
-          missing = [str(p) for p in parts if not p.exists()]
-          if missing:
-              raise SystemExit(f'Missing payload parts: {missing}')
-
-          payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-          source = gzip.decompress(base64.b64decode(payload))
-          text = source.decode('utf-8')
-          if '// @version      1.4.2' not in text or "const VERSION = '1.4.2'" not in text:
-              raise SystemExit('Payload is not the expected v1.4.2 userscript')
-          script_path.write_text(text, encoding='utf-8')
-
-          catalog = json.loads(catalog_path.read_text(encoding='utf-8'))
-          entry = next(x for x in catalog['scripts'] if x.get('id') == 'madrasati-assignment-intelligence')
-          entry['version'] = '1.4.2'
-          entry['status'] = 'stable'
-          entry['description'] = 'مدير واجبات مدرستي مع لوحة شاملة لجميع صفحات الواجبات والمنشورات، تقارير أداء نهائية للواجبات المنتهية فقط وفق وقت خادم مدرستي، تحليل طلاب وأسئلة، PDF/Excel/CSV، واستيراد درجات ذكي.'
-          catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-
-          readme = '''# Madrasati Assignment Intelligence | مدير الواجبات الذكي
-
-> مدير ذكي لواجبات مدرستي يجمع إدارة الواجبات، رصد الطلاب، التحليل، التقارير، واستيراد الدرجات في سير عمل واحد، مع منع التقارير النهائية الناقصة قبل انتهاء وقت استقبال الواجب.
-
-**الإصدار الحالي:** `1.4.2`
-
-## ما الذي يقدمه السكربت؟
-
-يضيف السكربت أدوات متقدمة لصفحات واجبات المعلم في مدرستي. يمكنه قراءة سجل الواجبات، اكتشاف مرات النشر الحالية والمنتهية، تحليل بيانات الرصد، ومراجعة أداء الطلاب والأسئلة، مع إبقاء الواجب الجاري خارج التقرير النهائي حتى ينتهي وقت النشر فعليًا.
-
-## أبرز المزايا
-
-- لوحة شاملة في صفحة إدارة الواجبات مع جمع الواجبات من جميع صفحات `Index` تلقائيًا وإزالة التكرار حسب `Assignment GUID`.
-- فحص جميع مرات نشر الواجب، الحالية والمنتهية، مع دعم تعدد صفحات `PublishedAssignments`.
-- تحليل أداء الواجبات المنتهية فقط؛ الواجب الذي ما زال يستقبل الحلول يظهر بحالة **قيد الاستقبال** ولا يدخل في المتوسطات أو التقارير النهائية.
-- تحديد حالة الواجب مباشرة من صفحة `GradeAssignment` باستخدام `ServerDateTime` و`PublishedEndTime` من خادم مدرستي بدل الاعتماد على ساعة الجهاز أو `published=false`.
-- عدم عرض أصفار وهمية عند غياب البيانات؛ تظهر حالة غير متاحة أو غير مكتشفة بدل تحويل المفقود إلى صفر.
-- تحليل الطلاب: نسبة الحل، المتوسط، أعلى وأدنى أداء، غير المحلين، وتصنيف الأداء بالنسب المئوية لا بالدرجة الخام.
-- دعم حالات الدرجات الصغيرة والكشف عن تعارض بيانات مدرستي مع اعتماد نتيجة الطالب عند توفرها كمصدر أقوى للتحليل.
-- تحليل أعمق للأسئلة عند توفر بيانات كافية، مع نسب الإجابة الصحيحة والخاطئة وأصعب وأسهل الأسئلة.
-- طباعة نموذج الأسئلة بنسختين: نسخة معلم بالإجابات الصحيحة ونسخة طالب بدون الإجابات.
-- تصدير تقارير إلى PDF وExcel وCSV.
-- استيراد درجات XLSX/CSV مع مطابقة دقيقة للطلاب، ملاحظات تلقائية، ومراجعة آمنة قبل التطبيق والحفظ.
-- دعم طي لوحات السكربت وحفظ حالة العرض.
-
-## منطق التقرير النهائي
-
-في صفحة `GradeAssignment` يقرأ السكربت القيمتين:
-
-- `ServerDateTime`: وقت خادم مدرستي.
-- `PublishedEndTime`: وقت نهاية استقبال الواجب.
-
-إذا كان وقت الخادم أسبق من نهاية النشر، يعد الواجب **قيد الاستقبال** ولا يصدر له تقرير أداء نهائي. عند وصول وقت الخادم إلى وقت النهاية أو تجاوزه يصبح الواجب مؤهلًا للتحليل النهائي.
-
-## طريقة الاستخدام
-
-1. ثبّت السكربت عبر Tampermonkey.
-2. افتح صفحة **إدارة الواجبات** في مدرستي لرؤية اللوحة الشاملة.
-3. استخدم **فحص المنشورات** لاكتشاف مرات النشر وروابط الرصد.
-4. استخدم **تحليل أداء الواجبات المنتهية** لبناء التقرير النهائي من الواجبات التي انتهى وقتها فقط.
-5. داخل صفحة رصد واجب واحد، استخدم أدوات التحليل أو الاستيراد أو الطباعة حسب الحاجة.
-6. راجع البيانات قبل أي حفظ أو تطبيق درجات داخل مدرستي.
-
-## المواقع المدعومة
-
-- `https://schools.madrasati.sa/Teacher/Assignments/*`
-- `https://schools.madrasati.sa/SchoolManagment/Actions/MyStudents*`
-
-## التثبيت والتحديث
-
-يُنشر السكربت على GreasyFork مع مزامنة الكود وAdditional info تلقائيًا من فرع `main` في GitHub.
-
-- [صفحة السكربت على GreasyFork](https://greasyfork.org/en/scripts/596241-madrasati-assignment-intelligence-%D9%85%D8%AF%D9%8A%D8%B1-%D8%A7%D9%84%D9%88%D8%A7%D8%AC%D8%A8%D8%A7%D8%AA-%D8%A7%D9%84%D8%B0%D9%83%D9%8A)
-- المصدر الرسمي: [madrasati-assignment-intelligence.user.js](https://github.com/M0HM3D85/teacher-userscripts/blob/main/scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js)
-- [صفحة المطور على GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85)
-
-## الدعم
-
-- [الإبلاغ عن مشكلة أو اقتراح](https://github.com/M0HM3D85/teacher-userscripts/issues)
-- [X](https://x.com/M0HM3D85)
-- [Snapchat](https://www.snapchat.com/add/M0HM3D85)
-
-## المطور والحقوق
-
-**Mohammed Almalki (M0HM3D85)**  
-© 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.  
-الترخيص: **All Rights Reserved**
-'''
-          readme_path.write_text(readme, encoding='utf-8')
-
-          old = changelog_path.read_text(encoding='utf-8')
-          if '## [1.4.2]' not in old:
-              heading = '# Changelog\n\nجميع التغييرات المهمة في **Madrasati Assignment Intelligence | مدير الواجبات الذكي** تُسجل هنا.\n\n'
-              release = '''## [1.4.2] — 2026-09-19
-
-- اعتماد الإصدار النهائي بعد اختبارات فعلية على صفحات إدارة الواجبات والرصد والنتائج.
-- إضافة لوحة شاملة لصفحة إدارة الواجبات مع جمع جميع صفحات `Index` تلقائيًا وإزالة التكرار حسب `Assignment GUID`.
-- فحص المنشورات الحالية والمنتهية لكل واجب، مع دعم تعدد صفحات المنشورات وروابط الرصد المتعددة.
-- منع الأصفار الوهمية عند غياب البيانات، وإظهار حالات واضحة مثل غير مكتشف أو غير متاح بدل الصفر غير المؤكد.
-- استبعاد الواجبات قيد الاستقبال من تقارير الأداء النهائية والمتوسطات والإحصاءات المجمعة.
-- اعتماد `ServerDateTime` و`PublishedEndTime` من صفحة `GradeAssignment` لتحديد انتهاء الواجب مباشرة من وقت خادم مدرستي.
-- عدم استخدام `published=false` كمؤشر على انتهاء الواجب.
-- إضافة تحليل أداء الواجبات المنتهية: نسب الحل، المتوسطات، غير المحلين، وعدد سجلات الطلاب عبر جميع مرات النشر.
-- تحسين معالجة الواجبات الآلية ذات الدرجات الصغيرة والكشف عن تعارض درجة الرصد مع نتيجة الطالب.
-- اعتماد نتيجة الطالب كأقوى مصدر عند وجود تعارض موثق، وعدم اعتبار `AutoGrade` درجة محققة.
-- تحسين تحليل الأسئلة وقراءة الإجابات الصحيحة والخاطئة عند توفر أدلة كافية من صفحة النتيجة.
-- إصلاح استخراج اسم الواجب من العنوان الموثوق داخل `homeworks-management-section` ومنع تسرب عناوين النوافذ المنبثقة إلى التقارير والطباعة.
-- دمج طباعة الأسئلة والنموذج في واجهة واحدة مع نسخة معلم بالإجابات ونسخة طالب بدونها.
-- إضافة/تحسين PDF وExcel وCSV وحالة طي اللوحات مع الحفاظ على أدوات الاستيراد والمطابقة والحفظ الآمن من النواة المستقرة.
-
-'''
-              if old.startswith(heading):
-                  old = heading + release + old[len(heading):]
-              else:
-                  old = heading + release + old
-              changelog_path.write_text(old, encoding='utf-8')
-
-          shutil.rmtree(root / '.release-tmp')
-          workflow = root / '.github/workflows/temp-release-mai-142.yml'
-          if workflow.exists():
-              workflow.unlink()
-          PY
-
-      - name: Validate release
-        shell: bash
-        run: |
-          set -euo pipefail
+          cat .release-tmp/mai142.part1 .release-tmp/mai142.part2 .release-tmp/mai142.part3 .release-tmp/mai142.part4 .release-tmp/mai142.part5 .release-tmp/mai142.part6 | tr -d '\n\r ' | base64 -d | gzip -d > scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
+          grep -F '// @version      1.4.2' scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
+          grep -F "const VERSION = '1.4.2'" scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
           node --check scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
-          node tools/validate-userscripts.mjs
 
-      - name: Commit assembled release
+      - name: Commit assembled script
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'feat: release Madrasati Assignment Intelligence v1.4.2'
+          git add scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js
+          git rm -r .release-tmp
+          git commit -m 'feat: assemble Madrasati Assignment Intelligence v1.4.2'
           git push origin HEAD:release-mai-1.4.2
