@@ -1,0 +1,12 @@
+name: Temp Test MAI
+on:
+  push:
+    branches:
+      - release-mai-1.4.2
+    paths:
+      - .github/workflows/temp-test-mai.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
