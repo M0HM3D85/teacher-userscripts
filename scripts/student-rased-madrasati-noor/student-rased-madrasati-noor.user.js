@@ -39,6 +39,7 @@ const APP = 'm0hm3d85-rasid-students';
 const BTN = `${APP}-btn`;
 const PREF = `${APP}-prefs-v5`;
 const NOOR_JOB = `${APP}-noor-job-v4`;
+const NOOR_RESULT = `${APP}-noor-result-v1`;
 const LAUNCH_INTENT = `${APP}-launch-intent-v2`;
 const HISTORY_LIMIT = 18;
 const SNAP = 'm0hm3d85-rasid-snapshot-v6';
@@ -3560,7 +3561,8 @@ function afterExtract(
     rows,
     pages = 1,
     scope = null,
-    audit = null
+    audit = null,
+    options = {}
 ) {
 
     state.rows = rows;
@@ -3582,7 +3584,9 @@ function afterExtract(
             ? analyzeAccounts(rows)
             : emptyAccountAnalysis();
 
-    archiveCurrentExtraction();
+    if (options.archive !== false) {
+        archiveCurrentExtraction();
+    }
 
     fillClassFilter();
     renderTop();
@@ -3602,6 +3606,10 @@ function afterExtract(
 }
 
 function clearAll() {
+
+    if (PLATFORM === 'noor') {
+        clearNoorResult();
+    }
 
     state.rows = [];
     state.filtered = [];
@@ -6070,6 +6078,47 @@ function clearNoorJob() {
     sessionStorage.removeItem(NOOR_JOB);
 }
 
+function saveNoorResult(rows, pages, scope, audit) {
+    try {
+        sessionStorage.setItem(
+            NOOR_RESULT,
+            JSON.stringify({
+                version: 1,
+                at: new Date().toISOString(),
+                rows,
+                pages,
+                scope,
+                audit
+            })
+        );
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+
+function loadNoorResult() {
+    try {
+        const raw = sessionStorage.getItem(NOOR_RESULT);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        return data && data.version === 1 && Array.isArray(data.rows)
+            ? data
+            : null;
+    }
+    catch {
+        return null;
+    }
+}
+
+function clearNoorResult() {
+    try {
+        sessionStorage.removeItem(NOOR_RESULT);
+    }
+    catch {}
+}
+
 function nrSelect(suffix) {
     return document.querySelector(`select[id$="${suffix}"]`);
 }
@@ -6597,6 +6646,7 @@ function nrStart() {
 
     if (loadNoorJob()?.active) return;
 
+    clearNoorResult();
     clearAll();
 
     const job = {
@@ -6667,6 +6717,7 @@ function nrFinishCurrent(job) {
         warnings
     };
 
+    saveNoorResult(rows, job.report.total, scope, audit);
     clearNoorJob();
     running(false);
     afterExtract(rows, job.report.total, scope, audit);
@@ -6690,6 +6741,8 @@ function nrSchoolStart() {
         status('بانتظار قوائم الصف والفصل في نور...');
         return;
     }
+
+    clearNoorResult();
 
     const grades = nrGradeOptions();
 
@@ -6995,6 +7048,7 @@ function nrSchoolFinish(job) {
         warnings
     };
 
+    saveNoorResult(finalRows, job.totalReportPages, scope, audit);
     clearNoorJob();
     running(false);
     afterExtract(finalRows, job.totalReportPages, scope, audit);
@@ -8794,19 +8848,12 @@ async function continueSiteNavigation(intent = loadLaunchIntent()) {
 }
 
 function launcherAction() {
-    // v2.0.0: الزر موجود فقط في صفحات الطلاب المطلوبة، ولا ينفذ أي تنقل بين صفحات الموقع.
-    if (state.rows.length) {
-        open();
-        return;
-    }
-
+    // زر راصد يفتح الواجهة فقط. بدء الاستخراج قرار صريح من المستخدم
+    // عبر «بدء الاستخراج» أو «استخراج المدرسة كاملة».
     open();
 
-    if (PLATFORM === 'madrasati') {
-        extractMad();
-    }
-    else {
-        nrSchoolStart();
+    if (!state.rows.length) {
+        tab('extract');
     }
 }
 
@@ -9166,10 +9213,31 @@ enable(
     false
 );
 
+let restoredNoorResult = false;
+
+if (PLATFORM === 'noor') {
+    const cachedResult = loadNoorResult();
+
+    if (cachedResult?.rows?.length) {
+        afterExtract(
+            cachedResult.rows,
+            Number(cachedResult.pages) || 1,
+            cachedResult.scope || emptyScope(),
+            cachedResult.audit || null,
+            { archive: false }
+        );
+        restoredNoorResult = true;
+    }
+}
+
 status(
-    PLATFORM === 'madrasati'
-        ? 'جاهز. زر راصد متاح في صفحة بيانات الطلاب فقط ويبدأ الاستخراج مباشرة.'
-        : 'جاهز. زر راصد متاح في تقرير أسماء الطلاب فقط؛ يبدأ استخراج المدرسة كاملة، ويمكن استخدام «بدء الاستخراج» للتقرير الحالي.'
+    restoredNoorResult
+        ? `تمت استعادة آخر نتيجة مكتملة — ${state.rows.length} طالب. اضغط راصد لعرضها أو ابدأ استخراجًا جديدًا.`
+        : (
+            PLATFORM === 'madrasati'
+                ? 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» عند الحاجة.'
+                : 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» للتقرير الحالي أو «استخراج المدرسة كاملة».'
+        )
 );
 
 if (
