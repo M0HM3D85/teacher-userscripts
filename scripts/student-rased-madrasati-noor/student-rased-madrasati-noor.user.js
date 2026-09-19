@@ -1034,7 +1034,7 @@ css.textContent = `
     display:flex
 }
 
-#${APP} .box{
+#${APP} .m0-shell{
     width:min(1450px,98vw);
     height:min(94vh,980px);
     background:#fff;
@@ -1044,7 +1044,21 @@ css.textContent = `
     flex-direction:column
 }
 
-#${APP} header{
+#${APP} .m0-shell{
+    color:#111827 !important;
+    isolation:isolate
+}
+
+#${APP} .m0-header,
+#${APP} .m0-tabs,
+#${APP} .m0-main,
+#${APP} .m0-footer{
+    visibility:visible !important;
+    opacity:1 !important;
+    position:relative
+}
+
+#${APP} .m0-header{
     display:flex;
     justify-content:space-between;
     align-items:center;
@@ -1072,7 +1086,7 @@ css.textContent = `
     cursor:pointer
 }
 
-#${APP} nav{
+#${APP} .m0-tabs{
     display:grid;
     grid-template-columns:repeat(4,1fr);
     background:#f8fafc;
@@ -1094,18 +1108,18 @@ css.textContent = `
     border-bottom:3px solid #0f766e
 }
 
-#${APP} main{
+#${APP} .m0-main{
     padding:14px;
     overflow:auto;
     flex:1
 }
 
 #${APP} .pane{
-    display:none
+    display:none !important
 }
 
 #${APP} .pane.on{
-    display:block
+    display:block !important
 }
 
 #${APP} .note{
@@ -1370,7 +1384,7 @@ css.textContent = `
     text-align:right
 }
 
-#${APP} footer{
+#${APP} .m0-footer{
     padding:7px 12px;
     border-top:1px solid #e5e7eb;
     background:#f8fafc;
@@ -1380,7 +1394,7 @@ css.textContent = `
     justify-content:space-between
 }
 
-#${APP} footer a{
+#${APP} .m0-footer a{
     color:#0f766e;
     text-decoration:none;
     font-weight:800
@@ -1479,7 +1493,7 @@ css.textContent = `
 
 @media(max-width:900px){
 
-    #${APP} nav,
+    #${APP} .m0-tabs,
     #${APP} .grid,
     #${APP} .checkwrap,
     #${APP} .sum,
@@ -1487,7 +1501,7 @@ css.textContent = `
         grid-template-columns:1fr
     }
 
-    #${APP} footer{
+    #${APP} .m0-footer{
         display:block
     }
 }
@@ -1622,9 +1636,9 @@ host.id =
 
 host.innerHTML = `
 
-<div class="box">
+<div class="m0-shell">
 
-<header>
+<div class="m0-header">
 
  <div>
 
@@ -1656,9 +1670,9 @@ host.innerHTML = `
 
  </div>
 
-</header>
+</div>
 
-<nav>
+<div class="m0-tabs">
 
  <button
   class="tab on"
@@ -1688,11 +1702,11 @@ host.innerHTML = `
   4 — التصدير
  </button>
 
-</nav>
+</div>
 
-<main>
+<div class="m0-main">
 
-<section
+<div
  class="pane on"
  data-pane="extract"
 >
@@ -1746,9 +1760,9 @@ host.innerHTML = `
 
  <div class="stats topstats"></div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="review"
 >
@@ -1941,9 +1955,9 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="follow"
 >
@@ -2208,9 +2222,9 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="export"
 >
@@ -2315,11 +2329,11 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-</main>
+</div>
 
-<footer>
+<div class="m0-footer">
 
  <span>
   تصميم وتطوير:
@@ -2358,7 +2372,7 @@ host.innerHTML = `
 
  </span>
 
-</footer>
+</div>
 
 </div>
 `;
