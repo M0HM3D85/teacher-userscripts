@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Assignment Intelligence | مدير الواجبات الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.4.2
-// @description  مدير واجبات مدرستي: تقارير نهائية لا تُحتسب إلا بعد انتهاء وقت النشر وفق وقت خادم مدرستي، تحليل دقيق للطلاب والأسئلة، لوحة شاملة لكل الصفحات والمنشورات، PDF/Excel/CSV، واستيراد درجات ذكي.
+// @version      1.4.6
+// @description  مدير واجبات مدرستي: تحليل وتقارير نهائية مع ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وبطاقات وتقارير تتبع التصفية الحالية، مع PDF/Excel/CSV واستيراد درجات ذكي.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/Teacher/Assignments/*
@@ -18,7 +18,7 @@
 
 /*
 =========================================================================
- Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.2
+ Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.6
 
  تصميم وتطوير: Mohammed Almalki (M0HM3D85)
  X / Twitter : https://x.com/M0HM3D85
@@ -28,6 +28,30 @@
  هذا الإصدار يبني طبقة التحليل المتقدمة فوق النواة المستقرة v1.1.7
  المثبتة على commit محدد لضمان عدم تغير السلوك الأساسي دون قصد.
 
+ v1.4.6:
+ - إصلاح نهائي لربط الفصل بالطالب باستخدام checkStudent-<StudentId> المؤكد من بنية مدرستي.
+ - منع التقاط حاوية جميع الطلاب وتكرار أول فصل على الجميع.
+ - تطبيق الفصل الصحيح على جدول الطلاب، فلتر الفصل، البطاقات، PDF، Excel وCSV.
+ - إبطال كاش التحليل السابق حتى تُعاد قراءة الفصول الصحيحة مباشرة.
+
+ v1.4.5:
+ - إصلاح إسناد الفصل لكل طالب من صفه الفعلي في استجابة رصد الدرجات بدل التقاط فصل واحد للجميع.
+ - إضافة تصفية حسب الفصل، مع دعم الواجب المسند لأكثر من فصل.
+ - البطاقات ومستويات الطلاب وتقرير PDF وCSV وExcel تتبع التصفية الحالية.
+ - تحليل الأسئلة في التقرير يتبع مجموعة الطلاب المفلترة عندما تتوفر نتائج الأسئلة.
+
+ v1.4.4:
+ - تصفية جدول الطلاب حسب حالة التسليم: سلّم / لم يسلّم / غير محسوم.
+ - تصفية الطلاب حسب التقدير: ممتاز / جيد جدًا / جيد / مقبول / ضعيف / بدون تقدير.
+ - فرز تفاعلي حسب الاسم، حالة التسليم، أو التقدير من الأعلى/الأدنى.
+ - الإبقاء على الترتيب الأبجدي الافتراضي من أ إلى ي، مع زر لإعادة الضبط.
+
+ v1.4.3:
+ - تحليل واجبات خارج النظام اعتمادًا على الدرجة + ملاحظة المعلم بدل hasAnswer.
+ - تمييز «سلّم وأخذ صفر» عن «لم يسلّم وأخذ صفر».
+ - إظهار نسبة التسليم، لم يسلّم، وغير محسوم في اللوحة والتقارير.
+ - فرز الطلاب أبجديًا من أ إلى ي في الشاشة والطباعة والتصدير.
+
  © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
 =========================================================================
 */
@@ -36,13 +60,13 @@
   'use strict';
 
   const APP = 'MAI';
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.6';
   const BASE_REQUIRED_VERSION = '1.1.7';
-  const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V3';
+  const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V5';
   const PANEL_COLLAPSE_KEY = 'MAI_PANEL_COLLAPSED_V1';
   const INDEX_COLLAPSE_KEY = 'MAI_INDEX_PANEL_COLLAPSED_V1';
   const INDEX_PUBLICATIONS_CACHE_KEY = 'MAI_INDEX_PUBLICATIONS_V5';
-  const INDEX_DEEP_CACHE_KEY = 'MAI_INDEX_DEEP_ANALYSIS_V5';
+  const INDEX_DEEP_CACHE_KEY = 'MAI_INDEX_DEEP_ANALYSIS_V7';
   const isGradeAssignment = /\/Teacher\/Assignments\/GradeAssignment\//i.test(location.pathname);
   const isAssignmentsIndex = /\/Teacher\/Assignments\/Index\//i.test(location.pathname);
   const isMyStudents = /\/SchoolManagment\/Actions\/MyStudents/i.test(location.pathname);
@@ -52,7 +76,7 @@
   // صفحة GradeAssignment تعتمد على النواة المستقرة v1.1.7.
   // أما صفحة Index فلها لوحة مستقلة، لذلك لا نمنع تشغيلها إذا تعذر تحميل النواة لأي سبب.
   if (!base && isGradeAssignment) {
-    console.error('[MAI v1.4.2] Base v1.1.7 was not loaded on GradeAssignment.');
+    console.error('[MAI v1.4.6] Base v1.1.7 was not loaded on GradeAssignment.');
     return;
   }
 
@@ -264,6 +288,78 @@
   const EPS = 1e-9;
   const nearlyEqual = (a, b, eps = EPS) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= eps;
 
+  // ترتيب عربي ثابت لجدول الطلاب والتقارير: أ ← ي.
+  const arabicNameCollator = new Intl.Collator('ar-SA', {
+    usage: 'sort',
+    sensitivity: 'base',
+    numeric: true,
+    ignorePunctuation: true
+  });
+
+  const compareArabicNames = (a, b) => {
+    const ak = norm(a);
+    const bk = norm(b);
+    const byNormalized = arabicNameCollator.compare(ak, bk);
+    if (byNormalized) return byNormalized;
+    return arabicNameCollator.compare(clean(a), clean(b));
+  };
+
+  // في SolvingType=3 لا تصلح hasAnswer لتمييز التسليم بعد الرصد؛
+  // فقد أعاد الاختبار hasAnswer=true لجميع الطلاب حتى غير المسلّمين.
+  // لذلك نعتمد الدرجة المباشرة + ملاحظة المعلم، مع إبقاء الحالات الملتبسة منفصلة.
+  const outsideNotSubmittedFeedback = (value) => {
+    const text = norm(value).replace(/[^\p{L}\p{N}\s]/gu, ' ');
+    return /(?:لم\s*(?:يتم\s*)?تسليم|غير\s*مسلم|لم\s*يسلم|بدون\s*تسليم|لم\s*يؤد|لم\s*ينفذ|not\s*submitted|not\s*turned\s*in|no\s*submission|missing)/i.test(text);
+  };
+
+  const outsideSubmittedFeedback = (value) => {
+    const text = norm(value).replace(/[^\p{L}\p{N}\s]/gu, ' ');
+    if (!text || outsideNotSubmittedFeedback(text)) return false;
+    return /(?:تم\s*التسليم|تم\s*تسليم|اكملت\s*التسليم|سلم\s*الواجب|submitted|turned\s*in|completed)/i.test(text);
+  };
+
+  const outsideDirectGrade = (student) => {
+    const candidates = [
+      student?.currentGrade,
+      student?.gradeFieldValue,
+      student?.resolvedGrade,
+      student?.achievedGrade
+    ];
+    for (const value of candidates) {
+      const n = num(value);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+
+  const classifyOutsideSubmission = (student) => {
+    const grade = outsideDirectGrade(student);
+    const feedback = clean(student?.feedback ?? student?.rawFields?.feedBack ?? '');
+
+    // الدرجة الموجبة دليل أقوى على إنجاز المهمة حتى لو كانت الملاحظة قديمة أو متعارضة.
+    if (Number.isFinite(grade) && grade > 0) {
+      return { key: 'submitted', label: 'سلّم', reason: 'positive_grade', grade, feedback };
+    }
+
+    // الصفر لا يعني عدم التسليم؛ نستخدم الملاحظة التي حُسمت عند الاستيراد.
+    if (outsideNotSubmittedFeedback(feedback)) {
+      return { key: 'not_submitted', label: 'لم يسلّم', reason: 'feedback_not_submitted', grade, feedback };
+    }
+
+    if (Number.isFinite(grade) && nearlyEqual(grade, 0)) {
+      if (feedback) {
+        return { key: 'submitted', label: 'سلّم وأخذ صفر', reason: 'zero_with_feedback', grade, feedback };
+      }
+      return { key: 'unknown', label: 'غير محسوم', reason: 'zero_without_feedback', grade, feedback };
+    }
+
+    if (outsideSubmittedFeedback(feedback)) {
+      return { key: 'submitted', label: 'سلّم', reason: 'feedback_submitted', grade, feedback };
+    }
+
+    return { key: 'unknown', label: 'غير محسوم', reason: 'insufficient_evidence', grade, feedback };
+  };
+
   const resolvedAchievedGrade = (student) => {
     const resultGrade = num(student?.resultGrade);
     if (Number.isFinite(resultGrade)) return resultGrade;
@@ -283,22 +379,47 @@
     return Number(((achieved / total) * 100).toFixed(2));
   };
 
-  const computeEnhancedSummary = () => {
-    const students = state.gradeData?.students || [];
+  const computeEnhancedSummary = (sourceRows = null) => {
+    const students = Array.isArray(sourceRows)
+      ? sourceRows.map(row => row?.student || row).filter(Boolean)
+      : (state.gradeData?.students || []);
     const outside = isOutsideSystem();
     const total = students.length;
-    const submitted = outside ? [] : students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+
+    const outsideStates = outside
+      ? students.map(s => ({ student: s, state: classifyOutsideSubmission(s) }))
+      : [];
+
+    const submitted = outside
+      ? outsideStates.filter(x => x.state.key === 'submitted').map(x => x.student)
+      : students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+
+    const notSubmittedCount = outside
+      ? outsideStates.filter(x => x.state.key === 'not_submitted').length
+      : Math.max(0, total - submitted.length);
+
+    const unknownSubmissionCount = outside
+      ? outsideStates.filter(x => x.state.key === 'unknown').length
+      : 0;
+
+    // نبقي متوسط الأداء متوافقًا مع الرصد: كل درجة مرصودة تدخل المتوسط،
+    // بينما تصنيف «لم يسلّم» يظهر مستقلًا ولا يُخلط مع «سلّم وأخذ صفر».
     const scored = students
       .map(s => ({ s, achieved: resolvedAchievedGrade(s), max: resolvedMaxGrade(s) }))
       .filter(x => Number.isFinite(x.achieved) && Number.isFinite(x.max) && x.max > 0);
+
     const percents = scored.map(x => (x.achieved / x.max) * 100).filter(Number.isFinite);
     const averagePercent = percents.length ? percents.reduce((a,b) => a+b, 0) / percents.length : null;
     const discrepancies = students.filter(s => s.gradeDiscrepancy === true);
+
     return {
       total,
-      submittedCount: outside ? null : submitted.length,
-      notSubmittedCount: outside ? null : Math.max(0, total - submitted.length),
-      submissionRate: outside ? null : pct(submitted.length, total),
+      submittedCount: submitted.length,
+      notSubmittedCount,
+      unknownSubmissionCount,
+      submissionRate: pct(submitted.length, total),
+      submissionAvailable: outside ? (submitted.length + notSubmittedCount > 0) : true,
+      submissionMethod: outside ? 'grade_feedback_inference' : 'hasAnswer',
       graded: scored.length,
       gradingRate: pct(scored.length, total),
       averagePercent: Number.isFinite(averagePercent) ? Number(averagePercent.toFixed(2)) : null,
@@ -311,13 +432,18 @@
   const studentLevel = (student, mode = getMode()) => {
     const outside = mode?.key === 'outside_system';
 
-    if (!outside && student?.submissionState === 'not_submitted') {
+    if (outside) {
+      const submission = classifyOutsideSubmission(student);
+      if (submission.key === 'not_submitted') {
+        return { key: 'not-solved', label: 'لم يسلّم', rank: 7 };
+      }
+    } else if (student?.submissionState === 'not_submitted') {
       return { key: 'not-solved', label: 'لم يحل', rank: 7 };
     }
 
     const percent = studentPercent(student);
     if (!Number.isFinite(percent)) {
-      if (outside) return { key: 'unverified', label: 'غير مرصود', rank: 8 };
+      if (outside) return { key: 'unverified', label: 'غير محسوم', rank: 8 };
       return { key: 'pending', label: 'بانتظار الرصد', rank: 8 };
     }
 
@@ -530,6 +656,147 @@
 
   const responseHtmlEnhanced = (response) => typeof response === 'string' ? response : (response?.html || '');
 
+  // v1.4.6 — ربط الفصل بالطالب عبر checkStudent-<StudentId>.
+  // فحص البنية الفعلية أثبت أن حقول List[index] قد تكون داخل حاوية مشتركة تضم كل الطلاب،
+  // بينما checkbox الخاص بالطالب موجود داخل كتلة مرئية دقيقة لا تضم إلا طالبًا واحدًا.
+  // لذلك نعتمد StudentId نفسه للوصول إلى checkStudent-<StudentId> ثم نصعد حتى أول كتلة
+  // تحتوي «الفصل المدرسي» وبداخلها checkbox واحد فقط. هذا يمنع تكرار أول فصل على الجميع.
+  const findStudentCheckboxEnhanced = (doc, studentId) => {
+    const id = `checkStudent-${clean(studentId)}`;
+    const byId = doc.getElementById(id);
+    if (byId) return byId;
+
+    // احتياط إذا تغير شكل id مع بقاء القيمة.
+    return [...doc.querySelectorAll('input[id^="checkStudent-"]')]
+      .find(el => clean(el.value) === clean(studentId)) || null;
+  };
+
+  const findGradeStudentVisualBlockEnhanced = (doc, index, studentId) => {
+    const checkbox = findStudentCheckboxEnhanced(doc, studentId);
+
+    // المسار الدقيق المؤكد بالفحص: checkbox الطالب -> كتلة الطالب المرئية.
+    if (checkbox) {
+      let node = checkbox;
+      for (let depth = 0; depth < 15 && node; depth++, node = node.parentElement) {
+        const text = clean(node.innerText || node.textContent || '');
+        const checkboxesInside = node.querySelectorAll('input[id^="checkStudent-"]').length;
+        if (checkboxesInside === 1 && /الفصل\s+المدرسي\s*:/i.test(text)) {
+          return node;
+        }
+      }
+    }
+
+    // احتياط لبنى أخرى/قديمة: نعود لحقول List[index] لكن لا نقبل إلا حاوية لطالب واحد.
+    const selectors = [
+      `[name="List[${index}].Grade"]`,
+      `[name="List[${index}].feedBack"]`,
+      `[name="List[${index}].AnswerText"]`,
+      `[name="List[${index}].StudentId"]`
+    ];
+
+    for (const selector of selectors) {
+      const anchor = doc.querySelector(selector);
+      if (!anchor) continue;
+      let node = anchor;
+      for (let depth = 0; depth < 14 && node; depth++, node = node.parentElement) {
+        const text = clean(node.innerText || node.textContent || '');
+        if (!/الفصل\s+المدرسي\s*:/i.test(text)) continue;
+
+        const studentIdFields = node.querySelectorAll('[name^="List["][name$=".StudentId"]').length;
+        const checkboxesInside = node.querySelectorAll('input[id^="checkStudent-"]').length;
+        if (studentIdFields === 1 || checkboxesInside === 1) return node;
+      }
+    }
+
+    return null;
+  };
+
+  const parseGradeStudentClassRowsEnhanced = (html) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const groups = new Map();
+
+    for (const el of doc.querySelectorAll('[name^="List["]')) {
+      const m = el.name?.match(/^List\[(\d+)\]\.(.+)$/);
+      if (!m) continue;
+      const index = Number(m[1]);
+      if (!groups.has(index)) groups.set(index, {});
+      groups.get(index)[m[2]] = el.value;
+    }
+
+    const rows = [];
+    for (const [index, fields] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+      const studentId = clean(fields.StudentId);
+      if (!studentId) continue;
+
+      const block = findGradeStudentVisualBlockEnhanced(doc, index, studentId);
+      const blockText = clean(block?.innerText || block?.textContent || '');
+      const className = blockText.match(
+        /الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة\s*:|\s+الإجابة\s*:|\s+ملاحظات|$)/i
+      )?.[1]?.trim() || '';
+
+      rows.push({
+        index,
+        studentId,
+        className,
+        classResolvedBy: block ? 'student-checkbox' : ''
+      });
+    }
+
+    return rows;
+  };
+
+  async function repairStudentClassesEnhanced() {
+    const students = state.gradeData?.students || [];
+    if (!students.length) return { changed: 0, resolved: 0, classes: [] };
+
+    const params = extractLoadStudentsParamsEnhanced();
+    if (!params) return { changed: 0, resolved: 0, classes: [] };
+
+    const classByStudent = new Map();
+    let stagnant = 0;
+    for (let pageNumber = 1; pageNumber <= 100; pageNumber++) {
+      const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+        ...params,
+        pageNumber,
+        pageSize: 200,
+        studentIds: '',
+        status: '',
+        sortBy: ''
+      });
+      const rows = parseGradeStudentClassRowsEnhanced(responseHtmlEnhanced(response));
+      let added = 0;
+      for (const row of rows) {
+        if (!row.studentId || !row.className) continue;
+        if (!classByStudent.has(String(row.studentId))) added++;
+        classByStudent.set(String(row.studentId), row.className);
+      }
+
+      if (!rows.length) break;
+      if (!added) stagnant++; else stagnant = 0;
+      if (stagnant >= 2) break;
+      const totalPages = Number(response?.totalPages);
+      if (Number.isFinite(totalPages) && totalPages > 0 && pageNumber >= totalPages) break;
+      if (rows.length < 200) break;
+    }
+
+    let changed = 0;
+    let resolved = 0;
+    for (const student of students) {
+      const key = String(student.assignmentStudentId || student.studentId || '');
+      const parsedClass = clean(classByStudent.get(key) || '');
+      if (!parsedClass) continue;
+      resolved++;
+      if (norm(student.className || '') !== norm(parsedClass)) changed++;
+      student.className = parsedClass;
+      student.classNameSource = 'grade-row';
+    }
+
+    const classes = [...new Set(students.map(s => clean(s.className)).filter(Boolean))]
+      .sort(compareArabicNames);
+
+    return { changed, resolved, classes };
+  }
+
   const resolveSingleStudentResultLink = async (student, params) => {
     const studentId = clean(student?.assignmentStudentId || student?.studentId || '');
     if (!studentId) return '';
@@ -550,7 +817,7 @@
       const batch = submitted.slice(i, i + concurrency);
       const links = await Promise.all(batch.map(async s => {
         try { return await resolveSingleStudentResultLink(s, params); }
-        catch (e) { console.warn('[MAI v1.4.2] Could not resolve student result link:', e); return ''; }
+        catch (e) { console.warn('[MAI v1.4.6] Could not resolve student result link:', e); return ''; }
       }));
       batch.forEach((s, j) => {
         if (links[j]) {
@@ -955,7 +1222,7 @@
           const doc = await fetchTextDocument(detailsUrl);
           name = extractAssignmentNameFromDocument(doc);
         } catch (e) {
-          console.warn('[MAI v1.4.2] Could not resolve assignment name from details page:', e);
+          console.warn('[MAI v1.4.6] Could not resolve assignment name from details page:', e);
         }
       }
     }
@@ -1050,7 +1317,13 @@
   const getStatusLabel = (student) => {
     const mode = getMode();
     if (mode.key === 'outside_system') {
-      return student.gradeState === 'recorded' ? 'درجة مرصودة' : 'التسليم غير قابل للتحقق';
+      const submission = classifyOutsideSubmission(student);
+      if (submission.key === 'not_submitted') return 'لم يسلّم';
+      if (submission.key === 'submitted') {
+        if (Number.isFinite(outsideDirectGrade(student))) return nearlyEqual(outsideDirectGrade(student), 0) ? 'سلّم / درجة صفر' : 'سلّم / درجة مرصودة';
+        return 'سلّم / بانتظار الرصد';
+      }
+      return 'غير محسوم';
     }
     if (student.submissionState === 'not_submitted') return 'لم يحل';
     if (student.gradeState === 'recorded') return 'تم الحل / مصحح';
@@ -1058,13 +1331,191 @@
     return 'غير محدد';
   };
 
+  // تقارير الطلاب والجداول والتصدير مرتبة افتراضيًا أبجديًا من أ إلى ي.
   const performanceRows = () => {
     const { rows } = computeStudentLevels();
     return rows.sort((a, b) => {
-      if (a.level.rank !== b.level.rank) return a.level.rank - b.level.rank;
-      if (Number.isFinite(a.percent) && Number.isFinite(b.percent)) return b.percent - a.percent;
-      return clean(a.student.name).localeCompare(clean(b.student.name), 'ar');
+      const byName = compareArabicNames(a.student?.name || '', b.student?.name || '');
+      if (byName) return byName;
+      const byClass = compareArabicNames(a.student?.className || '', b.student?.className || '');
+      if (byClass) return byClass;
+      return String(a.student?.studentId || a.student?.assignmentStudentId || '')
+        .localeCompare(String(b.student?.studentId || b.student?.assignmentStudentId || ''));
     });
+  };
+
+  // v1.4.5 — المرشحات تمثل "سياق التقرير" الحالي، وليست مجرد عرض للجدول.
+  // لذلك البطاقات، مستويات الطلاب، PDF، CSV وExcel تتبع المجموعة المفلترة نفسها.
+  const studentViewState = {
+    className: 'all',
+    submission: 'all',
+    level: 'all',
+    sort: 'name_asc'
+  };
+
+  const availableStudentClasses = () => [...new Set(
+    (state.gradeData?.students || []).map(s => clean(s.className)).filter(Boolean)
+  )].sort(compareArabicNames);
+
+  const isStudentViewFiltered = () =>
+    studentViewState.className !== 'all' ||
+    studentViewState.submission !== 'all' ||
+    studentViewState.level !== 'all';
+
+  const studentSubmissionKey = (student) => {
+    if (isOutsideSystem()) return classifyOutsideSubmission(student).key;
+    if (student?.submissionState === 'not_submitted') return 'not_submitted';
+    if (student?.submissionState === 'submitted' || student?.hasAnswer === true) return 'submitted';
+    return 'unknown';
+  };
+
+  const performanceLevelRank = (key) => ({
+    excellent: 1,
+    'very-good': 2,
+    good: 3,
+    acceptable: 4,
+    weak: 5
+  }[key] ?? 99);
+
+  const isRatedLevel = (key) => performanceLevelRank(key) < 99;
+
+  const compareRowNames = (a, b) => {
+    const byName = compareArabicNames(a.student?.name || '', b.student?.name || '');
+    if (byName) return byName;
+    const byClass = compareArabicNames(a.student?.className || '', b.student?.className || '');
+    if (byClass) return byClass;
+    return String(a.student?.studentId || a.student?.assignmentStudentId || '')
+      .localeCompare(String(b.student?.studentId || b.student?.assignmentStudentId || ''));
+  };
+
+  const studentViewRows = () => {
+    let rows = performanceRows();
+
+    if (studentViewState.className !== 'all') {
+      rows = rows.filter(row => norm(row.student?.className || '') === norm(studentViewState.className));
+    }
+
+    if (studentViewState.submission !== 'all') {
+      rows = rows.filter(row => studentSubmissionKey(row.student) === studentViewState.submission);
+    }
+
+    if (studentViewState.level === 'unrated') {
+      rows = rows.filter(row => !isRatedLevel(row.level?.key));
+    } else if (studentViewState.level !== 'all') {
+      rows = rows.filter(row => row.level?.key === studentViewState.level);
+    }
+
+    const sort = studentViewState.sort;
+    rows = rows.slice().sort((a, b) => {
+      if (sort === 'name_desc') return -compareRowNames(a, b);
+
+      if (sort === 'submission_submitted') {
+        const rank = { submitted: 1, not_submitted: 2, unknown: 3 };
+        const diff = (rank[studentSubmissionKey(a.student)] ?? 9) - (rank[studentSubmissionKey(b.student)] ?? 9);
+        return diff || compareRowNames(a, b);
+      }
+
+      if (sort === 'submission_not_submitted') {
+        const rank = { not_submitted: 1, unknown: 2, submitted: 3 };
+        const diff = (rank[studentSubmissionKey(a.student)] ?? 9) - (rank[studentSubmissionKey(b.student)] ?? 9);
+        return diff || compareRowNames(a, b);
+      }
+
+      if (sort === 'level_high' || sort === 'level_low') {
+        const ar = performanceLevelRank(a.level?.key);
+        const br = performanceLevelRank(b.level?.key);
+        // الحالات بلا تقدير تبقى في نهاية القائمة في الاتجاهين.
+        if (ar === 99 && br !== 99) return 1;
+        if (br === 99 && ar !== 99) return -1;
+        if (ar !== br) return sort === 'level_high' ? ar - br : br - ar;
+
+        const ap = Number.isFinite(a.percent) ? a.percent : null;
+        const bp = Number.isFinite(b.percent) ? b.percent : null;
+        if (ap !== null && bp !== null && ap !== bp) return sort === 'level_high' ? bp - ap : ap - bp;
+        return compareRowNames(a, b);
+      }
+
+      return compareRowNames(a, b);
+    });
+
+    return rows;
+  };
+
+  const studentFilterContextLabel = () => {
+    const parts = [];
+    if (studentViewState.className !== 'all') parts.push(`الفصل: ${studentViewState.className}`);
+    if (studentViewState.submission !== 'all') {
+      const outside = isOutsideSystem();
+      const labels = outside
+        ? { submitted: 'سلّم', not_submitted: 'لم يسلّم', unknown: 'غير محسوم' }
+        : { submitted: 'حلّ الواجب', not_submitted: 'لم يحل', unknown: 'غير محدد' };
+      parts.push(`التسليم: ${labels[studentViewState.submission] || studentViewState.submission}`);
+    }
+    if (studentViewState.level !== 'all') {
+      const labels = {
+        excellent: 'ممتاز', 'very-good': 'جيد جدًا', good: 'جيد',
+        acceptable: 'مقبول', weak: 'ضعيف', unrated: 'بدون تقدير'
+      };
+      parts.push(`التقدير: ${labels[studentViewState.level] || studentViewState.level}`);
+    }
+    return parts.length ? parts.join(' · ') : 'جميع الطلاب';
+  };
+
+  const getFilteredQuestionAnalytics = (rows = studentViewRows()) => {
+    const analytics = getQuestionAnalytics();
+    if (!analytics?.results) return analytics;
+    if (!isStudentViewFiltered()) return analytics;
+
+    const ids = new Set(rows.map(row => String(
+      row.student?.assignmentStudentId || row.student?.studentId || ''
+    )).filter(Boolean));
+    const filteredResults = analytics.results.filter(result => ids.has(String(result.assignmentStudentId || '')));
+    return aggregateDeepAnalysis(filteredResults);
+  };
+
+  const studentFilterControlsHtml = () => {
+    const outside = isOutsideSystem();
+    const rows = studentViewRows();
+    const total = performanceRows().length;
+    const submissionLabels = outside
+      ? { submitted: 'سلّم', not_submitted: 'لم يسلّم', unknown: 'غير محسوم' }
+      : { submitted: 'حلّ الواجب', not_submitted: 'لم يحل', unknown: 'غير محدد' };
+
+    const selected = (actual, expected) => actual === expected ? ' selected' : '';
+    const classes = availableStudentClasses();
+
+    return `
+      <div class="${APP}-student-tools" data-mai-student-tools>
+        <label><span>الفصل</span><select data-mai-student-class>
+          <option value="all"${selected(studentViewState.className, 'all')}>كل الفصول</option>
+          ${classes.map(className => `<option value="${esc(className)}"${selected(studentViewState.className, className)}>${esc(className)}</option>`).join('')}
+        </select></label>
+        <label><span>التسليم</span><select data-mai-student-submission>
+          <option value="all"${selected(studentViewState.submission, 'all')}>الكل</option>
+          <option value="submitted"${selected(studentViewState.submission, 'submitted')}>${esc(submissionLabels.submitted)}</option>
+          <option value="not_submitted"${selected(studentViewState.submission, 'not_submitted')}>${esc(submissionLabels.not_submitted)}</option>
+          <option value="unknown"${selected(studentViewState.submission, 'unknown')}>${esc(submissionLabels.unknown)}</option>
+        </select></label>
+        <label><span>التقدير</span><select data-mai-student-level>
+          <option value="all"${selected(studentViewState.level, 'all')}>الكل</option>
+          <option value="excellent"${selected(studentViewState.level, 'excellent')}>ممتاز</option>
+          <option value="very-good"${selected(studentViewState.level, 'very-good')}>جيد جدًا</option>
+          <option value="good"${selected(studentViewState.level, 'good')}>جيد</option>
+          <option value="acceptable"${selected(studentViewState.level, 'acceptable')}>مقبول</option>
+          <option value="weak"${selected(studentViewState.level, 'weak')}>ضعيف</option>
+          <option value="unrated"${selected(studentViewState.level, 'unrated')}>بدون تقدير</option>
+        </select></label>
+        <label><span>الفرز</span><select data-mai-student-sort>
+          <option value="name_asc"${selected(studentViewState.sort, 'name_asc')}>الاسم: أ ← ي</option>
+          <option value="name_desc"${selected(studentViewState.sort, 'name_desc')}>الاسم: ي ← أ</option>
+          <option value="submission_submitted"${selected(studentViewState.sort, 'submission_submitted')}>التسليم: المسلّم أولًا</option>
+          <option value="submission_not_submitted"${selected(studentViewState.sort, 'submission_not_submitted')}>التسليم: غير المسلّم أولًا</option>
+          <option value="level_high"${selected(studentViewState.sort, 'level_high')}>التقدير: الأعلى أولًا</option>
+          <option value="level_low"${selected(studentViewState.sort, 'level_low')}>التقدير: الأدنى أولًا</option>
+        </select></label>
+        <button type="button" class="${APP}-student-reset" data-mai-student-reset>إعادة الضبط</button>
+        <div class="${APP}-student-count" data-mai-student-count>عرض ${rows.length} من ${total}</div>
+      </div>`;
   };
 
   const metricHtml = (value, label, hint = '') => `
@@ -1072,19 +1523,24 @@
       <b>${value}</b><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ''}
     </div>`;
 
-  const levelCardsHtml = () => {
-    const { counts, total } = computeStudentLevels();
+  const levelCardsHtml = (rows = studentViewRows()) => {
+    const counts = Object.fromEntries(levelOrder.map(([key]) => [key, 0]));
+    for (const row of rows) counts[row.level?.key] = (counts[row.level?.key] || 0) + 1;
+    const total = rows.length;
+    const outside = isOutsideSystem();
     const visible = levelOrder.filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key));
-    return visible.map(([key, label]) => `
+    return visible.map(([key, label]) => {
+      const displayLabel = outside && key === 'not-solved' ? 'لم يسلّم' : outside && key === 'unverified' ? 'غير محسوم' : label;
+      return `
       <div class="${APP}-level-card ${APP}-level-${key}">
         <strong>${counts[key] || 0}</strong>
-        <span>${esc(label)}</span>
-        <small>${total ? pct(counts[key] || 0, total) : 0}% من الطلاب</small>
-      </div>`).join('');
+        <span>${esc(displayLabel)}</span>
+        <small>${total ? pct(counts[key] || 0, total) : 0}% من المعروض</small>
+      </div>`;
+    }).join('');
   };
 
-  const questionSummaryCardsHtml = () => {
-    const a = getQuestionAnalytics();
+  const questionSummaryCardsHtml = (a = getFilteredQuestionAnalytics()) => {
     if (!a) {
       return `<div class="${APP}-analysis-note">تحليل الأسئلة سيظهر بعد جمع نتائج الطلاب. استخدم «تحديث التحليل».</div>`;
     }
@@ -1100,7 +1556,7 @@
       </div>`;
   };
 
-  const buildStudentTableRows = () => performanceRows().map((row, index) => {
+  const buildStudentTableRows = (rows = studentViewRows()) => rows.map((row, index) => {
     const s = row.student;
     const qs = studentQuestionStats(s);
     const achieved = resolvedAchievedGrade(s);
@@ -1120,8 +1576,7 @@
     </tr>`;
   }).join('');
 
-  const buildQuestionTableRows = () => {
-    const a = getQuestionAnalytics();
+  const buildQuestionTableRows = (a = getFilteredQuestionAnalytics()) => {
     if (!a) return '';
     return a.questions.map(q => `<tr>
       <td>${q.number}</td>
@@ -1166,15 +1621,20 @@
         </section>`;
     }
 
-    const s = computeEnhancedSummary();
+    const viewRows = studentViewRows();
+    const s = computeEnhancedSummary(viewRows);
     const outside = isOutsideSystem();
-    const qa = getQuestionAnalytics();
+    const qa = getFilteredQuestionAnalytics(viewRows);
+    const filterContext = studentFilterContextLabel();
 
     const topMetrics = outside
       ? [
           metricHtml(s.total ?? 0, 'عدد الطلاب'),
+          metricHtml(s.submittedCount ?? 0, 'سلّموا الواجب'),
+          metricHtml(s.notSubmittedCount ?? 0, 'لم يسلّموا'),
+          metricHtml(s.unknownSubmissionCount ?? 0, 'غير محسوم'),
+          metricHtml(`${fmt(s.submissionRate ?? 0)}%`, 'نسبة التسليم', 'مستنتجة من الدرجة والملاحظة'),
           metricHtml(s.graded ?? 0, 'درجات مرصودة'),
-          metricHtml(`${fmt(s.gradingRate ?? 0)}%`, 'نسبة الرصد'),
           metricHtml(Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'),
           metricHtml(Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'),
           metricHtml(Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة مرصودة')
@@ -1194,11 +1654,11 @@
       : `
         <section class="${APP}-analysis-section">
           <div class="${APP}-analysis-heading"><div><h3>تحليل الأسئلة والإجابات</h3><p>نسب الصحة والخطأ والأسئلة الأصعب والأخطاء الأكثر شيوعًا.</p></div></div>
-          ${questionSummaryCardsHtml()}
+          ${questionSummaryCardsHtml(qa)}
           ${qa ? `<details class="${APP}-details" open><summary>تفاصيل الأسئلة (${qa.questions.length})</summary>
             <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
               <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
-              <tbody>${buildQuestionTableRows()}</tbody>
+              <tbody>${buildQuestionTableRows(qa)}</tbody>
             </table></div>
           </details>` : ''}
         </section>`;
@@ -1206,7 +1666,7 @@
     return `
       <section class="${APP}-analysis-section ${APP}-analysis-overview">
         <div class="${APP}-analysis-heading">
-          <div><h3>تحليل الواجب</h3><p>${esc(data.assignmentMode?.label || 'الواجب')} · تحديث: ${new Date().toLocaleString('ar-SA')}</p></div>
+          <div><h3>تحليل الواجب</h3><p>${esc(data.assignmentMode?.label || 'الواجب')} · ${esc(filterContext)} · تحديث: ${new Date().toLocaleString('ar-SA')}</p></div>
           <span class="${APP}-pill">v${VERSION}</span>
         </div>
         <div class="${APP}-overview-metrics">${topMetrics}</div>
@@ -1214,17 +1674,18 @@
       </section>
 
       <section class="${APP}-analysis-section">
-        <div class="${APP}-analysis-heading"><div><h3>مستويات الطلاب</h3><p>«ضعيف» يشمل 50% فأقل لمن لديه درجة، و«لم يحل» فئة مستقلة.</p></div></div>
-        <div class="${APP}-level-grid">${levelCardsHtml()}</div>
+        <div class="${APP}-analysis-heading"><div><h3>مستويات الطلاب</h3><p>${outside ? '«لم يسلّم» فئة مستقلة عن الطالب الذي سلّم وأخذ صفرًا.' : '«ضعيف» يشمل 50% فأقل لمن لديه درجة، و«لم يحل» فئة مستقلة.'}</p></div></div>
+        <div class="${APP}-level-grid">${levelCardsHtml(viewRows)}</div>
       </section>
 
       ${questionSection}
 
-      <section class="${APP}-analysis-section">
-        <div class="${APP}-analysis-heading"><div><h3>تقييم الطلاب</h3><p>الحالة والدرجة والنسبة والمستوى${outside ? '.' : ' مع ملخص إجابات كل طالب.'}</p></div></div>
+      <section class="${APP}-analysis-section" data-mai-student-section>
+        <div class="${APP}-analysis-heading"><div><h3>تقييم الطلاب</h3><p>صفِّ حسب الفصل أو التسليم أو التقدير، وفرز حسب الاسم أو التسليم أو التقدير. البطاقات والتقارير تتبع التصفية الحالية.</p></div></div>
+        ${studentFilterControlsHtml()}
         <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
           <thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${isOnlineQuestions() ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead>
-          <tbody>${buildStudentTableRows()}</tbody>
+          <tbody data-mai-student-tbody>${buildStudentTableRows()}</tbody>
         </table></div>
       </section>`;
   };
@@ -1244,6 +1705,68 @@
     }
     if (host) host.innerHTML = buildInlineAnalysisHtml();
     syncActionAvailability();
+  };
+
+  const refreshStudentTableView = (section) => {
+    if (!section) return;
+    const rows = studentViewRows();
+    const total = performanceRows().length;
+    const tbody = section.querySelector('[data-mai-student-tbody]');
+    const count = section.querySelector('[data-mai-student-count]');
+    const classFilter = section.querySelector('[data-mai-student-class]');
+    const submission = section.querySelector('[data-mai-student-submission]');
+    const level = section.querySelector('[data-mai-student-level]');
+    const sort = section.querySelector('[data-mai-student-sort]');
+    if (classFilter) classFilter.value = studentViewState.className;
+    if (submission) submission.value = studentViewState.submission;
+    if (level) level.value = studentViewState.level;
+    if (sort) sort.value = studentViewState.sort;
+    if (tbody) tbody.innerHTML = buildStudentTableRows(rows);
+    if (count) count.textContent = `عرض ${rows.length} من ${total}`;
+  };
+
+  const refreshAllFilteredViews = () => {
+    // الصفحة الرئيسية: إعادة بناء كاملة حتى تتغير البطاقات ومستويات الطلاب مع المرشح.
+    renderInlineAnalysis();
+
+    // إن كانت نافذة "لوحة تحليل الواجب" مفتوحة، نجدد محتواها كذلك.
+    const modal = document.getElementById(`${APP}-modal`);
+    const titleEl = document.getElementById(`${APP}-modal-title`);
+    const body = document.getElementById(`${APP}-modal-body`);
+    if (modal && !modal.hidden && body && clean(titleEl?.textContent || '') === 'لوحة تحليل الواجب') {
+      body.innerHTML = buildInlineAnalysisHtml();
+    }
+  };
+
+  const installStudentViewControls = () => {
+    if (document.documentElement.dataset.maiStudentViewBound === '1') return;
+    document.documentElement.dataset.maiStudentViewBound = '1';
+
+    document.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement)) return;
+      const section = target.closest('[data-mai-student-section]');
+      if (!section) return;
+
+      if (target.matches('[data-mai-student-class]')) studentViewState.className = target.value || 'all';
+      else if (target.matches('[data-mai-student-submission]')) studentViewState.submission = target.value || 'all';
+      else if (target.matches('[data-mai-student-level]')) studentViewState.level = target.value || 'all';
+      else if (target.matches('[data-mai-student-sort]')) studentViewState.sort = target.value || 'name_asc';
+      else return;
+
+      refreshAllFilteredViews();
+    });
+
+    document.addEventListener('click', (event) => {
+      const btn = event.target instanceof Element ? event.target.closest('[data-mai-student-reset]') : null;
+      if (!btn) return;
+      const section = btn.closest('[data-mai-student-section]');
+      studentViewState.className = 'all';
+      studentViewState.submission = 'all';
+      studentViewState.level = 'all';
+      studentViewState.sort = 'name_asc';
+      if (section) refreshAllFilteredViews();
+    });
   };
 
   // -----------------------------
@@ -1270,11 +1793,13 @@
     if (isOutsideSystem()) throw new Error('تحليل الأسئلة غير متاح لواجبات «خارج النظام».');
     let a = getQuestionAnalytics();
     if (!a) a = await runDeepQuestionAnalysisEnhanced();
+    a = getFilteredQuestionAnalytics(studentViewRows()) || a;
     showModal('تحليل الأسئلة', `
-      ${questionSummaryCardsHtml()}
+      <div class="${APP}-analysis-note">السياق الحالي: ${esc(studentFilterContextLabel())}</div>
+      ${questionSummaryCardsHtml(a)}
       <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
         <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
-        <tbody>${buildQuestionTableRows()}</tbody>
+        <tbody>${buildQuestionTableRows(a)}</tbody>
       </table></div>`);
   };
 
@@ -1324,7 +1849,7 @@
     }
   };
 
-  const printHeaderHtml = (documentLabel, { compact = false, assignmentName = '' } = {}) => {
+  const printHeaderHtml = (documentLabel, { compact = false, assignmentName = '', rows = null } = {}) => {
     const data = state.gradeData;
     const name = assignmentName || data?.assignmentName || (isUsableAssignmentName(data?.title) ? cleanAssignmentNameCandidate(data.title) : '') || 'واجب مدرستي';
     if (compact) {
@@ -1333,9 +1858,10 @@
       </div>`;
     }
 
-    const classes = [...new Set((data?.students || []).map(s => clean(s.className)).filter(Boolean))].join('، ');
+    const rowStudents = Array.isArray(rows) ? rows.map(row => row?.student || row).filter(Boolean) : (data?.students || []);
+    const classes = [...new Set(rowStudents.map(s => clean(s.className)).filter(Boolean))].sort(compareArabicNames).join('، ');
     return `<div class="header">
-      <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)}</div></div>
+      <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)} · ${esc(studentFilterContextLabel())}</div></div>
       <div class="small">${esc(data?.assignmentMode?.label || '')}<br>${classes ? `الفصل/الفصول: ${esc(classes)}` : ''}<br>${new Date().toLocaleString('ar-SA')}</div>
     </div>`;
   };
@@ -1419,22 +1945,30 @@
     }
   }
 
-  const printLevelGrid = () => {
-    const { counts, total } = computeStudentLevels();
+  const printLevelGrid = (rows = studentViewRows()) => {
+    const counts = Object.fromEntries(levelOrder.map(([key]) => [key, 0]));
+    for (const row of rows) counts[row.level?.key] = (counts[row.level?.key] || 0) + 1;
+    const total = rows.length;
+    const outside = isOutsideSystem();
     return levelOrder
       .filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key))
-      .map(([key, label]) => `<div class="level"><b>${counts[key] || 0}</b><span>${esc(label)}</span><div class="small muted">${total ? pct(counts[key] || 0, total) : 0}%</div></div>`).join('');
+      .map(([key, label]) => {
+        const displayLabel = outside && key === 'not-solved' ? 'لم يسلّم' : outside && key === 'unverified' ? 'غير محسوم' : label;
+        return `<div class="level"><b>${counts[key] || 0}</b><span>${esc(displayLabel)}</span><div class="small muted">${total ? pct(counts[key] || 0, total) : 0}%</div></div>`;
+      }).join('');
   };
 
   const buildAssignmentPrintReport = () => {
     const data = state.gradeData;
-    const s = computeEnhancedSummary();
+    const viewRows = studentViewRows();
+    const s = computeEnhancedSummary(viewRows);
     const outside = isOutsideSystem();
-    const qa = getQuestionAnalytics();
+    const qa = getFilteredQuestionAnalytics(viewRows);
 
     const cards = outside
       ? [
-          [s.total ?? 0, 'عدد الطلاب'], [s.graded ?? 0, 'درجات مرصودة'], [`${fmt(s.gradingRate ?? 0)}%`, 'نسبة الرصد'],
+          [s.total ?? 0, 'عدد الطلاب'], [s.submittedCount ?? 0, 'سلّموا الواجب'], [s.notSubmittedCount ?? 0, 'لم يسلّموا'],
+          [s.unknownSubmissionCount ?? 0, 'غير محسوم'], [`${fmt(s.submissionRate ?? 0)}%`, 'نسبة التسليم'], [s.graded ?? 0, 'درجات مرصودة'],
           [Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'], [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
         ]
       : [
@@ -1443,7 +1977,7 @@
           [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
         ];
 
-    const studentRows = performanceRows().map((row, i) => {
+    const studentRows = viewRows.map((row, i) => {
       const st = row.student;
       const qs = studentQuestionStats(st);
       const achieved = resolvedAchievedGrade(st);
@@ -1464,17 +1998,17 @@
       <table><thead><tr><th>#</th><th>السؤال</th><th>الدرجة</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>التصنيف</th><th>أكثر خطأ شيوعًا</th></tr></thead><tbody>
         ${qa.questions.map(q => `<tr><td>${q.number}</td><td>${esc(q.text)}${q.correctText ? `<div class="small muted">الصحيح: ${esc(q.correctText)}</div>` : ''}</td><td>${Number.isFinite(q.maxScore) ? fmt(q.maxScore,4) : '—'}</td><td>${q.correct}</td><td>${q.incorrect}</td><td>${q.unanswered}</td><td>${fmt(q.correctRate)}%</td><td>${esc(q.difficulty)}</td><td>${q.mostCommonWrong ? `${esc(q.mostCommonWrong.text)} (${q.mostCommonWrong.count})` : '—'}</td></tr>`).join('')}
       </tbody></table>
-    </div>` : outside ? `<div class="section"><div class="card"><b>ملاحظة</b><span>هذا الواجب خارج النظام، لذلك لا تتوفر بيانات موثوقة لتحليل الأسئلة أو حالة التسليم داخل مدرستي.</span></div></div>` : '';
+    </div>` : outside ? `<div class="section"><div class="card"><b>ملاحظة</b><span>هذا الواجب خارج النظام؛ لا تتوفر بنية أسئلة لتحليل الإجابات. حالة التسليم تُستنتج من الدرجة وملاحظة المعلم، مع إبقاء أي حالة غير محسومة منفصلة.</span></div></div>` : '';
 
     const discrepancyNote = s.discrepancyCount
       ? `<div class="section"><div class="card"><b>تنبيه تعارض بيانات</b><span>اكتشف النظام ${s.discrepancyCount} حالة اختلفت فيها درجة صفحة الرصد عن صفحة نتيجة الطالب؛ تم اعتماد صفحة النتيجة في هذا التقرير.</span></div></div>`
       : '';
 
-    return `${printHeaderHtml('تقرير الواجب')}
+    return `${printHeaderHtml('تقرير الواجب', { rows: viewRows })}
       <div class="section"><div class="section-title"><h2>الملخص التنفيذي</h2></div><div class="cards">${cards.map(([v,l]) => `<div class="card"><b>${v}</b><span>${esc(l)}</span></div>`).join('')}</div></div>
       ${discrepancyNote}
-      <div class="section"><div class="section-title"><h2>توزيع مستويات الطلاب</h2><span class="muted">ضعيف = 50% فأقل لمن لديه درجة</span></div><div class="levels">${printLevelGrid()}</div></div>
-      <div class="section"><div class="section-title"><h2>تقرير الطلاب</h2></div><table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${!outside ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead><tbody>${studentRows}</tbody></table></div>
+      <div class="section"><div class="section-title"><h2>توزيع مستويات الطلاب</h2><span class="muted">${outside ? 'لم يسلّم مستقل عن سلّم وأخذ صفرًا' : 'ضعيف = 50% فأقل لمن لديه درجة'}</span></div><div class="levels">${printLevelGrid(viewRows)}</div></div>
+      <div class="section"><div class="section-title"><h2>تقرير الطلاب</h2><span class="muted">${esc(studentFilterContextLabel())} · حسب الفرز الحالي</span></div><table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${!outside ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead><tbody>${studentRows}</tbody></table></div>
       ${questionReport}
       <div class="footer"><span>تم إنشاء التقرير بواسطة Madrasati Assignment Intelligence v${VERSION}</span><span>Mohammed Almalki (M0HM3D85)</span></div>`;
   };
@@ -1498,7 +2032,7 @@
   // -----------------------------
   // Export
   // -----------------------------
-  const exportRowsEnhanced = () => performanceRows().map(row => {
+  const exportRowsEnhanced = () => studentViewRows().map(row => {
     const s = row.student;
     const qs = studentQuestionStats(s);
     return {
@@ -1554,7 +2088,7 @@
     const wb = XLSX.utils.book_new();
     const studentsWs = XLSX.utils.json_to_sheet(data);
     XLSX.utils.book_append_sheet(wb, studentsWs, 'Students');
-    const qa = getQuestionAnalytics();
+    const qa = getFilteredQuestionAnalytics(studentViewRows());
     if (qa?.questions?.length) {
       const questionData = qa.questions.map(q => ({
         '#': q.number,
@@ -1574,6 +2108,12 @@
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(questionData), 'Questions');
     }
+    const filterSheet = XLSX.utils.json_to_sheet([{
+      'السياق الحالي': studentFilterContextLabel(),
+      'عدد الطلاب المعروضين': studentViewRows().length,
+      'إجمالي طلاب الواجب': performanceRows().length
+    }]);
+    XLSX.utils.book_append_sheet(wb, filterSheet, 'Filters');
     XLSX.writeFile(wb, `madrasati-assignment-analysis-${dateStamp()}.xlsx`);
   }
 
@@ -1590,6 +2130,15 @@
     setStatus('جاري جمع بيانات الواجب…', true);
     try {
       await base.refreshAll(forceRegistry);
+      try {
+        const classRepair = await repairStudentClassesEnhanced();
+        if (classRepair.changed) console.info(`[MAI v${VERSION}] Corrected student classes`, classRepair);
+      } catch (e) {
+        console.warn(`[MAI v${VERSION}] Student class repair skipped:`, e);
+      }
+      if (studentViewState.className !== 'all' && !availableStudentClasses().some(c => norm(c) === norm(studentViewState.className))) {
+        studentViewState.className = 'all';
+      }
       await resolveAssignmentNameEnhanced({ allowFetch: true });
       state.enhancedQuestionAnalytics = null;
       state.questionAnalytics = null;
@@ -1611,7 +2160,7 @@
         try {
           await runDeepQuestionAnalysisEnhanced({ silent: true });
         } catch (e) {
-          console.warn('[MAI v1.4.2] Question analysis skipped:', e);
+          console.warn('[MAI v1.4.6] Question analysis skipped:', e);
         }
       }
 
@@ -1641,6 +2190,10 @@
       summaryObserverTimer = setTimeout(async () => {
         if (enhancedRefreshRunning || !state.gradeData) return;
         try {
+          try { await repairStudentClassesEnhanced(); } catch (e) { console.warn(`[MAI v${VERSION}] Student class repair after base update skipped:`, e); }
+          if (studentViewState.className !== 'all' && !availableStudentClasses().some(c => norm(c) === norm(studentViewState.className))) {
+            studentViewState.className = 'all';
+          }
           state.enhancedQuestionAnalytics = null;
           state.questionAnalytics = null;
           const gate = gradeReportGate(document);
@@ -1650,11 +2203,11 @@
             return;
           }
           if (isOnlineQuestions() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
-            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.2] Post-base refresh analysis skipped:', e); }
+            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.6] Post-base refresh analysis skipped:', e); }
           }
           renderInlineAnalysis();
         } catch (e) {
-          console.warn('[MAI v1.4.2] UI sync after base update failed:', e);
+          console.warn('[MAI v1.4.6] UI sync after base update failed:', e);
         }
       }, 650);
     });
@@ -1682,13 +2235,15 @@
       .${APP}-level-pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}
       .${APP}-level-excellent{background:#dcfce7!important;color:#166534}.${APP}-level-very-good{background:#dbeafe!important;color:#1d4ed8}.${APP}-level-good{background:#e0e7ff!important;color:#4338ca}.${APP}-level-acceptable{background:#fef3c7!important;color:#92400e}.${APP}-level-weak{background:#fee2e2!important;color:#991b1b}.${APP}-level-not-solved{background:#f3f4f6!important;color:#374151}.${APP}-level-pending,.${APP}-level-unverified{background:#f3e8ff!important;color:#6b21a8}
       .${APP}-analysis-note{padding:12px;border-radius:11px;background:#eff6ff;color:#1e40af;font-size:11px;margin-top:10px}.${APP}-analysis-note-muted{background:#f3f4f6;color:#4b5563}.${APP}-analysis-warning{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa}.${APP}-grade-warning{color:#b45309;margin-top:3px}
+      .${APP}-student-tools{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding:10px;margin:0 0 10px;border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc}
+      .${APP}-student-tools label{display:flex;flex-direction:column;gap:4px;min-width:145px;font-size:10px;font-weight:800;color:#374151}.${APP}-student-tools select{height:34px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#111827;padding:0 9px;font-size:11px;min-width:145px}.${APP}-student-reset{height:34px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#374151;padding:0 12px;font-size:10px;font-weight:800;cursor:pointer}.${APP}-student-reset:hover{background:#f3f4f6}.${APP}-student-count{margin-inline-start:auto;align-self:center;padding:6px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:10px;font-weight:800;white-space:nowrap}
       .${APP}-details{margin-top:10px}.${APP}-details summary{cursor:pointer;font-weight:800;font-size:12px;margin-bottom:8px}
       .${APP}-analysis-table td{line-height:1.6}.${APP}-difficulty{display:inline-block;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:800}.${APP}-difficulty.hard{background:#fee2e2;color:#991b1b}.${APP}-difficulty.medium{background:#fef3c7;color:#92400e}.${APP}-difficulty.easy{background:#dcfce7;color:#166534}
       .${APP}-btn[data-mode-disabled="1"]{opacity:.45;cursor:not-allowed!important;background:#f3f4f6!important;color:#6b7280!important}.${APP}-btn[data-running="1"]{opacity:.65;cursor:wait!important;pointer-events:none}
       .${APP}-collapse-btn{border:1px solid #d1d5db;background:#fff;border-radius:9px;padding:6px 10px;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}.${APP}-head-tools{display:flex;align-items:center;gap:8px}
       #${APP}-panel.${APP}-collapsed>.${APP}-toolbar,#${APP}-panel.${APP}-collapsed>#${APP}-summary,#${APP}-panel.${APP}-collapsed>#${APP}-analysis-inline,#${APP}-panel.${APP}-collapsed>.${APP}-rights{display:none!important}
       @media(max-width:1100px){.${APP}-level-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-      @media(max-width:650px){.${APP}-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.${APP}-overview-metrics,.${APP}-question-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:650px){.${APP}-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.${APP}-overview-metrics,.${APP}-question-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.${APP}-student-tools label,.${APP}-student-tools select{min-width:100%;width:100%}.${APP}-student-tools label{flex:1 1 100%}.${APP}-student-count{margin-inline-start:0}}
     `;
     document.head.appendChild(style);
   };
@@ -1827,7 +2382,7 @@
         else if (action === 'excel') exportExcelEnhanced();
         else throw new Error(`إجراء غير معروف: ${action}`);
       } catch (e) {
-        console.error('[MAI v1.4.2] Action failed:', action, e);
+        console.error('[MAI v1.4.6] Action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         btn.dataset.running = '0';
@@ -1853,6 +2408,7 @@
 
   async function bootstrapGrade() {
     addEnhancedStyles();
+    installStudentViewControls();
 
     // انتظر حتى تنتهي النواة من حقن واجهتها.
     for (let i = 0; i < 40 && !document.getElementById(`${APP}-panel`); i++) await sleep(100);
@@ -2202,7 +2758,7 @@
       <div class="${APP}-idx-table-wrap">
         <table class="${APP}-idx-table">
           <thead><tr>
-            <th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة / الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>الرصد</th><th>نسبة الحل</th><th>المتوسط</th><th>لم يحل</th><th>روابط</th>
+            <th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة / الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>الرصد</th><th>نسبة الحل / التسليم</th><th>المتوسط</th><th>لم يحل / لم يسلّم</th><th>روابط</th>
           </tr></thead>
           <tbody>
             ${(indexState.assignments || []).map(row => {
@@ -2227,9 +2783,9 @@
                 <td>${Number.isFinite(row.grade) ? fmt(row.grade, 4) : '—'}</td>
                 <td><span class="${APP}-idx-status ${row.active === true ? 'on' : row.active === false ? 'off' : ''}">${esc(indexStatusLabel(row))}</span></td>
                 <td>${pubCell}</td>
-                <td>${reportState.status === 'receiving' ? '<b>قيد الاستقبال</b>' : deepAvailable ? (deep.submissionVerifiable ? `${fmt(deep.submissionRate)}%` : 'غير متاح') : '—'}</td>
+                <td>${reportState.status === 'receiving' ? '<b>قيد الاستقبال</b>' : deepAvailable && deep.submissionAvailable ? `${fmt(deep.submissionRate)}%${deep.submissionMethod === 'grade_feedback_inference' ? `<div class="${APP}-idx-tiny">مستنتجة من الرصد والملاحظات${deep.submissionUnknown ? ` · ${deep.submissionUnknown} غير محسوم` : ''}</div>` : ''}` : 'غير متاح'}</td>
                 <td>${deepAvailable && Number.isFinite(deep.averagePercent) ? `${fmt(deep.averagePercent)}%` : '—'}${deepAvailable && deep?.gradeDiscrepancies ? `<div class="${APP}-idx-tiny error">${deep.gradeDiscrepancies} تعارض درجة</div>` : ''}</td>
-                <td>${deepAvailable ? (deep.submissionVerifiable ? deep.notSubmitted : '—') : '—'}</td>
+                <td>${deepAvailable && deep.submissionAvailable ? `${deep.notSubmitted}${deep.submissionUnknown ? `<div class="${APP}-idx-tiny">${deep.submissionUnknown} غير محسوم</div>` : ''}` : '—'}</td>
                 <td class="${APP}-idx-links">
                   ${row.viewUrl ? `<a href="${esc(row.viewUrl)}" target="_blank" rel="noopener">استعراض</a>` : ''}
                   ${row.publishedUrl ? `<a href="${esc(row.publishedUrl)}" target="_blank" rel="noopener">المرسلة</a>` : ''}
@@ -2357,7 +2913,7 @@
           exportIndexExcel();
         }
       } catch (e) {
-        console.error('[MAI v1.4.2] Index action failed:', action, e);
+        console.error('[MAI v1.4.6] Index action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         setIndexBusy(false);
@@ -2548,17 +3104,6 @@
     return out.assignmentId || out.publishedAssignmentId ? out : null;
   };
 
-  const findIndexStudentBlock = (input) => {
-    let node = input;
-    let fallback = input?.parentElement || null;
-    for (let i = 0; i < 12 && node; i++, node = node.parentElement) {
-      const text = clean(node.innerText || '');
-      if (/الفصل\s+المدرسي\s*:/i.test(text) && text.length < 3500) return node;
-      if (node.matches?.('.card,tr,.row,.list-group-item')) fallback = node;
-    }
-    return fallback;
-  };
-
   const parseIndexGradeStudentsHtml = (html) => {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const groups = new Map();
@@ -2574,9 +3119,8 @@
     for (const [index, fields] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
       const studentId = clean(fields.StudentId);
       if (!studentId) continue;
-      const input = doc.querySelector(`[name="List[${index}].StudentId"]`);
-      const block = input ? findIndexStudentBlock(input) : null;
-      const blockText = clean(block?.innerText || '');
+      const block = findGradeStudentVisualBlockEnhanced(doc, index, studentId);
+      const blockText = clean(block?.innerText || block?.textContent || '');
       const className = blockText.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة|\s+الإجابة|\s+ملاحظات|$)/i)?.[1]?.trim() || '';
       const resultLink = block
         ? [...block.querySelectorAll('a[href]')].find(a => /StudentAssignmentResult/i.test(a.getAttribute('href') || ''))
@@ -2591,6 +3135,7 @@
         maxGrade: num(fields.TotalGrade),
         currentGrade: num(fields.Grade),
         autoGrade: num(fields.AutoGrade),
+        feedback: clean(fields.feedBack),
         resultUrl: resultLink ? safeAbsoluteUrl(resultLink.getAttribute('href')) : '',
         resolvedGrade: num(fields.Grade),
         resolvedMaxGrade: num(fields.TotalGrade),
@@ -2661,7 +3206,7 @@
             row.gradeDiscrepancy = Number.isFinite(pageGrade) && !nearlyEqual(pageGrade, summary.resultScore);
           }
         } catch (e) {
-          console.warn('[MAI v1.4.2] Fractional result verification skipped:', e);
+          console.warn('[MAI v1.4.6] Fractional result verification skipped:', e);
         }
       }));
     }
@@ -2687,7 +3232,17 @@
     await verifyFractionalIndexResults(rows, params);
 
     const outside = rows.length ? rows.every(row => row.solvingType === '3') : String(params.solvingType) === '3';
-    const submitted = outside ? [] : rows.filter(row => row.hasAnswer);
+    const outsideStates = outside ? rows.map(row => ({ row, state: classifyOutsideSubmission(row) })) : [];
+    const submitted = outside
+      ? outsideStates.filter(x => x.state.key === 'submitted').map(x => x.row)
+      : rows.filter(row => row.hasAnswer);
+    const notSubmitted = outside
+      ? outsideStates.filter(x => x.state.key === 'not_submitted').length
+      : Math.max(0, rows.length - submitted.length);
+    const submissionUnknown = outside
+      ? outsideStates.filter(x => x.state.key === 'unknown').length
+      : 0;
+    const submissionAvailable = outside ? (submitted.length + notSubmitted > 0) : true;
     const scoredPercents = rows.map(row => {
       const achieved = Number.isFinite(row.resolvedGrade) ? row.resolvedGrade : row.currentGrade;
       const max = Number.isFinite(row.resolvedMaxGrade) ? row.resolvedMaxGrade : row.maxGrade;
@@ -2698,10 +3253,14 @@
     return {
       gradeUrl,
       studentRecords: rows.length,
-      submissionVerifiable: !outside,
-      submitted: outside ? 0 : submitted.length,
-      notSubmitted: outside ? 0 : Math.max(0, rows.length - submitted.length),
-      submissionRate: outside ? null : pct(submitted.length, rows.length),
+      outsideSystem: outside,
+      submissionAvailable,
+      submissionVerifiable: outside ? submissionUnknown === 0 : true,
+      submissionMethod: outside ? 'grade_feedback_inference' : 'hasAnswer',
+      submitted: submitted.length,
+      notSubmitted,
+      submissionUnknown,
+      submissionRate: submissionAvailable ? pct(submitted.length, rows.length) : null,
       scoreCount: scoredPercents.length,
       scorePercentSum: scoredPercents.reduce((a, b) => a + b, 0),
       averagePercent: scoredPercents.length ? scoredPercents.reduce((a, b) => a + b, 0) / scoredPercents.length : null,
@@ -2729,9 +3288,12 @@
         publicationsAnalyzed: 0,
         publicationErrors: pages.filter(p => p.error).length,
         studentRecords: null,
+        submissionAvailable: null,
         submissionVerifiable: null,
+        submissionMethod: '',
         submitted: null,
         notSubmitted: null,
+        submissionUnknown: null,
         submissionRate: null,
         scoreCount: 0,
         scorePercentSum: 0,
@@ -2752,9 +3314,12 @@
         publicationsAnalyzed: 0,
         publicationErrors: pages.filter(p => p.error).length,
         studentRecords: null,
+        submissionAvailable: null,
         submissionVerifiable: null,
+        submissionMethod: '',
         submitted: null,
         notSubmitted: null,
+        submissionUnknown: null,
         submissionRate: null,
         scoreCount: 0,
         scorePercentSum: 0,
@@ -2766,10 +3331,12 @@
         pages
       };
     }
+    const submissionAvailable = good.every(p => p.submissionAvailable !== false) && good.some(p => p.submissionAvailable === true);
     const submissionVerifiable = good.every(p => p.submissionVerifiable);
     const studentRecords = good.reduce((sum, p) => sum + (p.studentRecords || 0), 0);
     const submitted = good.reduce((sum, p) => sum + (p.submitted || 0), 0);
     const notSubmitted = good.reduce((sum, p) => sum + (p.notSubmitted || 0), 0);
+    const submissionUnknown = good.reduce((sum, p) => sum + (p.submissionUnknown || 0), 0);
     const scoreCount = good.reduce((sum, p) => sum + (p.scoreCount || 0), 0);
     const scorePercentSum = good.reduce((sum, p) => sum + (p.scorePercentSum || 0), 0);
     const highs = good.map(p => p.highestPercent).filter(Number.isFinite);
@@ -2781,10 +3348,13 @@
       publicationsAnalyzed: good.length,
       publicationErrors: pages.filter(p => p.error).length,
       studentRecords,
+      submissionAvailable,
       submissionVerifiable,
+      submissionMethod: good.some(p => p.submissionMethod === 'grade_feedback_inference') ? 'grade_feedback_inference' : 'hasAnswer',
       submitted,
       notSubmitted,
-      submissionRate: submissionVerifiable ? pct(submitted, studentRecords) : null,
+      submissionUnknown,
+      submissionRate: submissionAvailable ? pct(submitted, studentRecords) : null,
       scoreCount,
       scorePercentSum,
       averagePercent: scoreCount ? scorePercentSum / scoreCount : null,
@@ -2829,9 +3399,12 @@
           publicationsAnalyzed: 0,
           publicationErrors: 0,
           studentRecords: null,
+          submissionAvailable: null,
           submissionVerifiable: null,
+          submissionMethod: '',
           submitted: null,
           notSubmitted: null,
+          submissionUnknown: null,
           submissionRate: null,
           scoreCount: 0,
           scorePercentSum: 0,
@@ -2867,7 +3440,7 @@
       byGuid[assignment.assignmentGuid] = aggregate;
     }
 
-    const cache = { pageUrl: indexScopeUrl(), savedAt: new Date().toISOString(), schemaVersion: 5, byGuid };
+    const cache = { pageUrl: indexScopeUrl(), savedAt: new Date().toISOString(), schemaVersion: 7, byGuid };
     indexState.deep = cache;
     saveIndexDeepCache(cache);
     renderIndexPanel();
@@ -2896,9 +3469,11 @@
       'روابط الرصد المكتشفة': pub ? ((pub.gradeLinks?.length || 0) || 'لا يوجد') : '',
       'حالة التقرير': reportState.label,
       'سجلات الطلاب': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep?.studentRecords ?? ''),
-      'نسبة الحل': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionVerifiable ? deep.submissionRate : 'غير متاح') : ''),
+      'نسبة الحل / التسليم': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionAvailable ? deep.submissionRate : 'غير متاح') : ''),
       'متوسط الأداء': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep && Number.isFinite(deep.averagePercent) ? deep.averagePercent : ''),
-      'لم يحل': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionVerifiable ? deep.notSubmitted : '') : ''),
+      'لم يحل / لم يسلّم': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep ? (deep.submissionAvailable ? deep.notSubmitted : '') : ''),
+      'غير محسوم': !reportState.eligible || deep?.analysisAvailable === false ? '' : (deep?.submissionUnknown ?? ''),
+      'طريقة احتساب التسليم': deep?.submissionMethod === 'grade_feedback_inference' ? 'الدرجة + ملاحظة المعلم' : deep?.submissionMethod === 'hasAnswer' ? 'حالة الحل في مدرستي' : '',
       'تعارضات الدرجة': deep?.gradeDiscrepancies ?? '',
       'الفصول المنشورة': deep?.classes?.join('، ') || '',
       'رابط الاستعراض': row.viewUrl,
@@ -2960,7 +3535,7 @@
       const deep = deepInfoFor(row);
       const reportState = reportEligibilityFor(row);
       const deepAvailable = reportState.eligible && deep && deep.analysisAvailable !== false;
-      return `<tr><td>${row.index}</td><td><b>${esc(row.title)}</b></td><td>${esc(row.course || '—')}</td><td>${esc(row.unit || '—')}</td><td>${esc(row.topic || '—')}</td><td>${esc(row.source || '—')}</td><td>${Number.isFinite(row.grade) ? fmt(row.grade,4) : '—'}</td><td>${esc(indexStatusLabel(row))}</td><td>${pub ? (pub.gradeLinks?.length || 0) : '—'}</td><td>${esc(reportState.label)}</td><td>${deepAvailable ? (deep.submissionVerifiable ? `${fmt(deep.submissionRate)}%` : 'غير متاح') : '—'}</td><td>${deepAvailable && Number.isFinite(deep.averagePercent) ? `${fmt(deep.averagePercent)}%` : '—'}</td><td>${deepAvailable ? (deep.submissionVerifiable ? deep.notSubmitted : '—') : '—'}</td></tr>`;
+      return `<tr><td>${row.index}</td><td><b>${esc(row.title)}</b></td><td>${esc(row.course || '—')}</td><td>${esc(row.unit || '—')}</td><td>${esc(row.topic || '—')}</td><td>${esc(row.source || '—')}</td><td>${Number.isFinite(row.grade) ? fmt(row.grade,4) : '—'}</td><td>${esc(indexStatusLabel(row))}</td><td>${pub ? (pub.gradeLinks?.length || 0) : '—'}</td><td>${esc(reportState.label)}</td><td>${deepAvailable && deep.submissionAvailable ? `${fmt(deep.submissionRate)}%${deep.submissionMethod === 'grade_feedback_inference' ? `<div class="small muted">من الرصد والملاحظات${deep.submissionUnknown ? ` · ${deep.submissionUnknown} غير محسوم` : ''}</div>` : ''}` : '—'}</td><td>${deepAvailable && Number.isFinite(deep.averagePercent) ? `${fmt(deep.averagePercent)}%` : '—'}</td><td>${deepAvailable && deep.submissionAvailable ? deep.notSubmitted : '—'}</td></tr>`;
     }).join('');
 
     const body = `
@@ -2977,7 +3552,7 @@
         <div class="card"><b>${s.deepScanned && Number.isFinite(s.deepAveragePercent) ? `${fmt(s.deepAveragePercent)}%` : '—'}</b><span>متوسط الأداء</span></div>
       </div>
       <div class="src"><b>المصادر:</b> ${sourceHtml}</div>
-      <table><thead><tr><th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة</th><th>الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>روابط الرصد</th><th>حالة التقرير</th><th>نسبة الحل</th><th>المتوسط</th><th>لم يحل</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة</th><th>الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>روابط الرصد</th><th>حالة التقرير</th><th>نسبة الحل / التسليم</th><th>المتوسط</th><th>لم يحل / لم يسلّم</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="footer"><span>Madrasati Assignment Intelligence v${VERSION}</span><span>Mohammed Almalki (M0HM3D85)</span></div>`;
 
     w.document.open();
@@ -3043,6 +3618,8 @@
     getGradePublicationTiming,
     gradeReportGate,
     render: renderInlineAnalysis,
+    repairStudentClasses: repairStudentClassesEnhanced,
+    getFilteredStudents: () => studentViewRows().map(row => row.student),
     indexState,
     collectIndexAssignments,
     collectAllIndexAssignments,
