@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 
+# one-time optimizer trigger
 JS = Path('scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js')
 CHANGELOG = Path('scripts/student-rased-madrasati-noor/CHANGELOG.md')
 
