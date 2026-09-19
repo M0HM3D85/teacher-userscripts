@@ -344,3 +344,4 @@ for item in checks:
     assert item in text, item
 
 print('Noor V2 state machine patch applied and syntax checked')
+# trigger workflow after workflow file exists
