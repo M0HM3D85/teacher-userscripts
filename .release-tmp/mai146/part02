@@ -1,0 +1,296 @@
+otSubmittedFeedback(text)) return false;
+    return /(?:تم\s*التسليم|تم\s*تسليم|اكملت\s*التسليم|سلم\s*الواجب|submitted|turned\s*in|completed)/i.test(text);
+  };
+
+  const outsideDirectGrade = (student) => {
+    const candidates = [
+      student?.currentGrade,
+      student?.gradeFieldValue,
+      student?.resolvedGrade,
+      student?.achievedGrade
+    ];
+    for (const value of candidates) {
+      const n = num(value);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+
+  const classifyOutsideSubmission = (student) => {
+    const grade = outsideDirectGrade(student);
+    const feedback = clean(student?.feedback ?? student?.rawFields?.feedBack ?? '');
+
+    // الدرجة الموجبة دليل أقوى على إنجاز المهمة حتى لو كانت الملاحظة قديمة أو متعارضة.
+    if (Number.isFinite(grade) && grade > 0) {
+      return { key: 'submitted', label: 'سلّم', reason: 'positive_grade', grade, feedback };
+    }
+
+    // الصفر لا يعني عدم التسليم؛ نستخدم الملاحظة التي حُسمت عند الاستيراد.
+    if (outsideNotSubmittedFeedback(feedback)) {
+      return { key: 'not_submitted', label: 'لم يسلّم', reason: 'feedback_not_submitted', grade, feedback };
+    }
+
+    if (Number.isFinite(grade) && nearlyEqual(grade, 0)) {
+      if (feedback) {
+        return { key: 'submitted', label: 'سلّم وأخذ صفر', reason: 'zero_with_feedback', grade, feedback };
+      }
+      return { key: 'unknown', label: 'غير محسوم', reason: 'zero_without_feedback', grade, feedback };
+    }
+
+    if (outsideSubmittedFeedback(feedback)) {
+      return { key: 'submitted', label: 'سلّم', reason: 'feedback_submitted', grade, feedback };
+    }
+
+    return { key: 'unknown', label: 'غير محسوم', reason: 'insufficient_evidence', grade, feedback };
+  };
+
+  const resolvedAchievedGrade = (student) => {
+    const resultGrade = num(student?.resultGrade);
+    if (Number.isFinite(resultGrade)) return resultGrade;
+    return num(student?.achievedGrade);
+  };
+
+  const resolvedMaxGrade = (student) => {
+    const resultMax = num(student?.resultMaxGrade);
+    if (Number.isFinite(resultMax) && resultMax > 0) return resultMax;
+    return num(student?.maxGrade);
+  };
+
+  const studentPercent = (student) => {
+    const achieved = resolvedAchievedGrade(student);
+    const total = resolvedMaxGrade(student);
+    if (!Number.isFinite(achieved) || !Number.isFinite(total) || total <= 0) return null;
+    return Number(((achieved / total) * 100).toFixed(2));
+  };
+
+  const computeEnhancedSummary = (sourceRows = null) => {
+    const students = Array.isArray(sourceRows)
+      ? sourceRows.map(row => row?.student || row).filter(Boolean)
+      : (state.gradeData?.students || []);
+    const outside = isOutsideSystem();
+    const total = students.length;
+
+    const outsideStates = outside
+      ? students.map(s => ({ student: s, state: classifyOutsideSubmission(s) }))
+      : [];
+
+    const submitted = outside
+      ? outsideStates.filter(x => x.state.key === 'submitted').map(x => x.student)
+      : students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+
+    const notSubmittedCount = outside
+      ? outsideStates.filter(x => x.state.key === 'not_submitted').length
+      : Math.max(0, total - submitted.length);
+
+    const unknownSubmissionCount = outside
+      ? outsideStates.filter(x => x.state.key === 'unknown').length
+      : 0;
+
+    // نبقي متوسط الأداء متوافقًا مع الرصد: كل درجة مرصودة تدخل المتوسط،
+    // بينما تصنيف «لم يسلّم» يظهر مستقلًا ولا يُخلط مع «سلّم وأخذ صفر».
+    const scored = students
+      .map(s => ({ s, achieved: resolvedAchievedGrade(s), max: resolvedMaxGrade(s) }))
+      .filter(x => Number.isFinite(x.achieved) && Number.isFinite(x.max) && x.max > 0);
+
+    const percents = scored.map(x => (x.achieved / x.max) * 100).filter(Number.isFinite);
+    const averagePercent = percents.length ? percents.reduce((a,b) => a+b, 0) / percents.length : null;
+    const discrepancies = students.filter(s => s.gradeDiscrepancy === true);
+
+    return {
+      total,
+      submittedCount: submitted.length,
+      notSubmittedCount,
+      unknownSubmissionCount,
+      submissionRate: pct(submitted.length, total),
+      submissionAvailable: outside ? (submitted.length + notSubmittedCount > 0) : true,
+      submissionMethod: outside ? 'grade_feedback_inference' : 'hasAnswer',
+      graded: scored.length,
+      gradingRate: pct(scored.length, total),
+      averagePercent: Number.isFinite(averagePercent) ? Number(averagePercent.toFixed(2)) : null,
+      highestPercent: percents.length ? Math.max(...percents) : null,
+      lowestPercent: percents.length ? Math.min(...percents) : null,
+      discrepancyCount: discrepancies.length
+    };
+  };
+
+  const studentLevel = (student, mode = getMode()) => {
+    const outside = mode?.key === 'outside_system';
+
+    if (outside) {
+      const submission = classifyOutsideSubmission(student);
+      if (submission.key === 'not_submitted') {
+        return { key: 'not-solved', label: 'لم يسلّم', rank: 7 };
+      }
+    } else if (student?.submissionState === 'not_submitted') {
+      return { key: 'not-solved', label: 'لم يحل', rank: 7 };
+    }
+
+    const percent = studentPercent(student);
+    if (!Number.isFinite(percent)) {
+      if (outside) return { key: 'unverified', label: 'غير محسوم', rank: 8 };
+      return { key: 'pending', label: 'بانتظار الرصد', rank: 8 };
+    }
+
+    if (percent >= 90) return { key: 'excellent', label: 'ممتاز', rank: 1 };
+    if (percent >= 80) return { key: 'very-good', label: 'جيد جدًا', rank: 2 };
+    if (percent >= 70) return { key: 'good', label: 'جيد', rank: 3 };
+    if (percent > 50) return { key: 'acceptable', label: 'مقبول', rank: 4 };
+    return { key: 'weak', label: 'ضعيف', rank: 5 };
+  };
+
+  const levelOrder = [
+    ['excellent', 'ممتاز'],
+    ['very-good', 'جيد جدًا'],
+    ['good', 'جيد'],
+    ['acceptable', 'مقبول'],
+    ['weak', 'ضعيف'],
+    ['not-solved', 'لم يحل'],
+    ['pending', 'بانتظار الرصد'],
+    ['unverified', 'غير مرصود']
+  ];
+
+  const computeStudentLevels = () => {
+    const students = state.gradeData?.students || [];
+    const mode = getMode();
+    const counts = Object.fromEntries(levelOrder.map(([k]) => [k, 0]));
+    const rows = students.map(s => {
+      const level = studentLevel(s, mode);
+      counts[level.key] = (counts[level.key] || 0) + 1;
+      return { student: s, percent: studentPercent(s), level };
+    });
+    return { counts, rows, total: students.length };
+  };
+
+  const cleanOptionText = (text) => clean(text)
+    .replace(/(?:الإجابة|الاجابة)\s+الصحيحة/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // -----------------------------
+  // Parser v1.2.1: السؤال = أصغر حاوية محلية تحتوي qid واحدًا
+  // ويعتمد StudentAssignmentResult على checked + success/fail + شارة الإجابة الصحيحة.
+  // -----------------------------
+  const findQuestionRootEnhanced = (qid) => {
+    let node = qid?.parentElement || null;
+    while (node) {
+      const qidCount = node.querySelectorAll?.('input.qid')?.length || 0;
+      const answerCount = node.querySelectorAll?.('input[id="qaid"],input.qaid')?.length || 0;
+      if (qidCount === 1 && answerCount > 0) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const findOptionRootEnhanced = (aid, questionRoot) => {
+    let node = aid?.parentElement || null;
+    let best = node;
+    while (node && node !== questionRoot) {
+      const aidCount = node.querySelectorAll?.('input[id="qaid"],input.qaid')?.length || 0;
+      const hasChoice = !!node.querySelector?.('input[type="radio"],input[type="checkbox"]');
+      if (aidCount !== 1) break;
+      if (hasChoice) best = node;
+      node = node.parentElement;
+    }
+    return best;
+  };
+
+  const parseQuestionCardsEnhanced = (doc) => {
+    const qids = [...doc.querySelectorAll('input.qid')];
+
+    return qids.map((qid, index) => {
+      const root = findQuestionRootEnhanced(qid);
+      if (!root) return null;
+
+      const qtype = root.querySelector('input.qidtype');
+      const questionText = clean(
+        root.querySelector('#divQuestion .eldetail')?.innerText ||
+        root.querySelector('.qQuestion')?.innerText ||
+        root.querySelector('#divQuestion')?.innerText ||
+        ''
+      );
+
+      const rootText = clean(root.innerText || '');
+      const maxScore =
+        num(rootText.match(/درجة\s+السؤال\s*[:：]?\s*([\d٠-٩۰-۹.,]+)/i)?.[1]) ??
+        num(rootText.match(/(?:الدرجة|درجة|نقطة|نقاط)\s*[:：]?\s*([\d٠-٩۰-۹.,]+)/i)?.[1]);
+
+      const aids = [...root.querySelectorAll('input[id="qaid"],input.qaid')];
+      const options = aids.map((aid, oi) => {
+        const opt = findOptionRootEnhanced(aid, root) || aid.parentElement;
+        const choiceInput = opt?.querySelector?.('input[type="radio"],input[type="checkbox"]') || null;
+        const cs = opt?.querySelector?.('.cs-input') || opt;
+        const classes = `${opt?.className || ''} ${cs?.className || ''}`.toLowerCase();
+        const rawText = clean(opt?.innerText || cs?.innerText || '');
+        const correctAnswerMarker =
+          /(?:الإجابة|الاجابة)\s+الصحيحة/i.test(rawText) ||
+          !!opt?.querySelector?.('.badge.status-4') ||
+          [...(opt?.querySelectorAll?.('.badge,[class*="status-"]') || [])]
+            .some(el => /(?:الإجابة|الاجابة)\s+الصحيحة/i.test(clean(el.innerText)));
+        const selected = !!choiceInput?.checked;
+        const selectedCorrect = selected && /\bsuccess\b/.test(classes);
+        const selectedWrong = selected && /\bfail\b/.test(classes);
+
+        return {
+          index: oi + 1,
+          answerId: clean(aid?.value || aid?.getAttribute?.('name') || ''),
+          text: cleanOptionText(rawText),
+          selected,
+          selectedCorrect,
+          selectedWrong,
+          correctAnswerMarker,
+          markedCorrect: correctAnswerMarker || selectedCorrect,
+          markedWrong: selectedWrong,
+          choiceType: choiceInput?.type || ''
+        };
+      });
+
+      const selected = options.filter(o => o.selected);
+      const correct = options.filter(o => o.markedCorrect);
+      const answered = selected.length > 0;
+      const typeValue = clean(qtype?.value || qtype?.getAttribute?.('name') || '');
+      const reliableSingleChoice = ['0', '2', 'multiplechoice', 'truefalse'].includes(norm(typeValue));
+
+      let isCorrect = null;
+      if (!answered) {
+        isCorrect = null;
+      } else if (selected.some(o => o.selectedWrong)) {
+        isCorrect = false;
+      } else if (selected.length && selected.every(o => o.selectedCorrect)) {
+        isCorrect = true;
+      } else if (reliableSingleChoice && correct.length) {
+        const identity = o => o.answerId || norm(o.text);
+        const selectedIds = selected.map(identity).filter(Boolean).sort();
+        const correctIds = correct.map(identity).filter(Boolean).sort();
+        isCorrect = selectedIds.length === correctIds.length && JSON.stringify(selectedIds) === JSON.stringify(correctIds);
+      }
+
+      return {
+        number: index + 1,
+        questionId: clean(qid?.value || qid?.getAttribute?.('name') || ''),
+        type: typeValue,
+        text: questionText,
+        maxScore,
+        options,
+        answered,
+        selectedOptions: selected,
+        correctOptions: correct,
+        selectedText: selected.map(o => o.text).filter(Boolean).join('، '),
+        correctText: correct.map(o => o.text).filter(Boolean).join('، '),
+        isCorrect
+      };
+    }).filter(Boolean);
+  };
+
+  const parseResultSummaryEnhanced = (doc) => {
+    const text = clean(doc?.body?.innerText || '');
+    const scoreMatch = text.match(/درجة\s+الطالب\s*[:：]?\s*([\d٠-٩۰-۹.,]+)\s*من\s*([\d٠-٩۰-۹.,]+)/i);
+    return {
+      resultScore: num(scoreMatch?.[1]),
+      resultMaxScore: num(scoreMatch?.[2]),
+      resultCorrectCount: num(text.match(/عدد\s+الإجابات\s+الصحيحة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1]),
+      resultWrongCount: num(text.match(/عدد\s+الإجابات\s+الخاطئة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1]),
+      resultQuestionCount: num(text.match(/إجمالي\s+عدد\s+الأسئلة\s*[:：]?\s*([\d٠-٩۰-۹]+)/i)?.[1])
+    };
+  };
+
+  const parseR
