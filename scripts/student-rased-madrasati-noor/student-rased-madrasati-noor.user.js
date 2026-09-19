@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         راصد الطلاب | مدرستي + نور
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.9.1
-// @description  راصد دقيق لبيانات الطلاب من صفحات الطلاب المطلوبة فقط في مدرستي ونور: استخراج دقيق، مدرسة نور كاملة، نسخ مقارنة ببصمة تحقق، مقارنة شاملة محافظة، سجل زمني، ومركز مراجعة يدوية.
+// @version      2.0.0
+// @description  راصد دقيق لبيانات الطلاب من مدرستي ونور مع دعم واجهتي نور القديمة وV2: استخراج المدرسة كاملة، تدقيق الصفحات، نسخ مقارنة ببصمة تحقق، سجل زمني، ومراجعة يدوية للحالات الملتبسة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -10,6 +10,7 @@
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/SchoolManagmentReports/StudentInfo/ClassStudentInfo/*
 // @match        https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReport.aspx*
+// @match        https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReportV2.aspx*
 // @run-at       document-idle
 // @grant        none
 // @downloadURL https://update.greasyfork.org/scripts/592894/%D8%B1%D8%A7%D8%B5%D8%AF%20%D8%A7%D9%84%D8%B7%D9%84%D8%A7%D8%A8%20%7C%20%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A%20%2B%20%D9%86%D9%88%D8%B1.user.js
@@ -33,11 +34,12 @@
 (() => {
 'use strict';
 
-const VERSION = '1.9.1';
+const VERSION = '2.0.0';
 const APP = 'm0hm3d85-rasid-students';
 const BTN = `${APP}-btn`;
 const PREF = `${APP}-prefs-v5`;
-const NOOR_JOB = `${APP}-noor-job-v3`;
+const NOOR_JOB = `${APP}-noor-job-v4`;
+const NOOR_RESULT = `${APP}-noor-result-v2`;
 const LAUNCH_INTENT = `${APP}-launch-intent-v2`;
 const HISTORY_LIMIT = 18;
 const SNAP = 'm0hm3d85-rasid-snapshot-v6';
@@ -52,6 +54,12 @@ const SNAP_OK = new Set([
 
 const PLATFORM = location.hostname.includes('madrasati.sa') ? 'madrasati' : 'noor';
 const PLATFORM_LABEL = PLATFORM === 'madrasati' ? 'مدرستي' : 'نور';
+const NOOR_VIEW = PLATFORM === 'noor'
+    ? (/\/EduWavek12Portal\/ReportPages\/StudntNamesReportV2\.aspx$/i.test(location.pathname) ? 'v2' : 'legacy')
+    : '';
+const NOOR_VIEW_LABEL = NOOR_VIEW === 'v2'
+    ? 'نور V2'
+    : (NOOR_VIEW === 'legacy' ? 'نور القديم' : '');
 const HISTORY_KEY = `${APP}-timeline-v1-${PLATFORM}`;
 const IDENTITY_LINKS_KEY = `${APP}-identity-links-v1-${PLATFORM}`;
 
@@ -59,7 +67,7 @@ if (window.top !== window.self) return;
 
 const TARGET_PATH_RE = PLATFORM === 'madrasati'
     ? /\/SchoolManagmentReports\/StudentInfo\/ClassStudentInfo\/?/i
-    : /\/EduWavek12Portal\/ReportPages\/StudntNamesReport\.aspx$/i;
+    : /\/EduWavek12Portal\/ReportPages\/StudntNamesReport(?:V2)?\.aspx$/i;
 
 function isTargetPage() {
     return TARGET_PATH_RE.test(location.pathname);
@@ -1027,7 +1035,7 @@ css.textContent = `
     display:flex
 }
 
-#${APP} .box{
+#${APP} .m0-shell{
     width:min(1450px,98vw);
     height:min(94vh,980px);
     background:#fff;
@@ -1037,7 +1045,21 @@ css.textContent = `
     flex-direction:column
 }
 
-#${APP} header{
+#${APP} .m0-shell{
+    color:#111827 !important;
+    isolation:isolate
+}
+
+#${APP} .m0-header,
+#${APP} .m0-tabs,
+#${APP} .m0-main,
+#${APP} .m0-footer{
+    visibility:visible !important;
+    opacity:1 !important;
+    position:relative
+}
+
+#${APP} .m0-header{
     display:flex;
     justify-content:space-between;
     align-items:center;
@@ -1065,7 +1087,7 @@ css.textContent = `
     cursor:pointer
 }
 
-#${APP} nav{
+#${APP} .m0-tabs{
     display:grid;
     grid-template-columns:repeat(4,1fr);
     background:#f8fafc;
@@ -1087,18 +1109,18 @@ css.textContent = `
     border-bottom:3px solid #0f766e
 }
 
-#${APP} main{
+#${APP} .m0-main{
     padding:14px;
     overflow:auto;
     flex:1
 }
 
 #${APP} .pane{
-    display:none
+    display:none !important
 }
 
 #${APP} .pane.on{
-    display:block
+    display:block !important
 }
 
 #${APP} .note{
@@ -1363,7 +1385,7 @@ css.textContent = `
     text-align:right
 }
 
-#${APP} footer{
+#${APP} .m0-footer{
     padding:7px 12px;
     border-top:1px solid #e5e7eb;
     background:#f8fafc;
@@ -1373,7 +1395,7 @@ css.textContent = `
     justify-content:space-between
 }
 
-#${APP} footer a{
+#${APP} .m0-footer a{
     color:#0f766e;
     text-decoration:none;
     font-weight:800
@@ -1472,7 +1494,7 @@ css.textContent = `
 
 @media(max-width:900px){
 
-    #${APP} nav,
+    #${APP} .m0-tabs,
     #${APP} .grid,
     #${APP} .checkwrap,
     #${APP} .sum,
@@ -1480,7 +1502,7 @@ css.textContent = `
         grid-template-columns:1fr
     }
 
-    #${APP} footer{
+    #${APP} .m0-footer{
         display:block
     }
 }
@@ -1615,9 +1637,9 @@ host.id =
 
 host.innerHTML = `
 
-<div class="box">
+<div class="m0-shell">
 
-<header>
+<div class="m0-header">
 
  <div>
 
@@ -1649,9 +1671,9 @@ host.innerHTML = `
 
  </div>
 
-</header>
+</div>
 
-<nav>
+<div class="m0-tabs">
 
  <button
   class="tab on"
@@ -1681,11 +1703,11 @@ host.innerHTML = `
   4 — التصدير
  </button>
 
-</nav>
+</div>
 
-<main>
+<div class="m0-main">
 
-<section
+<div
  class="pane on"
  data-pane="extract"
 >
@@ -1739,9 +1761,9 @@ host.innerHTML = `
 
  <div class="stats topstats"></div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="review"
 >
@@ -1934,9 +1956,9 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="follow"
 >
@@ -2201,9 +2223,9 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-<section
+<div
  class="pane"
  data-pane="export"
 >
@@ -2308,11 +2330,11 @@ host.innerHTML = `
 
  </div>
 
-</section>
+</div>
 
-</main>
+</div>
 
-<footer>
+<div class="m0-footer">
 
  <span>
   تصميم وتطوير:
@@ -2351,7 +2373,7 @@ host.innerHTML = `
 
  </span>
 
-</footer>
+</div>
 
 </div>
 `;
@@ -2729,7 +2751,7 @@ if (
 else {
 
     ui.intro.innerHTML =
-        'في <b>نور</b>: «بدء الاستخراج» يقرأ التقرير الحالي، و«استخراج المدرسة كاملة» يمر تلقائيًا على الصفوف والفصول الفعلية ويثبت فصل كل طالب ثم يتحقق من كل صف بتقرير «الكل». زر راصد في أي صفحة رئيسية ينقلك تلقائيًا إلى هذه الشاشة ويبدأ الاستخراج الشامل.';
+        `في <b>نور</b> — <b>${esc(NOOR_VIEW_LABEL || 'واجهة نور')}</b>: «بدء الاستخراج» يقرأ التقرير الحالي، و«استخراج المدرسة كاملة» يمر على الصفوف والفصول الفعلية ويثبت الصف والفصل من قوائم نور نفسها. يدعم راصد واجهة نور القديمة وواجهة V2 الحديثة بمحرك ReportViewer موحّد.`;
 
     ui.schoolstart.style.display = '';
 }
@@ -3539,7 +3561,8 @@ function afterExtract(
     rows,
     pages = 1,
     scope = null,
-    audit = null
+    audit = null,
+    options = {}
 ) {
 
     state.rows = rows;
@@ -3561,7 +3584,9 @@ function afterExtract(
             ? analyzeAccounts(rows)
             : emptyAccountAnalysis();
 
-    archiveCurrentExtraction();
+    if (options.archive !== false) {
+        archiveCurrentExtraction();
+    }
 
     fillClassFilter();
     renderTop();
@@ -3580,7 +3605,11 @@ function afterExtract(
     tab('review');
 }
 
-function clearAll() {
+function clearAll(options = {}) {
+
+    if (PLATFORM === 'noor' && !options.preserveNoorResult) {
+        clearNoorResult();
+    }
 
     state.rows = [];
     state.filtered = [];
@@ -6049,6 +6078,67 @@ function clearNoorJob() {
     sessionStorage.removeItem(NOOR_JOB);
 }
 
+function saveNoorResult(rows, pages, scope, audit) {
+    const payload = JSON.stringify({
+        version: 2,
+        at: new Date().toISOString(),
+        sourceView: NOOR_VIEW,
+        rows,
+        pages,
+        scope,
+        audit
+    });
+
+    let saved = false;
+
+    // نحفظ نسختين: واحدة خاصة بالتبويب ونسخة احتياطية محلية.
+    // بعض PostBacks في V2 تعيد بناء الصفحة بالكامل، لذلك لا نعتمد
+    // على sessionStorage وحده لإظهار النتيجة النهائية.
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            storage.setItem(NOOR_RESULT, payload);
+            saved = true;
+        }
+        catch {}
+    }
+
+    if (!saved) {
+        console.warn('[راصد/نور] تعذر حفظ النتيجة الاحتياطية.');
+    }
+
+    return saved;
+}
+
+function loadNoorResult() {
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            const raw = storage.getItem(NOOR_RESULT);
+            if (!raw) continue;
+
+            const data = JSON.parse(raw);
+            if (
+                data
+                && Number(data.version || 0) >= 1
+                && Array.isArray(data.rows)
+            ) {
+                return data;
+            }
+        }
+        catch {}
+    }
+
+    return null;
+}
+
+function clearNoorResult() {
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            storage.removeItem(NOOR_RESULT);
+        }
+        catch {}
+    }
+}
+
 function nrSelect(suffix) {
     return document.querySelector(`select[id$="${suffix}"]`);
 }
@@ -6108,9 +6198,10 @@ function nrAllSectionOption() {
 
     if (!select) return null;
 
+    // V2 تستخدم value=-99 أيضًا للحالة «-- لا يوجد --»؛
+    // لذلك لا نعد الخيار «الكل» إلا إذا أكد نصه ذلك.
     const option = [...select.options].find(o =>
-        String(o.value) === '-99'
-        || /^--\s*الكل\s*--$/.test(clean(o.textContent))
+        /^--\s*الكل\s*--$/.test(clean(o.textContent))
         || norm(o.textContent) === norm('الكل')
     );
 
@@ -6210,7 +6301,9 @@ function nrAjaxBusy() {
 
 function nrRoot() {
     return document.querySelector('[id^="VisibleReportContent"]')
-        || document.querySelector('[role="main"][id*="rvStudentDataName"]');
+        || document.querySelector('[role="main"][id*="rvStudentDataName"]')
+        || document.getElementById('ctl00_PlaceHolderMain_rvStudentDataName_fixedTable')
+        || document.querySelector('[id*="rvStudentDataName_fixedTable"]');
 }
 
 function nrCurEl() {
@@ -6223,18 +6316,47 @@ function nrTotEl() {
         || document.querySelector('[id*="rvStudentDataName"][id$="_TotalPages"]');
 }
 
+function nrCurRaw() {
+    const n = Number(clean(nrCurEl()?.value || nrCurEl()?.textContent));
+    return n > 0 ? n : 0;
+}
+
+function nrTotRaw() {
+    const n = Number(clean(nrTotEl()?.textContent || nrTotEl()?.value));
+    return n > 0 ? n : 0;
+}
+
 function nrReady() {
-    return !!(nrRoot() && nrCurEl() && nrTotEl());
+    // في نور V2 يظهر هيكل ReportViewer مباشرة بعد Full PostBack،
+    // لكن CurrentPage يكون فارغًا وTotalPages=0 حتى يكتمل التحميل الداخلي.
+    // لا نعتبر التقرير جاهزًا قبل ظهور أرقام صفحات حقيقية.
+    return !!(
+        nrRoot()
+        && nrCurEl()
+        && nrTotEl()
+        && nrCurRaw() > 0
+        && nrTotRaw() > 0
+    );
 }
 
 function nrCur() {
-    const n = Number(clean(nrCurEl()?.value || nrCurEl()?.textContent));
-    return n > 0 ? n : 1;
+    return nrCurRaw();
 }
 
 function nrTot() {
-    const n = Number(clean(nrTotEl()?.textContent || nrTotEl()?.value));
-    return n > 0 ? n : 1;
+    return nrTotRaw();
+}
+
+function nrSelectPostBackSettled(actionAt, select, expectedValue) {
+    if (!select) return false;
+    if (String(select.value) !== String(expectedValue)) return false;
+    if (nrAjaxBusy()) return false;
+
+    // المسار الطبيعي: نهاية UpdatePanel بعد PostBack القائمة.
+    if (nrEndRequestAt > Number(actionAt || 0)) return true;
+
+    // احتياط إذا لم يكن PageRequestManager مكشوفًا في إحدى الواجهات.
+    return Date.now() - Number(actionAt || 0) >= 900;
 }
 
 function nrWait() {
@@ -6264,7 +6386,7 @@ function nrBtn(kind) {
         ? 'الصفحة الأولى'
         : 'الصفحة التالية';
 
-    return [...document.querySelectorAll('[id*="rvStudentDataName"]')]
+    const direct = [...document.querySelectorAll('[id*="rvStudentDataName"]')]
         .find(e =>
             e.id.includes(p)
             && e.classList.contains('NormalButton')
@@ -6276,6 +6398,30 @@ function nrBtn(kind) {
                 && e.getAttribute('aria-disabled') !== 'true'
                 && !e.disabled
             );
+
+    if (direct) return direct;
+
+    const wanted = kind === 'first'
+        ? [norm('الصفحة الأولى'), norm('الأولى')]
+        : [norm('الصفحة التالية'), norm('التالي')];
+
+    return [...document.querySelectorAll('a,button,input,[role="button"]')]
+        .filter(e =>
+            e.id.includes('rvStudentDataName')
+            || e.closest?.('[id*="rvStudentDataName"]')
+        )
+        .find(e => {
+            const text = norm(
+                e.textContent
+                || e.value
+                || e.title
+                || e.getAttribute('aria-label')
+            );
+            return wanted.includes(text)
+                && e.getAttribute('aria-disabled') !== 'true'
+                && !e.disabled;
+        })
+        || null;
 }
 
 function nrClick(kind) {
@@ -6494,7 +6640,9 @@ async function nrTickReport(job, report, label) {
 
             const rows = nrRows();
 
-            if (!rows.length) return false;
+            // إذا كان التقرير نفسه جاهزًا وجدوله موجودًا، فالصفحة الفارغة
+            // حالة صحيحة وليست سببًا للبقاء في انتظار لا نهائي.
+            if (!rows.length && !nrTable()) return false;
 
             const fp = stableStringify(rows.map(x => ({
                 name: x.name,
@@ -6549,7 +6697,8 @@ function nrStart() {
 
     if (loadNoorJob()?.active) return;
 
-    clearAll();
+    clearNoorResult();
+    clearAll({ preserveNoorResult: true });
 
     const job = {
         active: true,
@@ -6609,6 +6758,8 @@ function nrFinishCurrent(job) {
 
     const audit = {
         complete: !conflicts.length,
+        sourceView: NOOR_VIEW,
+        sourceViewLabel: NOOR_VIEW_LABEL,
         pageCount: job.report.total,
         rawRows: job.report.rows.length,
         finalRows: rows.length,
@@ -6617,6 +6768,7 @@ function nrFinishCurrent(job) {
         warnings
     };
 
+    saveNoorResult(rows, job.report.total, scope, audit);
     clearNoorJob();
     running(false);
     afterExtract(rows, job.report.total, scope, audit);
@@ -6641,6 +6793,8 @@ function nrSchoolStart() {
         return;
     }
 
+    clearNoorResult();
+
     const grades = nrGradeOptions();
 
     if (!grades.length) {
@@ -6649,7 +6803,7 @@ function nrSchoolStart() {
         return;
     }
 
-    clearAll();
+    clearAll({ preserveNoorResult: true });
 
     const studySystem = choice(
         clean(nrStudySystemEl()?.selectedOptions?.[0]?.textContent || '')
@@ -6726,6 +6880,15 @@ function nrPrepareNextGrade(job) {
     job.actionAt = 0;
     job.retries = 0;
     saveNoorJob(job);
+
+    // لا ننتظر دورة setInterval إضافية بعد آخر صف.
+    // ننهي المدرسة فورًا ونثبت النتيجة قبل أي إعادة تحميل محتملة من V2.
+    if (job.gradeIndex >= job.grades.length) {
+        nrSchoolFinish(job);
+        return true;
+    }
+
+    return false;
 }
 
 function nrVerifyGrade(job, allRows) {
@@ -6932,6 +7095,8 @@ function nrSchoolFinish(job) {
 
     const audit = {
         complete,
+        sourceView: NOOR_VIEW,
+        sourceViewLabel: NOOR_VIEW_LABEL,
         pageCount: job.totalReportPages,
         rawRows: job.rows.length,
         finalRows: finalRows.length,
@@ -6943,6 +7108,7 @@ function nrSchoolFinish(job) {
         warnings
     };
 
+    saveNoorResult(finalRows, job.totalReportPages, scope, audit);
     clearNoorJob();
     running(false);
     afterExtract(finalRows, job.totalReportPages, scope, audit);
@@ -6966,8 +7132,22 @@ async function tickNoorSchool(job) {
         return;
     }
 
-    if (nrAjaxBusy() || nrWait()) {
-        status('نور يقوم بتحديث البيانات...');
+    if (nrAjaxBusy()) {
+        status('نور يقوم بتحديث القوائم...');
+        return;
+    }
+
+    // لا نجعل حالة انتظار ReportViewer توقف مراحل اختيار الصف والفصل.
+    // نحتاجها فقط عندما ننتظر/نقرأ تقريرًا فعليًا.
+    const reportPhase = new Set([
+        'waitSectionReport',
+        'collectSection',
+        'waitVerifyReport',
+        'collectVerify'
+    ]).has(job.phase);
+
+    if (reportPhase && nrWait()) {
+        status('نور يقوم بتحميل التقرير...');
         return;
     }
 
@@ -7026,11 +7206,15 @@ async function tickNoorSchool(job) {
             return;
         }
 
-        if (Date.now() - job.actionAt < 650) return;
+        if (!nrSelectPostBackSettled(job.actionAt, gradeEl, targetGrade.value)) {
+            status(`انتظار تحديث فصول ${targetGrade.text}...`);
+            return;
+        }
 
         job.phase = 'discoverSections';
         job.retries = 0;
         saveNoorJob(job);
+        return;
     }
 
     if (job.phase === 'discoverSections') {
@@ -7062,19 +7246,70 @@ async function tickNoorSchool(job) {
         if (job.sectionIndex >= job.sections.length) {
             job.phase = 'prepareVerify';
             saveNoorJob(job);
+            return;
         }
-        else {
-            const section = job.sections[job.sectionIndex];
-            job.currentSection = section;
 
-            if (!nrSetSelectValue(nrSectionEl(), section.value)) {
+        const section = job.sections[job.sectionIndex];
+        job.currentSection = section;
+
+        const sectionEl = nrSectionEl();
+
+        // الواجهة القديمة كانت مستقرة وسريعة في 1.9.1 بتغيير القيمة ثم العرض مباشرة.
+        // V2 وحدها تحتاج PostBack حقيقي للفصل قبل زر «عرض».
+        if (NOOR_VIEW !== 'v2') {
+            if (!nrSetSelectValue(sectionEl, section.value)) {
                 nrFail(job, `تعذر اختيار الفصل ${section.text} في ${targetGrade.text}.`);
                 return;
             }
-
             job.phase = 'showSection';
+            job.actionAt = 0;
+            job.retries = 0;
             saveNoorJob(job);
         }
+        else if (String(sectionEl?.value) === String(section.value)) {
+            job.phase = 'showSection';
+            job.actionAt = 0;
+            job.retries = 0;
+            saveNoorJob(job);
+            return;
+        }
+        else {
+            job.phase = 'waitSectionChoice';
+            job.actionAt = Date.now();
+            job.retries = 0;
+            saveNoorJob(job);
+            status(`${targetGrade.text} — اختيار الفصل ${section.text}...`);
+
+            if (!nrPostBackSelect(sectionEl, section.value)) {
+                nrFail(job, `تعذر اختيار الفصل ${section.text} في ${targetGrade.text}.`);
+            }
+            return;
+        }
+    }
+
+    if (job.phase === 'waitSectionChoice') {
+        const sectionEl = nrSectionEl();
+        const section = job.currentSection;
+
+        if (!nrSelectPostBackSettled(job.actionAt, sectionEl, section?.value)) {
+            if (Date.now() - job.actionAt > 12000) {
+                job.retries++;
+                if (job.retries > 3) {
+                    nrFail(job, `تعذر تثبيت الفصل ${section?.text || '—'} في ${targetGrade.text}.`);
+                    return;
+                }
+                job.actionAt = Date.now();
+                saveNoorJob(job);
+                nrPostBackSelect(sectionEl, section.value);
+            }
+            return;
+        }
+
+        job.phase = 'showSection';
+        job.actionAt = 0;
+        job.retries = 0;
+        saveNoorJob(job);
+        return;
     }
 
     if (job.phase === 'showSection') {
@@ -7158,14 +7393,63 @@ async function tickNoorSchool(job) {
             return;
         }
 
-        if (!nrSetSelectValue(nrSectionEl(), all.value)) {
-            nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+        job.currentSection = all;
+        const sectionEl = nrSectionEl();
+
+        if (NOOR_VIEW !== 'v2') {
+            if (!nrSetSelectValue(sectionEl, all.value)) {
+                nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+                return;
+            }
+            job.phase = 'showVerify';
+            job.actionAt = 0;
+            job.retries = 0;
+            saveNoorJob(job);
+        }
+        else if (String(sectionEl?.value) === String(all.value)) {
+            job.phase = 'showVerify';
+            job.actionAt = 0;
+            job.retries = 0;
+            saveNoorJob(job);
+            return;
+        }
+        else {
+            job.phase = 'waitVerifyChoice';
+            job.actionAt = Date.now();
+            job.retries = 0;
+            saveNoorJob(job);
+            status(`${targetGrade.text} — اختيار «الكل» للتحقق...`);
+
+            if (!nrPostBackSelect(sectionEl, all.value)) {
+                nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+            }
+            return;
+        }
+    }
+
+    if (job.phase === 'waitVerifyChoice') {
+        const sectionEl = nrSectionEl();
+        const all = job.currentSection;
+
+        if (!nrSelectPostBackSettled(job.actionAt, sectionEl, all?.value)) {
+            if (Date.now() - job.actionAt > 12000) {
+                job.retries++;
+                if (job.retries > 3) {
+                    nrFail(job, `تعذر تثبيت «الكل» للتحقق من ${targetGrade.text}.`);
+                    return;
+                }
+                job.actionAt = Date.now();
+                saveNoorJob(job);
+                nrPostBackSelect(sectionEl, all.value);
+            }
             return;
         }
 
-        job.currentSection = all;
         job.phase = 'showVerify';
+        job.actionAt = 0;
+        job.retries = 0;
         saveNoorJob(job);
+        return;
     }
 
     if (job.phase === 'showVerify') {
@@ -8580,7 +8864,7 @@ function findExactTargetNavigation() {
 
     if (PLATFORM === 'noor') {
         return items.find(el =>
-            /StudntNamesReport\.aspx/i.test(routeSignature(el))
+            /StudntNamesReport(?:V2)?\.aspx/i.test(routeSignature(el))
         ) || items.find(el => {
             const text = norm(el.textContent);
             return (
@@ -8742,19 +9026,12 @@ async function continueSiteNavigation(intent = loadLaunchIntent()) {
 }
 
 function launcherAction() {
-    // v1.9.1: الزر موجود فقط في صفحات الطلاب المطلوبة، ولا ينفذ أي تنقل بين صفحات الموقع.
-    if (state.rows.length) {
-        open();
-        return;
-    }
-
+    // زر راصد يفتح الواجهة فقط. بدء الاستخراج قرار صريح من المستخدم
+    // عبر «بدء الاستخراج» أو «استخراج المدرسة كاملة».
     open();
 
-    if (PLATFORM === 'madrasati') {
-        extractMad();
-    }
-    else {
-        nrSchoolStart();
+    if (!state.rows.length) {
+        tab('extract');
     }
 }
 
@@ -8809,7 +9086,7 @@ async function resumeLaunchIntent() {
     }
 }
 
-// v1.9.1: السكربت لا يعمل إلا داخل صفحات الطلاب المطلوبة، لذلك أُلغي مراقب التنقل بين صفحات الموقع.
+// v2.0.0: السكربت لا يعمل إلا داخل صفحات الطلاب المطلوبة (ومنها نور V2)، لذلك لا يراقب بقية صفحات الموقع.
 clearLaunchIntent();
 
 // =========================================================
@@ -9114,10 +9391,42 @@ enable(
     false
 );
 
+let restoredNoorResult = false;
+const pendingNoorJob = PLATFORM === 'noor'
+    ? loadNoorJob()
+    : null;
+
+if (PLATFORM === 'noor' && !pendingNoorJob?.active) {
+    const cachedResult = loadNoorResult();
+
+    if (cachedResult?.rows?.length) {
+        afterExtract(
+            cachedResult.rows,
+            Number(cachedResult.pages) || 1,
+            cachedResult.scope || emptyScope(),
+            cachedResult.audit || null,
+            { archive: false }
+        );
+        restoredNoorResult = true;
+    }
+}
+
 status(
-    PLATFORM === 'madrasati'
-        ? 'جاهز. زر راصد متاح في صفحة بيانات الطلاب فقط ويبدأ الاستخراج مباشرة.'
-        : 'جاهز. زر راصد متاح في تقرير أسماء الطلاب فقط؛ يبدأ استخراج المدرسة كاملة، ويمكن استخدام «بدء الاستخراج» للتقرير الحالي.'
+    pendingNoorJob?.active
+        ? (
+            pendingNoorJob.mode === 'school'
+                ? `استئناف استخراج المدرسة كاملة — الصف ${Number(pendingNoorJob.gradeIndex || 0) + 1}/${pendingNoorJob.grades?.length || 0}.`
+                : 'استئناف استخراج التقرير الحالي...'
+        )
+        : (
+            restoredNoorResult
+                ? `تمت استعادة آخر نتيجة مكتملة — ${state.rows.length} طالب. اضغط راصد لعرضها أو ابدأ استخراجًا جديدًا.`
+                : (
+                    PLATFORM === 'madrasati'
+                        ? 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» عند الحاجة.'
+                        : 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» للتقرير الحالي أو «استخراج المدرسة كاملة».'
+                )
+        )
 );
 
 if (
@@ -9136,7 +9445,7 @@ if (
                     nrEndRequestAt = Date.now();
                     setTimeout(
                         tickNoor,
-                        300
+                        80
                     );
                 }
             );
@@ -9144,6 +9453,8 @@ if (
     catch {}
 
     const j =
+        pendingNoorJob
+        ||
         loadNoorJob();
 
     if (
@@ -9156,12 +9467,18 @@ if (
             true
         );
 
+        status(
+            j.mode === 'school'
+                ? `استئناف استخراج المدرسة كاملة — الصف ${Number(j.gradeIndex || 0) + 1}/${j.grades?.length || 0}.`
+                : 'استئناف استخراج التقرير الحالي...'
+        );
+
         tickNoor();
     }
 
     setInterval(
         tickNoor,
-        900
+        300
     );
 }
 
