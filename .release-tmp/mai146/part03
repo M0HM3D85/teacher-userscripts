@@ -1,0 +1,294 @@
+esultDocumentEnhanced = (doc, meta = {}) => ({
+    ...meta,
+    ...parseResultSummaryEnhanced(doc),
+    questions: parseQuestionCardsEnhanced(doc)
+  });
+
+  const fetchTextDocument = async (url) => {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    return new DOMParser().parseFromString(html, 'text/html');
+  };
+
+  const extractLoadStudentsParamsEnhanced = () => {
+    const fn = globalThis.loadStudents;
+    if (typeof fn !== 'function') return null;
+    const src = String(fn);
+    const get = (key) => {
+      const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return src.match(new RegExp(`${k}\\s*:\\s*['"]([^'"]*)['"]`))?.[1] ??
+        src.match(new RegExp(`${k}\\s*:\\s*([\\d.]+)`))?.[1] ?? '';
+    };
+    return {
+      schoolId: get('schoolId'), subjectId: get('subjectId'), teacherId: get('teacherId'), semesterId: get('semesterId'),
+      assignmentId: get('assignmentId'), publishedAssignmentId: get('publishedAssignmentId'), lectureClassId: get('lectureClassId'),
+      isGradebook: get('isGradebook'), isPublished: get('isPublished'), isCurrentTeacher: get('isCurrentTeacher'), isQuran: get('isQuran'),
+      assigmentStarts: get('assigmentStarts'), grade: get('grade'), solvingType: get('solvingType')
+    };
+  };
+
+  const postFormEnhanced = (url, data) => new Promise((resolve, reject) => {
+    if (globalThis.jQuery?.post) {
+      globalThis.jQuery.post(url, data).done(resolve).fail((xhr, status, err) => reject(new Error(err || status || `HTTP ${xhr?.status || ''}`)));
+      return;
+    }
+    const body = new URLSearchParams();
+    for (const [key, value] of Object.entries(data || {})) {
+      if (Array.isArray(value)) value.forEach(v => body.append(key, v));
+      else body.append(key, value ?? '');
+    }
+    fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body })
+      .then(async r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); const text = await r.text(); try { resolve(JSON.parse(text)); } catch { resolve(text); } })
+      .catch(reject);
+  });
+
+  const responseHtmlEnhanced = (response) => typeof response === 'string' ? response : (response?.html || '');
+
+  // v1.4.6 — ربط الفصل بالطالب عبر checkStudent-<StudentId>.
+  // فحص البنية الفعلية أثبت أن حقول List[index] قد تكون داخل حاوية مشتركة تضم كل الطلاب،
+  // بينما checkbox الخاص بالطالب موجود داخل كتلة مرئية دقيقة لا تضم إلا طالبًا واحدًا.
+  // لذلك نعتمد StudentId نفسه للوصول إلى checkStudent-<StudentId> ثم نصعد حتى أول كتلة
+  // تحتوي «الفصل المدرسي» وبداخلها checkbox واحد فقط. هذا يمنع تكرار أول فصل على الجميع.
+  const findStudentCheckboxEnhanced = (doc, studentId) => {
+    const id = `checkStudent-${clean(studentId)}`;
+    const byId = doc.getElementById(id);
+    if (byId) return byId;
+
+    // احتياط إذا تغير شكل id مع بقاء القيمة.
+    return [...doc.querySelectorAll('input[id^="checkStudent-"]')]
+      .find(el => clean(el.value) === clean(studentId)) || null;
+  };
+
+  const findGradeStudentVisualBlockEnhanced = (doc, index, studentId) => {
+    const checkbox = findStudentCheckboxEnhanced(doc, studentId);
+
+    // المسار الدقيق المؤكد بالفحص: checkbox الطالب -> كتلة الطالب المرئية.
+    if (checkbox) {
+      let node = checkbox;
+      for (let depth = 0; depth < 15 && node; depth++, node = node.parentElement) {
+        const text = clean(node.innerText || node.textContent || '');
+        const checkboxesInside = node.querySelectorAll('input[id^="checkStudent-"]').length;
+        if (checkboxesInside === 1 && /الفصل\s+المدرسي\s*:/i.test(text)) {
+          return node;
+        }
+      }
+    }
+
+    // احتياط لبنى أخرى/قديمة: نعود لحقول List[index] لكن لا نقبل إلا حاوية لطالب واحد.
+    const selectors = [
+      `[name="List[${index}].Grade"]`,
+      `[name="List[${index}].feedBack"]`,
+      `[name="List[${index}].AnswerText"]`,
+      `[name="List[${index}].StudentId"]`
+    ];
+
+    for (const selector of selectors) {
+      const anchor = doc.querySelector(selector);
+      if (!anchor) continue;
+      let node = anchor;
+      for (let depth = 0; depth < 14 && node; depth++, node = node.parentElement) {
+        const text = clean(node.innerText || node.textContent || '');
+        if (!/الفصل\s+المدرسي\s*:/i.test(text)) continue;
+
+        const studentIdFields = node.querySelectorAll('[name^="List["][name$=".StudentId"]').length;
+        const checkboxesInside = node.querySelectorAll('input[id^="checkStudent-"]').length;
+        if (studentIdFields === 1 || checkboxesInside === 1) return node;
+      }
+    }
+
+    return null;
+  };
+
+  const parseGradeStudentClassRowsEnhanced = (html) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const groups = new Map();
+
+    for (const el of doc.querySelectorAll('[name^="List["]')) {
+      const m = el.name?.match(/^List\[(\d+)\]\.(.+)$/);
+      if (!m) continue;
+      const index = Number(m[1]);
+      if (!groups.has(index)) groups.set(index, {});
+      groups.get(index)[m[2]] = el.value;
+    }
+
+    const rows = [];
+    for (const [index, fields] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+      const studentId = clean(fields.StudentId);
+      if (!studentId) continue;
+
+      const block = findGradeStudentVisualBlockEnhanced(doc, index, studentId);
+      const blockText = clean(block?.innerText || block?.textContent || '');
+      const className = blockText.match(
+        /الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+الدرجة\s*:|\s+الإجابة\s*:|\s+ملاحظات|$)/i
+      )?.[1]?.trim() || '';
+
+      rows.push({
+        index,
+        studentId,
+        className,
+        classResolvedBy: block ? 'student-checkbox' : ''
+      });
+    }
+
+    return rows;
+  };
+
+  async function repairStudentClassesEnhanced() {
+    const students = state.gradeData?.students || [];
+    if (!students.length) return { changed: 0, resolved: 0, classes: [] };
+
+    const params = extractLoadStudentsParamsEnhanced();
+    if (!params) return { changed: 0, resolved: 0, classes: [] };
+
+    const classByStudent = new Map();
+    let stagnant = 0;
+    for (let pageNumber = 1; pageNumber <= 100; pageNumber++) {
+      const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+        ...params,
+        pageNumber,
+        pageSize: 200,
+        studentIds: '',
+        status: '',
+        sortBy: ''
+      });
+      const rows = parseGradeStudentClassRowsEnhanced(responseHtmlEnhanced(response));
+      let added = 0;
+      for (const row of rows) {
+        if (!row.studentId || !row.className) continue;
+        if (!classByStudent.has(String(row.studentId))) added++;
+        classByStudent.set(String(row.studentId), row.className);
+      }
+
+      if (!rows.length) break;
+      if (!added) stagnant++; else stagnant = 0;
+      if (stagnant >= 2) break;
+      const totalPages = Number(response?.totalPages);
+      if (Number.isFinite(totalPages) && totalPages > 0 && pageNumber >= totalPages) break;
+      if (rows.length < 200) break;
+    }
+
+    let changed = 0;
+    let resolved = 0;
+    for (const student of students) {
+      const key = String(student.assignmentStudentId || student.studentId || '');
+      const parsedClass = clean(classByStudent.get(key) || '');
+      if (!parsedClass) continue;
+      resolved++;
+      if (norm(student.className || '') !== norm(parsedClass)) changed++;
+      student.className = parsedClass;
+      student.classNameSource = 'grade-row';
+    }
+
+    const classes = [...new Set(students.map(s => clean(s.className)).filter(Boolean))]
+      .sort(compareArabicNames);
+
+    return { changed, resolved, classes };
+  }
+
+  const resolveSingleStudentResultLink = async (student, params) => {
+    const studentId = clean(student?.assignmentStudentId || student?.studentId || '');
+    if (!studentId) return '';
+    const response = await postFormEnhanced('/Teacher/Assignments/GetGradeStudentsList', {
+      ...params, pageNumber: 1, pageSize: 10, studentIds: [studentId], status: '', sortBy: ''
+    });
+    const doc = new DOMParser().parseFromString(responseHtmlEnhanced(response), 'text/html');
+    const link = doc.querySelector('a[href*="StudentAssignmentResult"]');
+    return link ? new URL(link.getAttribute('href'), location.origin).href : '';
+  };
+
+  const resolveAccurateResultLinks = async (students) => {
+    const params = extractLoadStudentsParamsEnhanced();
+    if (!params) return students.filter(s => !!s.resultUrl);
+    const submitted = students.filter(s => s.submissionState === 'submitted' || s.hasAnswer === true);
+    const concurrency = 4;
+    for (let i = 0; i < submitted.length; i += concurrency) {
+      const batch = submitted.slice(i, i + concurrency);
+      const links = await Promise.all(batch.map(async s => {
+        try { return await resolveSingleStudentResultLink(s, params); }
+        catch (e) { console.warn('[MAI v1.4.6] Could not resolve student result link:', e); return ''; }
+      }));
+      batch.forEach((s, j) => {
+        if (links[j]) {
+          s.resultUrl = links[j];
+          s.resultUrlVerified = true;
+        } else {
+          s.resultUrlVerified = false;
+          s.resultUrl = '';
+        }
+      });
+    }
+    return submitted.filter(s => !!s.resultUrl);
+  };
+
+  const fetchResultBatch = async (students, offset, total) => {
+    const tasks = students.map(async (s, localIndex) => {
+      const current = offset + localIndex + 1;
+      setStatus(`تحليل إجابات الطلاب ${current}/${total}…`, true);
+      try {
+        const doc = await fetchTextDocument(s.resultUrl);
+        return parseResultDocumentEnhanced(doc, {
+          assignmentStudentId: String(s.assignmentStudentId || s.studentId || ''),
+          name: s.name || '',
+          className: s.className || '',
+          achievedGrade: s.achievedGrade,
+          maxGrade: s.maxGrade,
+          resultUrl: s.resultUrl
+        });
+      } catch (e) {
+        return {
+          assignmentStudentId: String(s.assignmentStudentId || s.studentId || ''),
+          name: s.name || '',
+          className: s.className || '',
+          error: String(e?.message || e),
+          questions: []
+        };
+      }
+    });
+    return Promise.all(tasks);
+  };
+
+  const applyResultGradesToStudents = (results) => {
+    const students = state.gradeData?.students || [];
+    const byId = new Map(students.map(s => [String(s.assignmentStudentId || s.studentId || ''), s]));
+
+    for (const result of results || []) {
+      if (result?.error) continue;
+      const student = byId.get(String(result.assignmentStudentId || ''));
+      if (!student) continue;
+
+      const resultGrade = num(result.resultScore);
+      const resultMax = num(result.resultMaxScore);
+      const pageGrade = num(student.currentGrade ?? student.achievedGrade);
+
+      if (Number.isFinite(resultGrade)) {
+        student.resultGrade = resultGrade;
+        student.resultGradeSource = 'StudentAssignmentResult';
+        student.achievedGrade = resultGrade;
+        student.gradeState = 'recorded';
+        if (student.submissionState === 'submitted') student.status = 'graded';
+      }
+      if (Number.isFinite(resultMax) && resultMax > 0) {
+        student.resultMaxGrade = resultMax;
+        student.maxGrade = resultMax;
+      }
+
+      student.resultCorrectCount = num(result.resultCorrectCount);
+      student.resultWrongCount = num(result.resultWrongCount);
+      student.resultQuestionCount = num(result.resultQuestionCount) ?? (result.questions || []).length;
+      student.gradeFieldValue = pageGrade;
+      student.gradeDiscrepancy = Number.isFinite(resultGrade) && Number.isFinite(pageGrade) && !nearlyEqual(resultGrade, pageGrade);
+    }
+  };
+
+  const aggregateDeepAnalysis = (results) => {
+    const questionMap = new Map();
+    const studentMap = new Map();
+
+    for (const result of results) {
+      let detailCorrect = 0;
+      let detailIncorrect = 0;
+      let detailUnanswered = 0;
+      let detailUnknown = 0;
+
+      for (const q of r
