@@ -1,0 +1,158 @@
+-choice{font-weight:700;background:#f3f4f6}.correct-label{font-size:9px;border:1px solid #9ca3af;border-radius:999px;padding:1px 6px;margin-right:8px;white-space:nowrap}
+    body.student-copy .correct-choice{font-weight:400;background:transparent}body.student-copy .correct-label{display:none}
+    body.teacher-copy .student-marker{display:none}body.student-copy .teacher-marker{display:none}
+    .print-actions{position:fixed;left:14px;bottom:14px;z-index:20;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 28px)}
+    .print-actions button{padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#111827;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+    .print-actions button.primary{background:#111827;color:#fff;border-color:#111827}
+    .print-actions button.active{outline:2px solid #111827;outline-offset:1px}
+    @media print{.print-actions{display:none}.q{border-color:#9ca3af}.correct-choice{background:#f3f4f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}body.student-copy .correct-choice{background:transparent!important}}
+  `;
+
+  const renderQuestionPaperDocument = (w, assignmentName, questions) => {
+    const total = questions.map(q => num(q.maxScore)).filter(Number.isFinite).reduce((a, b) => a + b, 0);
+    const meta = `${questions.length} ${questions.length === 1 ? 'سؤال' : 'أسئلة'}${Number.isFinite(total) && total > 0 ? ` · الدرجة الكلية: ${fmt(total, 4)}` : ''}`;
+    const body = `
+      <div class="print-actions">
+        <button id="teacherMode" class="active" onclick="setCopyMode('teacher')">نسخة المعلم · مع الإجابات</button>
+        <button id="studentMode" onclick="setCopyMode('student')">نسخة الطالب · بدون إجابات</button>
+        <button class="primary" onclick="window.print()">طباعة / حفظ PDF</button>
+      </div>
+      <header class="paper-head">
+        <h1>${esc(assignmentName)}</h1>
+        <div class="sub" id="paperModeLabel">نموذج أسئلة الواجب والإجابة</div>
+        <div class="paper-meta">${esc(meta)}</div>
+      </header>
+      <div class="student-fields"><div>اسم الطالب: ....................................................................</div><div>الفصل: ....................................................</div></div>
+      ${questions.map(q => `
+        <section class="q">
+          <div class="qhead"><span>السؤال ${q.number}: ${esc(q.text)}</span><span class="qgrade">${Number.isFinite(q.maxScore) ? `${fmt(q.maxScore, 4)} درجة` : ''}</span></div>
+          ${(q.options || []).length ? `<ul class="opts">${q.options.map(o => {
+            const correct = !!o.markedCorrect;
+            return `<li class="${correct ? 'correct-choice' : ''}">
+              <span class="choice-marker"><span class="teacher-marker">${correct ? '✓' : '○'}</span><span class="student-marker">○</span></span>${esc(o.text)}${correct ? '<span class="correct-label">الإجابة الصحيحة</span>' : ''}
+            </li>`;
+          }).join('')}</ul>` : (q.correctText ? `<div class="correct-label">الإجابة الصحيحة: ${esc(q.correctText)}</div>` : '')}
+        </section>`).join('')}`;
+
+    const script = `
+      function setCopyMode(mode){
+        document.body.classList.toggle('teacher-copy', mode === 'teacher');
+        document.body.classList.toggle('student-copy', mode === 'student');
+        document.getElementById('teacherMode')?.classList.toggle('active', mode === 'teacher');
+        document.getElementById('studentMode')?.classList.toggle('active', mode === 'student');
+        const label = document.getElementById('paperModeLabel');
+        if (label) label.textContent = mode === 'teacher' ? 'نموذج أسئلة الواجب والإجابة' : 'أسئلة الواجب';
+        document.title = ${JSON.stringify(assignmentName)} + (mode === 'teacher' ? ' — نموذج الإجابة' : ' — أسئلة الواجب');
+      }
+      setCopyMode('teacher');`;
+
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(assignmentName)} — نموذج الإجابة</title><style>${questionPaperCss}</style></head><body class="teacher-copy">${body}<script>${script}<\/script></body></html>`);
+    w.document.close();
+  };
+
+  async function printQuestionsEnhanced() {
+    if (isOutsideSystem()) throw new Error('الأسئلة ونموذج الإجابة غير متاحين لواجب «خارج النظام».');
+    const w = openPrintShell('طباعة أسئلة الواجب');
+    try {
+      const [assignmentName, questions] = await Promise.all([
+        resolveAssignmentNameEnhanced({ allowFetch: true }),
+        getQuestionTemplateEnhanced({ requireAnswerKey: true })
+      ]);
+      renderQuestionPaperDocument(w, assignmentName, questions);
+    } catch (e) {
+      renderPrintDocument(w, 'طباعة أسئلة الواجب', `<div class="header"><h1>تعذر تجهيز أسئلة الواجب</h1></div><div class="card"><div>${esc(String(e?.message || e))}</div></div>`, { autoPrint: false });
+      throw e;
+    }
+  }
+
+  const printLevelGrid = (rows = studentViewRows()) => {
+    const counts = Object.fromEntries(levelOrder.map(([key]) => [key, 0]));
+    for (const row of rows) counts[row.level?.key] = (counts[row.level?.key] || 0) + 1;
+    const total = rows.length;
+    const outside = isOutsideSystem();
+    return levelOrder
+      .filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key))
+      .map(([key, label]) => {
+        const displayLabel = outside && key === 'not-solved' ? 'لم يسلّم' : outside && key === 'unverified' ? 'غير محسوم' : label;
+        return `<div class="level"><b>${counts[key] || 0}</b><span>${esc(displayLabel)}</span><div class="small muted">${total ? pct(counts[key] || 0, total) : 0}%</div></div>`;
+      }).join('');
+  };
+
+  const buildAssignmentPrintReport = () => {
+    const data = state.gradeData;
+    const viewRows = studentViewRows();
+    const s = computeEnhancedSummary(viewRows);
+    const outside = isOutsideSystem();
+    const qa = getFilteredQuestionAnalytics(viewRows);
+
+    const cards = outside
+      ? [
+          [s.total ?? 0, 'عدد الطلاب'], [s.submittedCount ?? 0, 'سلّموا الواجب'], [s.notSubmittedCount ?? 0, 'لم يسلّموا'],
+          [s.unknownSubmissionCount ?? 0, 'غير محسوم'], [`${fmt(s.submissionRate ?? 0)}%`, 'نسبة التسليم'], [s.graded ?? 0, 'درجات مرصودة'],
+          [Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'], [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
+        ]
+      : [
+          [s.total ?? 0, 'عدد الطلاب'], [s.submittedCount ?? 0, 'حلوا الواجب'], [s.notSubmittedCount ?? 0, 'لم يحلوا'],
+          [`${fmt(s.submissionRate ?? 0)}%`, 'نسبة الإنجاز'], [Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'],
+          [Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'], [Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة']
+        ];
+
+    const studentRows = viewRows.map((row, i) => {
+      const st = row.student;
+      const qs = studentQuestionStats(st);
+      const achieved = resolvedAchievedGrade(st);
+      const maxGrade = resolvedMaxGrade(st);
+      const discrepancy = st.gradeDiscrepancy
+        ? `<div class="small muted">تعارض: صفحة الرصد ${fmt(num(st.gradeFieldValue),4)}</div>`
+        : '';
+      return `<tr><td>${i + 1}</td><td>${esc(st.name || '—')}</td><td>${esc(st.className || '—')}</td><td>${esc(getStatusLabel(st))}</td><td>${Number.isFinite(achieved) ? `${fmt(achieved,4)} / ${fmt(maxGrade,4)}${discrepancy}` : '—'}</td><td>${Number.isFinite(row.percent) ? `${fmt(row.percent)}%` : '—'}</td><td>${esc(row.level.label)}</td>${!outside ? `<td>${qs?.correct ?? '—'}</td><td>${qs?.incorrect ?? '—'}</td><td>${qs?.unanswered ?? '—'}</td>` : ''}</tr>`;
+    }).join('');
+
+    const questionReport = !outside && qa ? `<div class="section page-break">
+      <div class="section-title"><h2>تحليل الأسئلة</h2><span class="muted">${qa.questions.length} سؤال</span></div>
+      <div class="cards">
+        <div class="card"><b>${fmt(qa.summary.correctRate)}%</b><span>نسبة الإجابات الصحيحة</span></div>
+        <div class="card"><b>${qa.summary.hardest ? `س${qa.summary.hardest.number}` : '—'}</b><span>أصعب سؤال${qa.summary.hardest ? ` · ${fmt(qa.summary.hardest.correctRate)}%` : ''}</span></div>
+        <div class="card"><b>${qa.summary.easiest ? `س${qa.summary.easiest.number}` : '—'}</b><span>أسهل سؤال${qa.summary.easiest ? ` · ${fmt(qa.summary.easiest.correctRate)}%` : ''}</span></div>
+      </div>
+      <table><thead><tr><th>#</th><th>السؤال</th><th>الدرجة</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>التصنيف</th><th>أكثر خطأ شيوعًا</th></tr></thead><tbody>
+        ${qa.questions.map(q => `<tr><td>${q.number}</td><td>${esc(q.text)}${q.correctText ? `<div class="small muted">الصحيح: ${esc(q.correctText)}</div>` : ''}</td><td>${Number.isFinite(q.maxScore) ? fmt(q.maxScore,4) : '—'}</td><td>${q.correct}</td><td>${q.incorrect}</td><td>${q.unanswered}</td><td>${fmt(q.correctRate)}%</td><td>${esc(q.difficulty)}</td><td>${q.mostCommonWrong ? `${esc(q.mostCommonWrong.text)} (${q.mostCommonWrong.count})` : '—'}</td></tr>`).join('')}
+      </tbody></table>
+    </div>` : outside ? `<div class="section"><div class="card"><b>ملاحظة</b><span>هذا الواجب خارج النظام؛ لا تتوفر بنية أسئلة لتحليل الإجابات. حالة التسليم تُستنتج من الدرجة وملاحظة المعلم، مع إبقاء أي حالة غير محسومة منفصلة.</span></div></div>` : '';
+
+    const discrepancyNote = s.discrepancyCount
+      ? `<div class="section"><div class="card"><b>تنبيه تعارض بيانات</b><span>اكتشف النظام ${s.discrepancyCount} حالة اختلفت فيها درجة صفحة الرصد عن صفحة نتيجة الطالب؛ تم اعتماد صفحة النتيجة في هذا التقرير.</span></div></div>`
+      : '';
+
+    return `${printHeaderHtml('تقرير الواجب', { rows: viewRows })}
+      <div class="section"><div class="section-title"><h2>الملخص التنفيذي</h2></div><div class="cards">${cards.map(([v,l]) => `<div class="card"><b>${v}</b><span>${esc(l)}</span></div>`).join('')}</div></div>
+      ${discrepancyNote}
+      <div class="section"><div class="section-title"><h2>توزيع مستويات الطلاب</h2><span class="muted">${outside ? 'لم يسلّم مستقل عن سلّم وأخذ صفرًا' : 'ضعيف = 50% فأقل لمن لديه درجة'}</span></div><div class="levels">${printLevelGrid(viewRows)}</div></div>
+      <div class="section"><div class="section-title"><h2>تقرير الطلاب</h2><span class="muted">${esc(studentFilterContextLabel())} · حسب الفرز الحالي</span></div><table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${!outside ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead><tbody>${studentRows}</tbody></table></div>
+      ${questionReport}
+      <div class="footer"><span>تم إنشاء التقرير بواسطة Madrasati Assignment Intelligence v${VERSION}</span><span>Mohammed Almalki (M0HM3D85)</span></div>`;
+  };
+
+
+  async function printAssignmentReportEnhanced() {
+    assertFinalReportReady();
+    const w = openPrintShell('تقرير الواجب');
+    try {
+      if (!state.gradeData) await refreshEnhanced(false);
+      if (isOnlineQuestions() && !getQuestionAnalytics() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
+        await runDeepQuestionAnalysisEnhanced({ silent: true });
+      }
+      renderPrintDocument(w, `${state.gradeData?.assignmentName || state.gradeData?.title || 'الواجب'} — تقرير الواجب`, buildAssignmentPrintReport());
+    } catch (e) {
+      renderPrintDocument(w, 'تقرير الواجب', `<div class="header"><h1>تقرير الواجب</h1></div><div class="card"><b>تعذر تجهيز التقرير</b><div>${esc(String(e?.message || e))}</div></div>`, { autoPrint: false });
+      throw e;
+    }
+  }
+
+  // -----------------------------
+  // Export
+  // -----------------------------
+  const exportRowsEnhanced = () => studentViewRows().map(row => {
+    const s = row.student;
+    const qs = studentQuestionStat
