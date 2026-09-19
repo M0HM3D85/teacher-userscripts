@@ -174,3 +174,4 @@ for item in checks:
     assert item in text, item
 
 print('student-rased V2 result persistence fix applied and syntax checked')
+# trigger workflow after workflow file exists
