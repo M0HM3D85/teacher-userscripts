@@ -1,0 +1,44 @@
+name: Fix Student Rasid Noor V2 UI
+
+on:
+  push:
+    branches:
+      - feat/student-rased-noor-v2
+    paths:
+      - .github/workflows/fix-student-rased-v2-ui.yml
+      - .github/scripts/fix_student_rased_v2_ui.py
+
+permissions:
+  contents: write
+
+jobs:
+  fix-ui:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/student-rased-noor-v2
+          fetch-depth: 0
+
+      - name: Apply UI isolation patch
+        run: python3 .github/scripts/fix_student_rased_v2_ui.py
+
+      - name: Syntax check
+        run: node --check scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Verify isolated UI markers
+        run: |
+          grep -q 'class="m0-header"' scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+          grep -q 'class="m0-main"' scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+          grep -q 'class="m0-footer"' scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Commit fix
+        run: |
+          git config user.name "M0HM3D85"
+          git config user.email "66501068+M0HM3D85@users.noreply.github.com"
+          git add scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js scripts/student-rased-madrasati-noor/CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(student-rased): isolate UI from Noor V2 CSS"
+          git push origin feat/student-rased-noor-v2
