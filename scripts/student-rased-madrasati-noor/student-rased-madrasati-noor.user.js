@@ -6356,7 +6356,7 @@ function nrSelectPostBackSettled(actionAt, select, expectedValue) {
     if (nrEndRequestAt > Number(actionAt || 0)) return true;
 
     // احتياط إذا لم يكن PageRequestManager مكشوفًا في إحدى الواجهات.
-    return Date.now() - Number(actionAt || 0) >= 1400;
+    return Date.now() - Number(actionAt || 0) >= 900;
 }
 
 function nrWait() {
@@ -7132,8 +7132,22 @@ async function tickNoorSchool(job) {
         return;
     }
 
-    if (nrAjaxBusy() || nrWait()) {
-        status('نور يقوم بتحديث البيانات...');
+    if (nrAjaxBusy()) {
+        status('نور يقوم بتحديث القوائم...');
+        return;
+    }
+
+    // لا نجعل حالة انتظار ReportViewer توقف مراحل اختيار الصف والفصل.
+    // نحتاجها فقط عندما ننتظر/نقرأ تقريرًا فعليًا.
+    const reportPhase = new Set([
+        'waitSectionReport',
+        'collectSection',
+        'waitVerifyReport',
+        'collectVerify'
+    ]).has(job.phase);
+
+    if (reportPhase && nrWait()) {
+        status('نور يقوم بتحميل التقرير...');
         return;
     }
 
@@ -7240,24 +7254,37 @@ async function tickNoorSchool(job) {
 
         const sectionEl = nrSectionEl();
 
-        if (String(sectionEl?.value) === String(section.value)) {
+        // الواجهة القديمة كانت مستقرة وسريعة في 1.9.1 بتغيير القيمة ثم العرض مباشرة.
+        // V2 وحدها تحتاج PostBack حقيقي للفصل قبل زر «عرض».
+        if (NOOR_VIEW !== 'v2') {
+            if (!nrSetSelectValue(sectionEl, section.value)) {
+                nrFail(job, `تعذر اختيار الفصل ${section.text} في ${targetGrade.text}.`);
+                return;
+            }
+            job.phase = 'showSection';
+            job.actionAt = 0;
+            job.retries = 0;
+            saveNoorJob(job);
+        }
+        else if (String(sectionEl?.value) === String(section.value)) {
             job.phase = 'showSection';
             job.actionAt = 0;
             job.retries = 0;
             saveNoorJob(job);
             return;
         }
+        else {
+            job.phase = 'waitSectionChoice';
+            job.actionAt = Date.now();
+            job.retries = 0;
+            saveNoorJob(job);
+            status(`${targetGrade.text} — اختيار الفصل ${section.text}...`);
 
-        job.phase = 'waitSectionChoice';
-        job.actionAt = Date.now();
-        job.retries = 0;
-        saveNoorJob(job);
-        status(`${targetGrade.text} — اختيار الفصل ${section.text}...`);
-
-        if (!nrPostBackSelect(sectionEl, section.value)) {
-            nrFail(job, `تعذر اختيار الفصل ${section.text} في ${targetGrade.text}.`);
+            if (!nrPostBackSelect(sectionEl, section.value)) {
+                nrFail(job, `تعذر اختيار الفصل ${section.text} في ${targetGrade.text}.`);
+            }
+            return;
         }
-        return;
     }
 
     if (job.phase === 'waitSectionChoice') {
@@ -7369,24 +7396,35 @@ async function tickNoorSchool(job) {
         job.currentSection = all;
         const sectionEl = nrSectionEl();
 
-        if (String(sectionEl?.value) === String(all.value)) {
+        if (NOOR_VIEW !== 'v2') {
+            if (!nrSetSelectValue(sectionEl, all.value)) {
+                nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+                return;
+            }
+            job.phase = 'showVerify';
+            job.actionAt = 0;
+            job.retries = 0;
+            saveNoorJob(job);
+        }
+        else if (String(sectionEl?.value) === String(all.value)) {
             job.phase = 'showVerify';
             job.actionAt = 0;
             job.retries = 0;
             saveNoorJob(job);
             return;
         }
+        else {
+            job.phase = 'waitVerifyChoice';
+            job.actionAt = Date.now();
+            job.retries = 0;
+            saveNoorJob(job);
+            status(`${targetGrade.text} — اختيار «الكل» للتحقق...`);
 
-        job.phase = 'waitVerifyChoice';
-        job.actionAt = Date.now();
-        job.retries = 0;
-        saveNoorJob(job);
-        status(`${targetGrade.text} — اختيار «الكل» للتحقق...`);
-
-        if (!nrPostBackSelect(sectionEl, all.value)) {
-            nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+            if (!nrPostBackSelect(sectionEl, all.value)) {
+                nrFail(job, `تعذر اختيار «الكل» للتحقق من ${targetGrade.text}.`);
+            }
+            return;
         }
-        return;
     }
 
     if (job.phase === 'waitVerifyChoice') {
@@ -9407,7 +9445,7 @@ if (
                     nrEndRequestAt = Date.now();
                     setTimeout(
                         tickNoor,
-                        300
+                        80
                     );
                 }
             );
@@ -9440,7 +9478,7 @@ if (
 
     setInterval(
         tickNoor,
-        900
+        300
     );
 }
 
