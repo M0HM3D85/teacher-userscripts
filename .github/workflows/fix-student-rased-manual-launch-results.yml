@@ -1,0 +1,43 @@
+name: Fix Student Rasid manual launch and Noor results
+
+on:
+  push:
+    branches:
+      - feat/student-rased-noor-v2
+    paths:
+      - .github/workflows/fix-student-rased-manual-launch-results.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/student-rased-noor-v2
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python3 .github/scripts/fix_student_rased_manual_launch_results.py
+
+      - name: Syntax check
+        run: node --check scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Verify markers
+        run: |
+          grep -F 'const NOOR_RESULT = `${APP}-noor-result-v1`;' scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+          grep -F 'restoredNoorResult' scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+          grep -F "tab('extract');" scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Commit fix
+        run: |
+          git config user.name 'M0HM3D85'
+          git config user.email '66501068+M0HM3D85@users.noreply.github.com'
+          git add scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js scripts/student-rased-madrasati-noor/CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix(student-rased): require explicit extraction and restore Noor results'
+          git push origin feat/student-rased-noor-v2
