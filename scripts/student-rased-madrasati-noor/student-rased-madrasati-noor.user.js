@@ -39,7 +39,7 @@ const APP = 'm0hm3d85-rasid-students';
 const BTN = `${APP}-btn`;
 const PREF = `${APP}-prefs-v5`;
 const NOOR_JOB = `${APP}-noor-job-v4`;
-const NOOR_RESULT = `${APP}-noor-result-v1`;
+const NOOR_RESULT = `${APP}-noor-result-v2`;
 const LAUNCH_INTENT = `${APP}-launch-intent-v2`;
 const HISTORY_LIMIT = 18;
 const SNAP = 'm0hm3d85-rasid-snapshot-v6';
@@ -3605,9 +3605,9 @@ function afterExtract(
     tab('review');
 }
 
-function clearAll() {
+function clearAll(options = {}) {
 
-    if (PLATFORM === 'noor') {
+    if (PLATFORM === 'noor' && !options.preserveNoorResult) {
         clearNoorResult();
     }
 
@@ -6079,44 +6079,64 @@ function clearNoorJob() {
 }
 
 function saveNoorResult(rows, pages, scope, audit) {
-    try {
-        sessionStorage.setItem(
-            NOOR_RESULT,
-            JSON.stringify({
-                version: 1,
-                at: new Date().toISOString(),
-                rows,
-                pages,
-                scope,
-                audit
-            })
-        );
-        return true;
+    const payload = JSON.stringify({
+        version: 2,
+        at: new Date().toISOString(),
+        sourceView: NOOR_VIEW,
+        rows,
+        pages,
+        scope,
+        audit
+    });
+
+    let saved = false;
+
+    // نحفظ نسختين: واحدة خاصة بالتبويب ونسخة احتياطية محلية.
+    // بعض PostBacks في V2 تعيد بناء الصفحة بالكامل، لذلك لا نعتمد
+    // على sessionStorage وحده لإظهار النتيجة النهائية.
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            storage.setItem(NOOR_RESULT, payload);
+            saved = true;
+        }
+        catch {}
     }
-    catch {
-        return false;
+
+    if (!saved) {
+        console.warn('[راصد/نور] تعذر حفظ النتيجة الاحتياطية.');
     }
+
+    return saved;
 }
 
 function loadNoorResult() {
-    try {
-        const raw = sessionStorage.getItem(NOOR_RESULT);
-        if (!raw) return null;
-        const data = JSON.parse(raw);
-        return data && data.version === 1 && Array.isArray(data.rows)
-            ? data
-            : null;
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            const raw = storage.getItem(NOOR_RESULT);
+            if (!raw) continue;
+
+            const data = JSON.parse(raw);
+            if (
+                data
+                && Number(data.version || 0) >= 1
+                && Array.isArray(data.rows)
+            ) {
+                return data;
+            }
+        }
+        catch {}
     }
-    catch {
-        return null;
-    }
+
+    return null;
 }
 
 function clearNoorResult() {
-    try {
-        sessionStorage.removeItem(NOOR_RESULT);
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            storage.removeItem(NOOR_RESULT);
+        }
+        catch {}
     }
-    catch {}
 }
 
 function nrSelect(suffix) {
@@ -6647,7 +6667,7 @@ function nrStart() {
     if (loadNoorJob()?.active) return;
 
     clearNoorResult();
-    clearAll();
+    clearAll({ preserveNoorResult: true });
 
     const job = {
         active: true,
@@ -6752,7 +6772,7 @@ function nrSchoolStart() {
         return;
     }
 
-    clearAll();
+    clearAll({ preserveNoorResult: true });
 
     const studySystem = choice(
         clean(nrStudySystemEl()?.selectedOptions?.[0]?.textContent || '')
@@ -6829,6 +6849,15 @@ function nrPrepareNextGrade(job) {
     job.actionAt = 0;
     job.retries = 0;
     saveNoorJob(job);
+
+    // لا ننتظر دورة setInterval إضافية بعد آخر صف.
+    // ننهي المدرسة فورًا ونثبت النتيجة قبل أي إعادة تحميل محتملة من V2.
+    if (job.gradeIndex >= job.grades.length) {
+        nrSchoolFinish(job);
+        return true;
+    }
+
+    return false;
 }
 
 function nrVerifyGrade(job, allRows) {
@@ -9214,8 +9243,11 @@ enable(
 );
 
 let restoredNoorResult = false;
+const pendingNoorJob = PLATFORM === 'noor'
+    ? loadNoorJob()
+    : null;
 
-if (PLATFORM === 'noor') {
+if (PLATFORM === 'noor' && !pendingNoorJob?.active) {
     const cachedResult = loadNoorResult();
 
     if (cachedResult?.rows?.length) {
@@ -9231,12 +9263,20 @@ if (PLATFORM === 'noor') {
 }
 
 status(
-    restoredNoorResult
-        ? `تمت استعادة آخر نتيجة مكتملة — ${state.rows.length} طالب. اضغط راصد لعرضها أو ابدأ استخراجًا جديدًا.`
+    pendingNoorJob?.active
+        ? (
+            pendingNoorJob.mode === 'school'
+                ? `استئناف استخراج المدرسة كاملة — الصف ${Number(pendingNoorJob.gradeIndex || 0) + 1}/${pendingNoorJob.grades?.length || 0}.`
+                : 'استئناف استخراج التقرير الحالي...'
+        )
         : (
-            PLATFORM === 'madrasati'
-                ? 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» عند الحاجة.'
-                : 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» للتقرير الحالي أو «استخراج المدرسة كاملة».'
+            restoredNoorResult
+                ? `تمت استعادة آخر نتيجة مكتملة — ${state.rows.length} طالب. اضغط راصد لعرضها أو ابدأ استخراجًا جديدًا.`
+                : (
+                    PLATFORM === 'madrasati'
+                        ? 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» عند الحاجة.'
+                        : 'جاهز. اضغط راصد ثم اختر «بدء الاستخراج» للتقرير الحالي أو «استخراج المدرسة كاملة».'
+                )
         )
 );
 
@@ -9264,6 +9304,8 @@ if (
     catch {}
 
     const j =
+        pendingNoorJob
+        ||
         loadNoorJob();
 
     if (
@@ -9274,6 +9316,12 @@ if (
 
         running(
             true
+        );
+
+        status(
+            j.mode === 'school'
+                ? `استئناف استخراج المدرسة كاملة — الصف ${Number(j.gradeIndex || 0) + 1}/${j.grades?.length || 0}.`
+                : 'استئناف استخراج التقرير الحالي...'
         );
 
         tickNoor();
