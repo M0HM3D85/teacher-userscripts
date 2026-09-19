@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         راصد الطلاب | مدرستي + نور
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.9.1
-// @description  راصد دقيق لبيانات الطلاب من صفحات الطلاب المطلوبة فقط في مدرستي ونور: استخراج دقيق، مدرسة نور كاملة، نسخ مقارنة ببصمة تحقق، مقارنة شاملة محافظة، سجل زمني، ومركز مراجعة يدوية.
+// @version      2.0.0
+// @description  راصد دقيق لبيانات الطلاب من مدرستي ونور مع دعم واجهتي نور القديمة وV2: استخراج المدرسة كاملة، تدقيق الصفحات، نسخ مقارنة ببصمة تحقق، سجل زمني، ومراجعة يدوية للحالات الملتبسة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -10,6 +10,7 @@
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/SchoolManagmentReports/StudentInfo/ClassStudentInfo/*
 // @match        https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReport.aspx*
+// @match        https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReportV2.aspx*
 // @run-at       document-idle
 // @grant        none
 // @downloadURL https://update.greasyfork.org/scripts/592894/%D8%B1%D8%A7%D8%B5%D8%AF%20%D8%A7%D9%84%D8%B7%D9%84%D8%A7%D8%A8%20%7C%20%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A%20%2B%20%D9%86%D9%88%D8%B1.user.js
@@ -33,11 +34,11 @@
 (() => {
 'use strict';
 
-const VERSION = '1.9.1';
+const VERSION = '2.0.0';
 const APP = 'm0hm3d85-rasid-students';
 const BTN = `${APP}-btn`;
 const PREF = `${APP}-prefs-v5`;
-const NOOR_JOB = `${APP}-noor-job-v3`;
+const NOOR_JOB = `${APP}-noor-job-v4`;
 const LAUNCH_INTENT = `${APP}-launch-intent-v2`;
 const HISTORY_LIMIT = 18;
 const SNAP = 'm0hm3d85-rasid-snapshot-v6';
@@ -52,6 +53,12 @@ const SNAP_OK = new Set([
 
 const PLATFORM = location.hostname.includes('madrasati.sa') ? 'madrasati' : 'noor';
 const PLATFORM_LABEL = PLATFORM === 'madrasati' ? 'مدرستي' : 'نور';
+const NOOR_VIEW = PLATFORM === 'noor'
+    ? (/\/EduWavek12Portal\/ReportPages\/StudntNamesReportV2\.aspx$/i.test(location.pathname) ? 'v2' : 'legacy')
+    : '';
+const NOOR_VIEW_LABEL = NOOR_VIEW === 'v2'
+    ? 'نور V2'
+    : (NOOR_VIEW === 'legacy' ? 'نور القديم' : '');
 const HISTORY_KEY = `${APP}-timeline-v1-${PLATFORM}`;
 const IDENTITY_LINKS_KEY = `${APP}-identity-links-v1-${PLATFORM}`;
 
@@ -59,7 +66,7 @@ if (window.top !== window.self) return;
 
 const TARGET_PATH_RE = PLATFORM === 'madrasati'
     ? /\/SchoolManagmentReports\/StudentInfo\/ClassStudentInfo\/?/i
-    : /\/EduWavek12Portal\/ReportPages\/StudntNamesReport\.aspx$/i;
+    : /\/EduWavek12Portal\/ReportPages\/StudntNamesReport(?:V2)?\.aspx$/i;
 
 function isTargetPage() {
     return TARGET_PATH_RE.test(location.pathname);
@@ -2729,7 +2736,7 @@ if (
 else {
 
     ui.intro.innerHTML =
-        'في <b>نور</b>: «بدء الاستخراج» يقرأ التقرير الحالي، و«استخراج المدرسة كاملة» يمر تلقائيًا على الصفوف والفصول الفعلية ويثبت فصل كل طالب ثم يتحقق من كل صف بتقرير «الكل». زر راصد في أي صفحة رئيسية ينقلك تلقائيًا إلى هذه الشاشة ويبدأ الاستخراج الشامل.';
+        `في <b>نور</b> — <b>${esc(NOOR_VIEW_LABEL || 'واجهة نور')}</b>: «بدء الاستخراج» يقرأ التقرير الحالي، و«استخراج المدرسة كاملة» يمر على الصفوف والفصول الفعلية ويثبت الصف والفصل من قوائم نور نفسها. يدعم راصد واجهة نور القديمة وواجهة V2 الحديثة بمحرك ReportViewer موحّد.`;
 
     ui.schoolstart.style.display = '';
 }
@@ -6108,9 +6115,10 @@ function nrAllSectionOption() {
 
     if (!select) return null;
 
+    // V2 تستخدم value=-99 أيضًا للحالة «-- لا يوجد --»؛
+    // لذلك لا نعد الخيار «الكل» إلا إذا أكد نصه ذلك.
     const option = [...select.options].find(o =>
-        String(o.value) === '-99'
-        || /^--\s*الكل\s*--$/.test(clean(o.textContent))
+        /^--\s*الكل\s*--$/.test(clean(o.textContent))
         || norm(o.textContent) === norm('الكل')
     );
 
@@ -6210,7 +6218,9 @@ function nrAjaxBusy() {
 
 function nrRoot() {
     return document.querySelector('[id^="VisibleReportContent"]')
-        || document.querySelector('[role="main"][id*="rvStudentDataName"]');
+        || document.querySelector('[role="main"][id*="rvStudentDataName"]')
+        || document.getElementById('ctl00_PlaceHolderMain_rvStudentDataName_fixedTable')
+        || document.querySelector('[id*="rvStudentDataName_fixedTable"]');
 }
 
 function nrCurEl() {
@@ -6264,7 +6274,7 @@ function nrBtn(kind) {
         ? 'الصفحة الأولى'
         : 'الصفحة التالية';
 
-    return [...document.querySelectorAll('[id*="rvStudentDataName"]')]
+    const direct = [...document.querySelectorAll('[id*="rvStudentDataName"]')]
         .find(e =>
             e.id.includes(p)
             && e.classList.contains('NormalButton')
@@ -6276,6 +6286,30 @@ function nrBtn(kind) {
                 && e.getAttribute('aria-disabled') !== 'true'
                 && !e.disabled
             );
+
+    if (direct) return direct;
+
+    const wanted = kind === 'first'
+        ? [norm('الصفحة الأولى'), norm('الأولى')]
+        : [norm('الصفحة التالية'), norm('التالي')];
+
+    return [...document.querySelectorAll('a,button,input,[role="button"]')]
+        .filter(e =>
+            e.id.includes('rvStudentDataName')
+            || e.closest?.('[id*="rvStudentDataName"]')
+        )
+        .find(e => {
+            const text = norm(
+                e.textContent
+                || e.value
+                || e.title
+                || e.getAttribute('aria-label')
+            );
+            return wanted.includes(text)
+                && e.getAttribute('aria-disabled') !== 'true'
+                && !e.disabled;
+        })
+        || null;
 }
 
 function nrClick(kind) {
@@ -6609,6 +6643,8 @@ function nrFinishCurrent(job) {
 
     const audit = {
         complete: !conflicts.length,
+        sourceView: NOOR_VIEW,
+        sourceViewLabel: NOOR_VIEW_LABEL,
         pageCount: job.report.total,
         rawRows: job.report.rows.length,
         finalRows: rows.length,
@@ -6932,6 +6968,8 @@ function nrSchoolFinish(job) {
 
     const audit = {
         complete,
+        sourceView: NOOR_VIEW,
+        sourceViewLabel: NOOR_VIEW_LABEL,
         pageCount: job.totalReportPages,
         rawRows: job.rows.length,
         finalRows: finalRows.length,
@@ -8580,7 +8618,7 @@ function findExactTargetNavigation() {
 
     if (PLATFORM === 'noor') {
         return items.find(el =>
-            /StudntNamesReport\.aspx/i.test(routeSignature(el))
+            /StudntNamesReport(?:V2)?\.aspx/i.test(routeSignature(el))
         ) || items.find(el => {
             const text = norm(el.textContent);
             return (
@@ -8742,7 +8780,7 @@ async function continueSiteNavigation(intent = loadLaunchIntent()) {
 }
 
 function launcherAction() {
-    // v1.9.1: الزر موجود فقط في صفحات الطلاب المطلوبة، ولا ينفذ أي تنقل بين صفحات الموقع.
+    // v2.0.0: الزر موجود فقط في صفحات الطلاب المطلوبة، ولا ينفذ أي تنقل بين صفحات الموقع.
     if (state.rows.length) {
         open();
         return;
@@ -8809,7 +8847,7 @@ async function resumeLaunchIntent() {
     }
 }
 
-// v1.9.1: السكربت لا يعمل إلا داخل صفحات الطلاب المطلوبة، لذلك أُلغي مراقب التنقل بين صفحات الموقع.
+// v2.0.0: السكربت لا يعمل إلا داخل صفحات الطلاب المطلوبة (ومنها نور V2)، لذلك لا يراقب بقية صفحات الموقع.
 clearLaunchIntent();
 
 // =========================================================
