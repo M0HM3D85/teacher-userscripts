@@ -62,7 +62,7 @@ root_replacement = """function nrRoot() {
 }
 
 function nrCurEl() {"""
-js, count = root_pattern.subn(root_replacement, js, count=1)
+js, count = root_pattern.subn(lambda _: root_replacement, js, count=1)
 if count != 1:
     raise SystemExit(f'nrRoot patch: expected 1 match, found {count}')
 
@@ -116,7 +116,7 @@ btn_replacement = """function nrBtn(kind) {
 }
 
 function nrClick(kind) {"""
-js, count = btn_pattern.subn(btn_replacement, js, count=1)
+js, count = btn_pattern.subn(lambda _: btn_replacement, js, count=1)
 if count != 1:
     raise SystemExit(f'nrBtn patch: expected 1 match, found {count}')
 
@@ -143,7 +143,7 @@ all_replacement = """function nrAllSectionOption() {
 }
 
 function nrUpdateSelect2(select) {"""
-js, count = all_pattern.subn(all_replacement, js, count=1)
+js, count = all_pattern.subn(lambda _: all_replacement, js, count=1)
 if count != 1:
     raise SystemExit(f'nrAllSectionOption patch: expected 1 match, found {count}')
 
