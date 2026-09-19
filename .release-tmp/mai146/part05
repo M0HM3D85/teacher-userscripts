@@ -1,0 +1,285 @@
+
+    // 4) عناوين مرئية محددة، مع رفض العناوين العامة والنوافذ المخفية.
+    const headingSelectors = [
+      '[id*="assignment" i][id*="name" i]',
+      '[id*="assignment" i][id*="title" i]',
+      '[class*="assignment" i][class*="name" i]',
+      '[class*="assignment" i][class*="title" i]',
+      '.page-title', '.card-title', 'h1', 'h2', 'h3'
+    ].join(',');
+
+    const headingCandidates = [...doc.querySelectorAll(headingSelectors)]
+      .map(el => ({
+        text: take(el.innerText || el.textContent || ''),
+        hidden: el.hidden || el.closest?.('[hidden],[aria-hidden="true"],.modal')?.hidden === true,
+        len: clean(el.innerText || el.textContent || '').length
+      }))
+      .filter(x => x.text && !x.hidden)
+      .sort((a, b) => a.text.length - b.text.length);
+
+    if (headingCandidates.length) return headingCandidates[0].text;
+
+    return '';
+  };
+
+  async function resolveAssignmentNameEnhanced({ allowFetch = true } = {}) {
+    if (isUsableAssignmentName(assignmentNameCache)) return assignmentNameCache;
+
+    let name = extractAssignmentNameFromDocument(document);
+
+    // إذا تعذر من صفحة الرصد، استخدم صفحة تفاصيل الواجب فقط كاحتياط.
+    if (!name && allowFetch) {
+      const detailsUrl = findDetailsUrlEnhanced();
+      if (detailsUrl) {
+        try {
+          const doc = await fetchTextDocument(detailsUrl);
+          name = extractAssignmentNameFromDocument(doc);
+        } catch (e) {
+          console.warn('[MAI v1.4.6] Could not resolve assignment name from details page:', e);
+        }
+      }
+    }
+
+    if (!name && isUsableAssignmentName(state.gradeData?.title)) {
+      name = cleanAssignmentNameCandidate(state.gradeData.title);
+    }
+
+    assignmentNameCache = name || 'واجب مدرستي';
+    if (state.gradeData) {
+      state.gradeData.assignmentName = assignmentNameCache;
+      state.gradeData.title = assignmentNameCache;
+    }
+    const panelSub = document.querySelector(`#${APP}-panel .${APP}-sub`);
+    if (panelSub && assignmentNameCache !== 'واجب مدرستي') {
+      panelSub.textContent = `${assignmentNameCache} · تحليل الطلاب والأسئلة + تقارير PDF + استيراد ذكي — v${VERSION}`;
+    }
+    return assignmentNameCache;
+  }
+
+  const mergeAnswerKeyIntoQuestions = (questions, analytics) => {
+    if (!analytics?.questions?.length) return questions;
+    const keyMap = new Map(analytics.questions.map(q => [String(q.questionId || q.number), q]));
+    return (questions || []).map(q => {
+      const aq = keyMap.get(String(q.questionId || q.number));
+      if (!aq) return q;
+      const ids = new Set(aq.correctAnswerIds || []);
+      const options = (q.options || []).map(o => ({
+        ...o,
+        markedCorrect: o.markedCorrect || (o.answerId && ids.has(o.answerId))
+      }));
+      const correctText = options.filter(o => o.markedCorrect).map(o => o.text).filter(Boolean).join('، ') || aq.correctText || q.correctText || '';
+      return { ...q, options, correctOptions: options.filter(o => o.markedCorrect), correctText };
+    });
+  };
+
+  async function getQuestionTemplateEnhanced({ requireAnswerKey = false } = {}) {
+    let analytics = getQuestionAnalytics();
+    if (requireAnswerKey && !analytics && isOnlineQuestions()) {
+      try { analytics = await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch {}
+    }
+
+    const firstResult = analytics?.results?.find(r => !r.error && r.questions?.length);
+    if (firstResult) {
+      const merged = mergeAnswerKeyIntoQuestions(firstResult.questions, analytics);
+      if (!requireAnswerKey || merged.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) return merged;
+    }
+
+    const solved = (state.gradeData?.students || []).find(s => s.resultUrlVerified && s.resultUrl) ||
+      (state.gradeData?.students || []).find(s => s.resultUrl);
+    if (solved) {
+      const doc = await fetchTextDocument(solved.resultUrl);
+      const questions = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(doc), analytics);
+      if (questions.length && (!requireAnswerKey || questions.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText))) return questions;
+    }
+
+    const detailsUrl = findDetailsUrlEnhanced();
+    if (detailsUrl) {
+      const doc = await fetchTextDocument(detailsUrl);
+      const questions = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(doc), analytics);
+      if (questions.length) {
+        if (requireAnswerKey && !questions.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) {
+          throw new Error('تعذر استنتاج مفتاح الإجابة لجميع الأسئلة من النتائج الحالية.');
+        }
+        return questions;
+      }
+    }
+
+    const current = mergeAnswerKeyIntoQuestions(parseQuestionCardsEnhanced(document), analytics);
+    if (current.length) {
+      if (requireAnswerKey && !current.every(q => (q.options || []).some(o => o.markedCorrect) || q.correctText)) {
+        throw new Error('تعذر استنتاج مفتاح الإجابة لجميع الأسئلة من النتائج الحالية.');
+      }
+      return current;
+    }
+
+    if (requireAnswerKey) throw new Error('لا يمكن إنشاء نموذج الإجابة قبل توفر نتيجة طالب تكشف مفتاح الإجابة.');
+    throw new Error('لم أتمكن من العثور على بنية الأسئلة في الصفحات المتاحة.');
+  };
+
+
+  // -----------------------------
+  // بناء التحليلات المرئية
+  // -----------------------------
+  const studentQuestionStats = (student) => {
+    const analytics = getQuestionAnalytics();
+    if (!analytics) return null;
+    const key = String(student.assignmentStudentId || student.studentId || '');
+    return analytics.studentMap?.[key] || null;
+  };
+
+  const getStatusLabel = (student) => {
+    const mode = getMode();
+    if (mode.key === 'outside_system') {
+      const submission = classifyOutsideSubmission(student);
+      if (submission.key === 'not_submitted') return 'لم يسلّم';
+      if (submission.key === 'submitted') {
+        if (Number.isFinite(outsideDirectGrade(student))) return nearlyEqual(outsideDirectGrade(student), 0) ? 'سلّم / درجة صفر' : 'سلّم / درجة مرصودة';
+        return 'سلّم / بانتظار الرصد';
+      }
+      return 'غير محسوم';
+    }
+    if (student.submissionState === 'not_submitted') return 'لم يحل';
+    if (student.gradeState === 'recorded') return 'تم الحل / مصحح';
+    if (student.submissionState === 'submitted') return 'تم الحل / بانتظار الرصد';
+    return 'غير محدد';
+  };
+
+  // تقارير الطلاب والجداول والتصدير مرتبة افتراضيًا أبجديًا من أ إلى ي.
+  const performanceRows = () => {
+    const { rows } = computeStudentLevels();
+    return rows.sort((a, b) => {
+      const byName = compareArabicNames(a.student?.name || '', b.student?.name || '');
+      if (byName) return byName;
+      const byClass = compareArabicNames(a.student?.className || '', b.student?.className || '');
+      if (byClass) return byClass;
+      return String(a.student?.studentId || a.student?.assignmentStudentId || '')
+        .localeCompare(String(b.student?.studentId || b.student?.assignmentStudentId || ''));
+    });
+  };
+
+  // v1.4.5 — المرشحات تمثل "سياق التقرير" الحالي، وليست مجرد عرض للجدول.
+  // لذلك البطاقات، مستويات الطلاب، PDF، CSV وExcel تتبع المجموعة المفلترة نفسها.
+  const studentViewState = {
+    className: 'all',
+    submission: 'all',
+    level: 'all',
+    sort: 'name_asc'
+  };
+
+  const availableStudentClasses = () => [...new Set(
+    (state.gradeData?.students || []).map(s => clean(s.className)).filter(Boolean)
+  )].sort(compareArabicNames);
+
+  const isStudentViewFiltered = () =>
+    studentViewState.className !== 'all' ||
+    studentViewState.submission !== 'all' ||
+    studentViewState.level !== 'all';
+
+  const studentSubmissionKey = (student) => {
+    if (isOutsideSystem()) return classifyOutsideSubmission(student).key;
+    if (student?.submissionState === 'not_submitted') return 'not_submitted';
+    if (student?.submissionState === 'submitted' || student?.hasAnswer === true) return 'submitted';
+    return 'unknown';
+  };
+
+  const performanceLevelRank = (key) => ({
+    excellent: 1,
+    'very-good': 2,
+    good: 3,
+    acceptable: 4,
+    weak: 5
+  }[key] ?? 99);
+
+  const isRatedLevel = (key) => performanceLevelRank(key) < 99;
+
+  const compareRowNames = (a, b) => {
+    const byName = compareArabicNames(a.student?.name || '', b.student?.name || '');
+    if (byName) return byName;
+    const byClass = compareArabicNames(a.student?.className || '', b.student?.className || '');
+    if (byClass) return byClass;
+    return String(a.student?.studentId || a.student?.assignmentStudentId || '')
+      .localeCompare(String(b.student?.studentId || b.student?.assignmentStudentId || ''));
+  };
+
+  const studentViewRows = () => {
+    let rows = performanceRows();
+
+    if (studentViewState.className !== 'all') {
+      rows = rows.filter(row => norm(row.student?.className || '') === norm(studentViewState.className));
+    }
+
+    if (studentViewState.submission !== 'all') {
+      rows = rows.filter(row => studentSubmissionKey(row.student) === studentViewState.submission);
+    }
+
+    if (studentViewState.level === 'unrated') {
+      rows = rows.filter(row => !isRatedLevel(row.level?.key));
+    } else if (studentViewState.level !== 'all') {
+      rows = rows.filter(row => row.level?.key === studentViewState.level);
+    }
+
+    const sort = studentViewState.sort;
+    rows = rows.slice().sort((a, b) => {
+      if (sort === 'name_desc') return -compareRowNames(a, b);
+
+      if (sort === 'submission_submitted') {
+        const rank = { submitted: 1, not_submitted: 2, unknown: 3 };
+        const diff = (rank[studentSubmissionKey(a.student)] ?? 9) - (rank[studentSubmissionKey(b.student)] ?? 9);
+        return diff || compareRowNames(a, b);
+      }
+
+      if (sort === 'submission_not_submitted') {
+        const rank = { not_submitted: 1, unknown: 2, submitted: 3 };
+        const diff = (rank[studentSubmissionKey(a.student)] ?? 9) - (rank[studentSubmissionKey(b.student)] ?? 9);
+        return diff || compareRowNames(a, b);
+      }
+
+      if (sort === 'level_high' || sort === 'level_low') {
+        const ar = performanceLevelRank(a.level?.key);
+        const br = performanceLevelRank(b.level?.key);
+        // الحالات بلا تقدير تبقى في نهاية القائمة في الاتجاهين.
+        if (ar === 99 && br !== 99) return 1;
+        if (br === 99 && ar !== 99) return -1;
+        if (ar !== br) return sort === 'level_high' ? ar - br : br - ar;
+
+        const ap = Number.isFinite(a.percent) ? a.percent : null;
+        const bp = Number.isFinite(b.percent) ? b.percent : null;
+        if (ap !== null && bp !== null && ap !== bp) return sort === 'level_high' ? bp - ap : ap - bp;
+        return compareRowNames(a, b);
+      }
+
+      return compareRowNames(a, b);
+    });
+
+    return rows;
+  };
+
+  const studentFilterContextLabel = () => {
+    const parts = [];
+    if (studentViewState.className !== 'all') parts.push(`الفصل: ${studentViewState.className}`);
+    if (studentViewState.submission !== 'all') {
+      const outside = isOutsideSystem();
+      const labels = outside
+        ? { submitted: 'سلّم', not_submitted: 'لم يسلّم', unknown: 'غير محسوم' }
+        : { submitted: 'حلّ الواجب', not_submitted: 'لم يحل', unknown: 'غير محدد' };
+      parts.push(`التسليم: ${labels[studentViewState.submission] || studentViewState.submission}`);
+    }
+    if (studentViewState.level !== 'all') {
+      const labels = {
+        excellent: 'ممتاز', 'very-good': 'جيد جدًا', good: 'جيد',
+        acceptable: 'مقبول', weak: 'ضعيف', unrated: 'بدون تقدير'
+      };
+      parts.push(`التقدير: ${labels[studentViewState.level] || studentViewState.level}`);
+    }
+    return parts.length ? parts.join(' · ') : 'جميع الطلاب';
+  };
+
+  const getFilteredQuestionAnalytics = (rows = studentViewRows()) => {
+    const analytics = getQuestionAnalytics();
+    if (!analytics?.results) return analytics;
+    if (!isStudentViewFiltered()) return analytics;
+
+    const ids = new Set(rows.map(row => String(
+      row.student?.assignmentStudentId || row.student?.studentId || ''
+    )).filter(Boolean));
+    const filteredResults = analytics.results.filter(result => i
