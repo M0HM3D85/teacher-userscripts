@@ -1,0 +1,246 @@
+ document) => {
+    const cards = [...doc.querySelectorAll(indexCardSelector)]
+      .filter(card => card.querySelectorAll('a[href*="/Teacher/Assignments/ViewAssignment/"]').length === 1);
+
+    const assignments = cards
+      .map(parseIndexAssignmentCard)
+      .filter(a => a.title && a.assignmentGuid);
+
+    const unique = new Map();
+    for (const a of assignments) if (!unique.has(a.assignmentGuid)) unique.set(a.assignmentGuid, a);
+    return [...unique.values()];
+  };
+
+  const indexScopeUrl = () => {
+    try { return new URL(location.pathname, location.origin).href; }
+    catch { return location.origin + location.pathname; }
+  };
+
+  const indexPageUrl = (pageNumber = 1) => {
+    const url = new URL(indexScopeUrl());
+    url.searchParams.set('pageNumber', String(pageNumber));
+    return url.href;
+  };
+
+  const collectIndexAssignments = () => {
+    const assignments = parseIndexAssignmentsFromDocument(document);
+    indexState.assignments = assignments.map((a, i) => ({ ...a, index: i + 1 }));
+    indexState.collectedAt = new Date().toISOString();
+    indexState.indexPagesScanned = assignments.length ? 1 : 0;
+    indexState.indexStopReason = 'current_dom';
+    indexState.indexCollectionMode = 'current';
+    return indexState.assignments;
+  };
+
+  async function collectAllIndexAssignments({ silent = false } = {}) {
+    const unique = new Map();
+    let pagesScanned = 0;
+    let stopReason = '';
+    let firstPageFailed = false;
+
+    for (let pageNumber = 1; pageNumber <= INDEX_MAX_PAGES; pageNumber++) {
+      if (!silent) setIndexBusy(true, `جاري قراءة صفحة الواجبات ${pageNumber}…`);
+
+      let doc = null;
+      try {
+        doc = await fetchTextDocument(indexPageUrl(pageNumber));
+      } catch (e) {
+        if (pageNumber === 1) firstPageFailed = true;
+        stopReason = `fetch_error:${pageNumber}`;
+        console.warn(`[MAI v${VERSION}] Could not fetch Index page ${pageNumber}:`, e);
+        break;
+      }
+
+      const rows = parseIndexAssignmentsFromDocument(doc);
+
+      // أول صفحة فارغة قد تعني أن GET تغيّر مستقبلاً؛ عندها نحتفظ بالـDOM الحالي بدل فقد البيانات.
+      if (!rows.length) {
+        stopReason = pageNumber === 1 ? 'empty_first_page' : 'empty_page';
+        break;
+      }
+
+      pagesScanned++;
+      let newCount = 0;
+      for (const row of rows) {
+        if (!unique.has(row.assignmentGuid)) {
+          unique.set(row.assignmentGuid, row);
+          newCount++;
+        }
+      }
+
+      // حماية من أي خادم يعيد الصفحة نفسها مهما تغير pageNumber.
+      if (pageNumber > 1 && newCount === 0) {
+        stopReason = 'duplicate_page';
+        break;
+      }
+
+      if (pageNumber === INDEX_MAX_PAGES) stopReason = 'max_pages';
+    }
+
+    // احتياط: لو تعذر جلب الصفحة الأولى نستخدم بطاقات الصفحة المفتوحة.
+    if (!unique.size) {
+      const fallback = parseIndexAssignmentsFromDocument(document);
+      for (const row of fallback) if (!unique.has(row.assignmentGuid)) unique.set(row.assignmentGuid, row);
+      if (fallback.length && !pagesScanned) pagesScanned = 1;
+      if (firstPageFailed) stopReason = 'fallback_current_dom';
+    }
+
+    indexState.assignments = [...unique.values()].map((a, i) => ({ ...a, index: i + 1 }));
+    indexState.collectedAt = new Date().toISOString();
+    indexState.indexPagesScanned = pagesScanned;
+    indexState.indexStopReason = stopReason || 'done';
+    indexState.indexCollectionMode = 'all_pages';
+    return indexState.assignments;
+  }
+
+  const loadIndexPublicationsCache = () => {
+    const cached = safeJSONParse(localStorage.getItem(INDEX_PUBLICATIONS_CACHE_KEY), null);
+    if (!cached || cached.pageUrl !== indexScopeUrl() || !cached.byGuid) return null;
+    const current = new Set(indexState.assignments.map(a => a.assignmentGuid));
+    const cachedKeys = Object.keys(cached.byGuid || {});
+    if (!cachedKeys.some(k => current.has(k))) return null;
+    indexState.publications = cached;
+    return cached;
+  };
+
+  const saveIndexPublicationsCache = (cache) => {
+    try { localStorage.setItem(INDEX_PUBLICATIONS_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  };
+
+  const loadIndexDeepCache = () => {
+    const cached = safeJSONParse(localStorage.getItem(INDEX_DEEP_CACHE_KEY), null);
+    if (!cached || cached.pageUrl !== indexScopeUrl() || !cached.byGuid) return null;
+    const current = new Set(indexState.assignments.map(a => a.assignmentGuid));
+    if (!Object.keys(cached.byGuid || {}).some(k => current.has(k))) return null;
+    indexState.deep = cached;
+    return cached;
+  };
+
+  const saveIndexDeepCache = (cache) => {
+    try { localStorage.setItem(INDEX_DEEP_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  };
+
+  const publicationInfoFor = (assignment) => indexState.publications?.byGuid?.[assignment.assignmentGuid] || null;
+  const deepInfoFor = (assignment) => indexState.deep?.byGuid?.[assignment.assignmentGuid] || null;
+
+  // التقرير النهائي لا يُحتسب إلا بعد انتهاء جميع مرات نشر الواجب.
+  // وجود أي نشر حالي يعني أن البيانات ما زالت قيد الاكتمال، لذلك نؤجل التقرير بالكامل.
+  const reportEligibilityFor = (assignment) => {
+    const pub = publicationInfoFor(assignment);
+    if (!pub) return { eligible: false, status: 'unscanned', label: 'لم يتم فحص المنشورات', current: 0, ended: 0 };
+
+    const deep = deepInfoFor(assignment);
+    if (deep?.reportStatus === 'receiving_server_verified') {
+      return { eligible: false, status: 'receiving', label: 'قيد الاستقبال (وقت الخادم)', current: Number(pub.currentGradeLinks || 0), ended: Number(pub.endedGradeLinks || 0) };
+    }
+    if (deep?.reportStatus === 'timing_unverified') {
+      return { eligible: false, status: 'scan_incomplete', label: 'تعذر التحقق من وقت النهاية', current: Number(pub.currentGradeLinks || 0), ended: Number(pub.endedGradeLinks || 0) };
+    }
+
+    const current = Number(pub.currentGradeLinks || pub.current?.gradeLinks?.length || 0);
+    const ended = Number(pub.endedGradeLinks || pub.ended?.gradeLinks?.length || 0);
+    const currentOk = Array.isArray(pub.current?.errors) ? pub.current.errors.length === 0 : false;
+    const endedOk = Array.isArray(pub.ended?.errors) ? pub.ended.errors.length === 0 : false;
+
+    if (current > 0) return { eligible: false, status: 'receiving', label: 'قيد الاستقبال', current, ended };
+    if (!currentOk || !endedOk) return { eligible: false, status: 'scan_incomplete', label: 'فحص المنشورات غير مكتمل', current, ended };
+    if (ended > 0) return { eligible: true, status: 'ready', label: 'مكتمل', current, ended };
+    return { eligible: false, status: 'no_publications', label: 'لا توجد منشورات منتهية', current, ended };
+  };
+
+  const summarizeIndexAssignments = () => {
+    const rows = indexState.assignments || [];
+    const grades = rows.map(r => r.grade).filter(Number.isFinite);
+    const totalGrade = grades.reduce((a, b) => a + b, 0);
+    const averageGrade = grades.length ? totalGrade / grades.length : null;
+    const activeCount = rows.filter(r => r.active === true).length;
+    const disabledCount = rows.filter(r => r.active === false).length;
+    const sourceCounts = {};
+    for (const row of rows) {
+      const k = row.source || 'غير محدد';
+      sourceCounts[k] = (sourceCounts[k] || 0) + 1;
+    }
+    const publicationLinks = rows.reduce((sum, row) => sum + (publicationInfoFor(row)?.gradeLinks?.length || 0), 0);
+    const publishedAssignments = rows.filter(row => (publicationInfoFor(row)?.gradeLinks?.length || 0) > 0).length;
+    const reportReadyCount = rows.filter(row => reportEligibilityFor(row).eligible).length;
+    const reportReceivingCount = rows.filter(row => reportEligibilityFor(row).status === 'receiving').length;
+    const reportDeferredCount = rows.filter(row => ['receiving','scan_incomplete'].includes(reportEligibilityFor(row).status)).length;
+    const deepItems = rows.map(deepInfoFor).filter(x => x && x.analysisAvailable !== false && x.reportStatus !== 'receiving' && x.publicationsAnalyzed > 0);
+    const deepStudentRecords = deepItems.reduce((sum, x) => sum + (x.studentRecords || 0), 0);
+    const deepSubmitted = deepItems.reduce((sum, x) => sum + (x.submitted || 0), 0);
+    const deepNotSubmitted = deepItems.reduce((sum, x) => sum + (x.notSubmitted || 0), 0);
+    const deepScoreCount = deepItems.reduce((sum, x) => sum + (x.scoreCount || 0), 0);
+    const deepScoreSum = deepItems.reduce((sum, x) => sum + (x.scorePercentSum || 0), 0);
+
+    return {
+      total: rows.length,
+      activeCount,
+      disabledCount,
+      unknownStatusCount: rows.length - activeCount - disabledCount,
+      totalGrade,
+      averageGrade,
+      highestGrade: grades.length ? Math.max(...grades) : null,
+      lowestGrade: grades.length ? Math.min(...grades) : null,
+      sourceCounts,
+      uniqueSources: Object.keys(sourceCounts).length,
+      publicationLinks,
+      publishedAssignments,
+      reportReadyCount,
+      reportReceivingCount,
+      reportDeferredCount,
+      publicationsScanned: !!indexState.publications,
+      deepScanned: !!indexState.deep,
+      deepStudentRecords,
+      deepSubmitted,
+      deepNotSubmitted,
+      deepAveragePercent: deepScoreCount ? deepScoreSum / deepScoreCount : null
+    };
+  };
+
+  const indexStatusLabel = (row) => row.active === true ? 'مفعّل' : row.active === false ? 'معطل' : 'غير محدد';
+
+  const indexMetric = (value, label, hint = '') => `
+    <div class="${APP}-idx-metric">
+      <strong>${esc(value)}</strong>
+      <span>${esc(label)}</span>
+      ${hint ? `<small>${esc(hint)}</small>` : ''}
+    </div>`;
+
+  const renderIndexPanel = () => {
+    const panel = document.getElementById(indexPanelId);
+    if (!panel) return;
+
+    const summary = summarizeIndexAssignments();
+    const sourceHtml = Object.entries(summary.sourceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `<span class="${APP}-idx-chip">${esc(name)} <b>${count}</b></span>`)
+      .join('');
+
+    const body = panel.querySelector(`.${APP}-idx-body`);
+    if (!body) return;
+
+    body.innerHTML = `
+      <div class="${APP}-idx-metrics">
+        ${indexMetric(summary.total, 'إجمالي الواجبات', indexState.indexPagesScanned ? `من ${indexState.indexPagesScanned} صفحة` : '')}
+        ${indexMetric(summary.activeCount, 'مفعّلة', summary.disabledCount ? `${summary.disabledCount} معطل` : '')}
+        ${indexMetric(fmt(summary.totalGrade, 4), 'مجموع الدرجات')}
+        ${indexMetric(Number.isFinite(summary.averageGrade) ? fmt(summary.averageGrade, 4) : '—', 'متوسط درجة الواجب')}
+        ${indexMetric(Number.isFinite(summary.highestGrade) ? fmt(summary.highestGrade, 4) : '—', 'أعلى درجة')}
+        ${indexMetric(Number.isFinite(summary.lowestGrade) ? fmt(summary.lowestGrade, 4) : '—', 'أقل درجة')}
+        ${indexMetric(summary.publicationsScanned ? summary.publicationLinks : '—', 'روابط رصد مكتشفة', summary.publicationsScanned ? `${summary.publishedAssignments} واجب له رصد` : 'اضغط فحص المنشورات')}
+        ${indexMetric(summary.deepScanned && Number.isFinite(summary.deepAveragePercent) ? `${fmt(summary.deepAveragePercent)}%` : '—', 'متوسط الأداء العام', summary.deepScanned ? `${summary.deepStudentRecords} سجل طالب · ${summary.reportReceivingCount} قيد الاستقبال` : 'للواجبات المنتهية فقط')}
+      </div>
+
+      ${sourceHtml ? `<div class="${APP}-idx-sources"><b>مصادر الواجبات:</b>${sourceHtml}</div>` : ''}
+
+      <div class="${APP}-idx-note">
+        يجمع «تحديث السجل» جميع صفحات إدارة الواجبات تلقائيًا ويزيل التكرار بالـ Assignment GUID. «فحص المنشورات» يكتشف الحالية والمنتهية، أما تقرير الأداء فلا يُحتسب إلا للواجب الذي انتهت جميع مرات نشره؛ أي واجب ما زال قيد الاستقبال يُؤجل تقريره حتى ينتهي.
+      </div>
+
+      <div class="${APP}-idx-table-wrap">
+        <table class="${APP}-idx-table">
+          <thead><tr>
+            <th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة / الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>الرصد</th><th>نسبة الحل / التسليم</th><th>المتوسط</th><th>لم يحل / لم يسلّم</th><th>روابط</th>
+          </tr></thead>
+          <tbody>
+            ${(indexState.assignments || []).map(row => {
