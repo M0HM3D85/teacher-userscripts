@@ -1,0 +1,208 @@
+ ودرجة صفحة نتيجة الطالب. اعتمد التحليل درجة صفحة النتيجة.</div>` : ''}
+      </section>
+
+      <section class="${APP}-analysis-section">
+        <div class="${APP}-analysis-heading"><div><h3>مستويات الطلاب</h3><p>${outside ? '«لم يسلّم» فئة مستقلة عن الطالب الذي سلّم وأخذ صفرًا.' : '«ضعيف» يشمل 50% فأقل لمن لديه درجة، و«لم يحل» فئة مستقلة.'}</p></div></div>
+        <div class="${APP}-level-grid">${levelCardsHtml(viewRows)}</div>
+      </section>
+
+      ${questionSection}
+
+      <section class="${APP}-analysis-section" data-mai-student-section>
+        <div class="${APP}-analysis-heading"><div><h3>تقييم الطلاب</h3><p>صفِّ حسب الفصل أو التسليم أو التقدير، وفرز حسب الاسم أو التسليم أو التقدير. البطاقات والتقارير تتبع التصفية الحالية.</p></div></div>
+        ${studentFilterControlsHtml()}
+        <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+          <thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>الحالة</th><th>الدرجة</th><th>النسبة</th><th>المستوى</th>${isOnlineQuestions() ? '<th>صحيح</th><th>خطأ</th><th>لم يجب</th>' : ''}</tr></thead>
+          <tbody data-mai-student-tbody>${buildStudentTableRows()}</tbody>
+        </table></div>
+      </section>`;
+  };
+
+  const renderInlineAnalysis = () => {
+    const summary = document.getElementById(`${APP}-summary`);
+    if (summary) summary.style.display = 'none';
+
+    let host = document.getElementById(`${APP}-analysis-inline`);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = `${APP}-analysis-inline`;
+      const panel = document.getElementById(`${APP}-panel`);
+      const rights = panel?.querySelector(`.${APP}-rights`);
+      if (panel && rights) panel.insertBefore(host, rights);
+      else panel?.appendChild(host);
+    }
+    if (host) host.innerHTML = buildInlineAnalysisHtml();
+    syncActionAvailability();
+  };
+
+  const refreshStudentTableView = (section) => {
+    if (!section) return;
+    const rows = studentViewRows();
+    const total = performanceRows().length;
+    const tbody = section.querySelector('[data-mai-student-tbody]');
+    const count = section.querySelector('[data-mai-student-count]');
+    const classFilter = section.querySelector('[data-mai-student-class]');
+    const submission = section.querySelector('[data-mai-student-submission]');
+    const level = section.querySelector('[data-mai-student-level]');
+    const sort = section.querySelector('[data-mai-student-sort]');
+    if (classFilter) classFilter.value = studentViewState.className;
+    if (submission) submission.value = studentViewState.submission;
+    if (level) level.value = studentViewState.level;
+    if (sort) sort.value = studentViewState.sort;
+    if (tbody) tbody.innerHTML = buildStudentTableRows(rows);
+    if (count) count.textContent = `عرض ${rows.length} من ${total}`;
+  };
+
+  const refreshAllFilteredViews = () => {
+    // الصفحة الرئيسية: إعادة بناء كاملة حتى تتغير البطاقات ومستويات الطلاب مع المرشح.
+    renderInlineAnalysis();
+
+    // إن كانت نافذة "لوحة تحليل الواجب" مفتوحة، نجدد محتواها كذلك.
+    const modal = document.getElementById(`${APP}-modal`);
+    const titleEl = document.getElementById(`${APP}-modal-title`);
+    const body = document.getElementById(`${APP}-modal-body`);
+    if (modal && !modal.hidden && body && clean(titleEl?.textContent || '') === 'لوحة تحليل الواجب') {
+      body.innerHTML = buildInlineAnalysisHtml();
+    }
+  };
+
+  const installStudentViewControls = () => {
+    if (document.documentElement.dataset.maiStudentViewBound === '1') return;
+    document.documentElement.dataset.maiStudentViewBound = '1';
+
+    document.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement)) return;
+      const section = target.closest('[data-mai-student-section]');
+      if (!section) return;
+
+      if (target.matches('[data-mai-student-class]')) studentViewState.className = target.value || 'all';
+      else if (target.matches('[data-mai-student-submission]')) studentViewState.submission = target.value || 'all';
+      else if (target.matches('[data-mai-student-level]')) studentViewState.level = target.value || 'all';
+      else if (target.matches('[data-mai-student-sort]')) studentViewState.sort = target.value || 'name_asc';
+      else return;
+
+      refreshAllFilteredViews();
+    });
+
+    document.addEventListener('click', (event) => {
+      const btn = event.target instanceof Element ? event.target.closest('[data-mai-student-reset]') : null;
+      if (!btn) return;
+      const section = btn.closest('[data-mai-student-section]');
+      studentViewState.className = 'all';
+      studentViewState.submission = 'all';
+      studentViewState.level = 'all';
+      studentViewState.sort = 'name_asc';
+      if (section) refreshAllFilteredViews();
+    });
+  };
+
+  // -----------------------------
+  // نافذة التحليل الموسعة
+  // -----------------------------
+  const showModal = (title, html) => {
+    const modal = document.getElementById(`${APP}-modal`);
+    const titleEl = document.getElementById(`${APP}-modal-title`);
+    const body = document.getElementById(`${APP}-modal-body`);
+    if (!modal || !body) throw new Error('تعذر فتح نافذة مدير الواجبات.');
+    if (titleEl) titleEl.textContent = title;
+    body.innerHTML = html;
+    modal.hidden = false;
+  };
+
+  const openDashboardEnhanced = () => {
+    assertFinalReportReady();
+    if (!state.gradeData) throw new Error('حدّث التحليل أولًا.');
+    showModal('لوحة تحليل الواجب', buildInlineAnalysisHtml());
+  };
+
+  const openQuestionAnalyticsEnhanced = async () => {
+    assertFinalReportReady();
+    if (isOutsideSystem()) throw new Error('تحليل الأسئلة غير متاح لواجبات «خارج النظام».');
+    let a = getQuestionAnalytics();
+    if (!a) a = await runDeepQuestionAnalysisEnhanced();
+    a = getFilteredQuestionAnalytics(studentViewRows()) || a;
+    showModal('تحليل الأسئلة', `
+      <div class="${APP}-analysis-note">السياق الحالي: ${esc(studentFilterContextLabel())}</div>
+      ${questionSummaryCardsHtml(a)}
+      <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+        <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
+        <tbody>${buildQuestionTableRows(a)}</tbody>
+      </table></div>`);
+  };
+
+  // -----------------------------
+  // Print / PDF — فتح النافذة قبل أي await لمنع popup blocker
+  // -----------------------------
+  const openPrintShell = (title) => {
+    const w = window.open('', '_blank');
+    if (!w) {
+      throw new Error('تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة لموقع مدرستي ثم أعد المحاولة.');
+    }
+    try { w.opener = null; } catch {}
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title></head>
+      <body style="font-family:Tahoma,Arial,sans-serif;direction:rtl;padding:32px;text-align:center"><h3>جارٍ تجهيز ${esc(title)}…</h3></body></html>`);
+    w.document.close();
+    return w;
+  };
+
+  const renderPrintDocument = (w, title, bodyHtml, { autoPrint = true } = {}) => {
+    const css = `
+      @page{size:A4;margin:12mm}
+      *{box-sizing:border-box}
+      body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:0;font-size:12px;line-height:1.65}
+      h1{font-size:22px;margin:0} h2{font-size:16px;margin:0 0 10px} h3{font-size:13px;margin:0}
+      .header{border-bottom:3px solid #111827;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:20px;align-items:flex-end}
+      .muted{color:#6b7280}.small{font-size:10px}.nowrap{white-space:nowrap}
+      .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 16px}
+      .card{border:1px solid #d1d5db;border-radius:10px;padding:10px;break-inside:avoid}.card b{display:block;font-size:18px}.card span{color:#6b7280}
+      .levels{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0 16px}.level{border:1px solid #d1d5db;border-radius:9px;padding:8px;text-align:center}.level b{font-size:16px;display:block}
+      .section{margin:18px 0;break-inside:auto}.section-title{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #9ca3af;padding-bottom:6px;margin-bottom:8px}
+      table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #d1d5db;padding:6px;text-align:right;vertical-align:top}th{background:#f3f4f6;font-weight:700}
+      tr{break-inside:avoid}.page-break{break-before:page}.q{border:1px solid #d1d5db;border-radius:9px;padding:10px;margin:8px 0;break-inside:avoid}.qhead{display:flex;justify-content:space-between;gap:10px;font-weight:700}.opts{list-style:none;padding:0;margin:8px 0}.opts li{padding:3px 0}.correct{font-weight:700}.badge{display:inline-block;border:1px solid #9ca3af;border-radius:999px;padding:2px 6px;font-size:9px}
+      .footer{margin-top:20px;border-top:1px solid #d1d5db;padding-top:8px;color:#6b7280;font-size:9px;display:flex;justify-content:space-between}
+      .print-actions{position:fixed;left:15px;bottom:15px;z-index:10}.print-actions button{padding:10px 16px;border:0;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}
+      @media print{.print-actions{display:none}.page-break{break-before:page}}
+    `;
+
+    w.document.open();
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style></head><body>
+      <div class="print-actions"><button onclick="window.print()">طباعة / حفظ PDF</button></div>
+      ${bodyHtml}
+      </body></html>`);
+    w.document.close();
+    if (autoPrint) {
+      w.setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 450);
+    }
+  };
+
+  const printHeaderHtml = (documentLabel, { compact = false, assignmentName = '', rows = null } = {}) => {
+    const data = state.gradeData;
+    const name = assignmentName || data?.assignmentName || (isUsableAssignmentName(data?.title) ? cleanAssignmentNameCandidate(data.title) : '') || 'واجب مدرستي';
+    if (compact) {
+      return `<div class="header compact-header">
+        <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)}</div></div>
+      </div>`;
+    }
+
+    const rowStudents = Array.isArray(rows) ? rows.map(row => row?.student || row).filter(Boolean) : (data?.students || []);
+    const classes = [...new Set(rowStudents.map(s => clean(s.className)).filter(Boolean))].sort(compareArabicNames).join('، ');
+    return `<div class="header">
+      <div><h1>${esc(name)}</h1><div class="muted">${esc(documentLabel)} · ${esc(studentFilterContextLabel())}</div></div>
+      <div class="small">${esc(data?.assignmentMode?.label || '')}<br>${classes ? `الفصل/الفصول: ${esc(classes)}` : ''}<br>${new Date().toLocaleString('ar-SA')}</div>
+    </div>`;
+  };
+
+  const questionPaperCss = `
+    @page{size:A4;margin:12mm}
+    *{box-sizing:border-box}
+    body{font-family:Tahoma,Arial,sans-serif;direction:rtl;color:#111827;margin:0;font-size:13px;line-height:1.7}
+    .paper-head{border-bottom:3px solid #111827;padding-bottom:12px;margin-bottom:14px}
+    .paper-head h1{font-size:24px;margin:0 0 3px}.paper-head .sub{font-size:12px;color:#4b5563}.paper-meta{font-size:10px;color:#6b7280;margin-top:5px}
+    .student-fields{display:none;border:1px solid #9ca3af;border-radius:8px;padding:9px 12px;margin:10px 0 14px;grid-template-columns:1fr 1fr;gap:18px}
+    body.student-copy .student-fields{display:grid}
+    .q{border:1px solid #d1d5db;border-radius:9px;padding:11px 12px;margin:9px 0;break-inside:avoid}
+    .qhead{display:flex;justify-content:space-between;gap:12px;font-weight:700}.qgrade{white-space:nowrap;font-size:11px;color:#4b5563}
+    .opts{list-style:none;padding:0;margin:8px 0 0}.opts li{padding:4px 7px;border-radius:6px;margin:2px 0}.choice-marker{display:inline-block;min-width:20px;font-weight:800}
+    .correct
