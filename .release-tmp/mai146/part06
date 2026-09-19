@@ -1,0 +1,202 @@
+ds.has(String(result.assignmentStudentId || '')));
+    return aggregateDeepAnalysis(filteredResults);
+  };
+
+  const studentFilterControlsHtml = () => {
+    const outside = isOutsideSystem();
+    const rows = studentViewRows();
+    const total = performanceRows().length;
+    const submissionLabels = outside
+      ? { submitted: 'سلّم', not_submitted: 'لم يسلّم', unknown: 'غير محسوم' }
+      : { submitted: 'حلّ الواجب', not_submitted: 'لم يحل', unknown: 'غير محدد' };
+
+    const selected = (actual, expected) => actual === expected ? ' selected' : '';
+    const classes = availableStudentClasses();
+
+    return `
+      <div class="${APP}-student-tools" data-mai-student-tools>
+        <label><span>الفصل</span><select data-mai-student-class>
+          <option value="all"${selected(studentViewState.className, 'all')}>كل الفصول</option>
+          ${classes.map(className => `<option value="${esc(className)}"${selected(studentViewState.className, className)}>${esc(className)}</option>`).join('')}
+        </select></label>
+        <label><span>التسليم</span><select data-mai-student-submission>
+          <option value="all"${selected(studentViewState.submission, 'all')}>الكل</option>
+          <option value="submitted"${selected(studentViewState.submission, 'submitted')}>${esc(submissionLabels.submitted)}</option>
+          <option value="not_submitted"${selected(studentViewState.submission, 'not_submitted')}>${esc(submissionLabels.not_submitted)}</option>
+          <option value="unknown"${selected(studentViewState.submission, 'unknown')}>${esc(submissionLabels.unknown)}</option>
+        </select></label>
+        <label><span>التقدير</span><select data-mai-student-level>
+          <option value="all"${selected(studentViewState.level, 'all')}>الكل</option>
+          <option value="excellent"${selected(studentViewState.level, 'excellent')}>ممتاز</option>
+          <option value="very-good"${selected(studentViewState.level, 'very-good')}>جيد جدًا</option>
+          <option value="good"${selected(studentViewState.level, 'good')}>جيد</option>
+          <option value="acceptable"${selected(studentViewState.level, 'acceptable')}>مقبول</option>
+          <option value="weak"${selected(studentViewState.level, 'weak')}>ضعيف</option>
+          <option value="unrated"${selected(studentViewState.level, 'unrated')}>بدون تقدير</option>
+        </select></label>
+        <label><span>الفرز</span><select data-mai-student-sort>
+          <option value="name_asc"${selected(studentViewState.sort, 'name_asc')}>الاسم: أ ← ي</option>
+          <option value="name_desc"${selected(studentViewState.sort, 'name_desc')}>الاسم: ي ← أ</option>
+          <option value="submission_submitted"${selected(studentViewState.sort, 'submission_submitted')}>التسليم: المسلّم أولًا</option>
+          <option value="submission_not_submitted"${selected(studentViewState.sort, 'submission_not_submitted')}>التسليم: غير المسلّم أولًا</option>
+          <option value="level_high"${selected(studentViewState.sort, 'level_high')}>التقدير: الأعلى أولًا</option>
+          <option value="level_low"${selected(studentViewState.sort, 'level_low')}>التقدير: الأدنى أولًا</option>
+        </select></label>
+        <button type="button" class="${APP}-student-reset" data-mai-student-reset>إعادة الضبط</button>
+        <div class="${APP}-student-count" data-mai-student-count>عرض ${rows.length} من ${total}</div>
+      </div>`;
+  };
+
+  const metricHtml = (value, label, hint = '') => `
+    <div class="${APP}-metric ${APP}-metric-v12">
+      <b>${value}</b><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ''}
+    </div>`;
+
+  const levelCardsHtml = (rows = studentViewRows()) => {
+    const counts = Object.fromEntries(levelOrder.map(([key]) => [key, 0]));
+    for (const row of rows) counts[row.level?.key] = (counts[row.level?.key] || 0) + 1;
+    const total = rows.length;
+    const outside = isOutsideSystem();
+    const visible = levelOrder.filter(([key]) => (counts[key] || 0) > 0 || ['excellent','very-good','good','acceptable','weak','not-solved'].includes(key));
+    return visible.map(([key, label]) => {
+      const displayLabel = outside && key === 'not-solved' ? 'لم يسلّم' : outside && key === 'unverified' ? 'غير محسوم' : label;
+      return `
+      <div class="${APP}-level-card ${APP}-level-${key}">
+        <strong>${counts[key] || 0}</strong>
+        <span>${esc(displayLabel)}</span>
+        <small>${total ? pct(counts[key] || 0, total) : 0}% من المعروض</small>
+      </div>`;
+    }).join('');
+  };
+
+  const questionSummaryCardsHtml = (a = getFilteredQuestionAnalytics()) => {
+    if (!a) {
+      return `<div class="${APP}-analysis-note">تحليل الأسئلة سيظهر بعد جمع نتائج الطلاب. استخدم «تحديث التحليل».</div>`;
+    }
+    const s = a.summary;
+    return `
+      <div class="${APP}-question-metrics">
+        ${metricHtml(s.questionCount, 'عدد الأسئلة')}
+        ${metricHtml(`${fmt(s.correctRate)}%`, 'الإجابات الصحيحة')}
+        ${metricHtml(`${fmt(s.incorrectRate)}%`, 'الإجابات الخاطئة')}
+        ${metricHtml(s.unansweredResponses, 'إجابات متروكة')}
+        ${metricHtml(s.hardest ? `س${s.hardest.number}` : '—', 'أصعب سؤال', s.hardest ? `${fmt(s.hardest.correctRate)}% صحة` : '')}
+        ${metricHtml(s.easiest ? `س${s.easiest.number}` : '—', 'أسهل سؤال', s.easiest ? `${fmt(s.easiest.correctRate)}% صحة` : '')}
+      </div>`;
+  };
+
+  const buildStudentTableRows = (rows = studentViewRows()) => rows.map((row, index) => {
+    const s = row.student;
+    const qs = studentQuestionStats(s);
+    const achieved = resolvedAchievedGrade(s);
+    const maxGrade = resolvedMaxGrade(s);
+    const discrepancyHint = s.gradeDiscrepancy
+      ? `<div class="${APP}-tiny ${APP}-grade-warning">⚠ درجة صفحة الرصد: ${fmt(num(s.gradeFieldValue), 4)}</div>`
+      : '';
+    return `<tr>
+      <td>${index + 1}</td>
+      <td><b>${esc(s.name || '—')}</b></td>
+      <td>${esc(s.className || '—')}</td>
+      <td>${esc(getStatusLabel(s))}</td>
+      <td>${Number.isFinite(achieved) ? `${fmt(achieved, 4)} / ${fmt(maxGrade, 4)}${discrepancyHint}` : '—'}</td>
+      <td>${Number.isFinite(row.percent) ? `${fmt(row.percent)}%` : '—'}</td>
+      <td><span class="${APP}-level-pill ${APP}-level-${row.level.key}">${esc(row.level.label)}</span></td>
+      ${isOnlineQuestions() ? `<td>${qs?.correct ?? '—'}</td><td>${qs?.incorrect ?? '—'}</td><td>${qs?.unanswered ?? '—'}</td>` : ''}
+    </tr>`;
+  }).join('');
+
+  const buildQuestionTableRows = (a = getFilteredQuestionAnalytics()) => {
+    if (!a) return '';
+    return a.questions.map(q => `<tr>
+      <td>${q.number}</td>
+      <td><b>${esc(q.text || '—')}</b><div class="${APP}-tiny">${esc(q.correctText ? `الإجابة الصحيحة: ${q.correctText}` : '')}</div></td>
+      <td>${esc(q.type || '—')}</td>
+      <td>${Number.isFinite(q.maxScore) ? fmt(q.maxScore, 4) : '—'}</td>
+      <td>${q.participants}</td>
+      <td>${q.correct}</td>
+      <td>${q.incorrect}</td>
+      <td>${q.unanswered}</td>
+      <td>${fmt(q.correctRate)}%</td>
+      <td><span class="${APP}-difficulty ${q.difficulty === 'صعب' ? 'hard' : q.difficulty === 'متوسط' ? 'medium' : 'easy'}">${esc(q.difficulty)}</span></td>
+      <td>${q.mostCommonWrong ? `${esc(q.mostCommonWrong.text)} <small>(${q.mostCommonWrong.count})</small>` : '—'}</td>
+    </tr>`).join('');
+  };
+
+  const buildInlineAnalysisHtml = () => {
+    const data = state.gradeData;
+    if (!data) return `<div class="${APP}-analysis-note">جاري تجهيز بيانات الواجب…</div>`;
+
+    const gate = gradeReportGate(document);
+    if (!gate.ready) {
+      const endText = gate.timing?.endDate ? formatGradeTimingDate(gate.timing.endDate) : 'غير متاح';
+      const serverText = gate.timing?.serverDate ? formatGradeTimingDate(gate.timing.serverDate) : 'غير متاح';
+      return `
+        <section class="${APP}-analysis-section ${APP}-analysis-overview">
+          <div class="${APP}-analysis-heading">
+            <div>
+              <h3>${gate.status === 'receiving' ? 'الواجب قيد الاستقبال' : 'تعذر التحقق من اكتمال الواجب'}</h3>
+              <p>${esc(gate.message)}</p>
+            </div>
+            <span class="${APP}-pill">v${VERSION}</span>
+          </div>
+          <div class="${APP}-overview-metrics">
+            ${metricHtml(gate.status === 'receiving' ? 'قيد الاستقبال' : 'غير متحقق', 'حالة التقرير', 'لا تُحتسب بيانات الأداء الآن')}
+            ${metricHtml(endText, 'نهاية استقبال الحلول')}
+            ${metricHtml(serverText, 'وقت خادم مدرستي')}
+          </div>
+          <div class="${APP}-analysis-note ${APP}-analysis-warning">
+            لا يتم عرض نسبة الإنجاز أو المتوسط أو «لم يحل» قبل انتهاء وقت النشر، لأن هذه القيم ما زالت قابلة للتغير. تبقى أدوات الرصد والاستيراد وطباعة نموذج الأسئلة متاحة.
+          </div>
+        </section>`;
+    }
+
+    const viewRows = studentViewRows();
+    const s = computeEnhancedSummary(viewRows);
+    const outside = isOutsideSystem();
+    const qa = getFilteredQuestionAnalytics(viewRows);
+    const filterContext = studentFilterContextLabel();
+
+    const topMetrics = outside
+      ? [
+          metricHtml(s.total ?? 0, 'عدد الطلاب'),
+          metricHtml(s.submittedCount ?? 0, 'سلّموا الواجب'),
+          metricHtml(s.notSubmittedCount ?? 0, 'لم يسلّموا'),
+          metricHtml(s.unknownSubmissionCount ?? 0, 'غير محسوم'),
+          metricHtml(`${fmt(s.submissionRate ?? 0)}%`, 'نسبة التسليم', 'مستنتجة من الدرجة والملاحظة'),
+          metricHtml(s.graded ?? 0, 'درجات مرصودة'),
+          metricHtml(Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'),
+          metricHtml(Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'),
+          metricHtml(Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة مرصودة')
+        ].join('')
+      : [
+          metricHtml(s.total ?? 0, 'عدد الطلاب'),
+          metricHtml(s.submittedCount ?? 0, 'حلوا الواجب'),
+          metricHtml(s.notSubmittedCount ?? 0, 'لم يحلوا'),
+          metricHtml(`${fmt(s.submissionRate ?? 0)}%`, 'نسبة الإنجاز'),
+          metricHtml(Number.isFinite(s.averagePercent) ? `${fmt(s.averagePercent)}%` : '—', 'متوسط الأداء'),
+          metricHtml(Number.isFinite(s.highestPercent) ? `${fmt(s.highestPercent)}%` : '—', 'أعلى نتيجة'),
+          metricHtml(Number.isFinite(s.lowestPercent) ? `${fmt(s.lowestPercent)}%` : '—', 'أدنى نتيجة')
+        ].join('');
+
+    const questionSection = outside
+      ? `<div class="${APP}-analysis-note ${APP}-analysis-note-muted">هذا الواجب «خارج النظام»؛ لذلك لا تعرض مدرستي بنية أسئلة أو إجابات يمكن تحليلها. تحليل الدرجات والطلاب أدناه يظل متاحًا.</div>`
+      : `
+        <section class="${APP}-analysis-section">
+          <div class="${APP}-analysis-heading"><div><h3>تحليل الأسئلة والإجابات</h3><p>نسب الصحة والخطأ والأسئلة الأصعب والأخطاء الأكثر شيوعًا.</p></div></div>
+          ${questionSummaryCardsHtml(qa)}
+          ${qa ? `<details class="${APP}-details" open><summary>تفاصيل الأسئلة (${qa.questions.length})</summary>
+            <div class="${APP}-table-wrap"><table class="${APP}-table ${APP}-analysis-table">
+              <thead><tr><th>#</th><th>السؤال</th><th>النوع</th><th>درجة السؤال</th><th>الطلاب</th><th>صحيح</th><th>خطأ</th><th>لم يجب</th><th>نسبة الصحة</th><th>الصعوبة</th><th>أكثر خطأ شيوعًا</th></tr></thead>
+              <tbody>${buildQuestionTableRows(qa)}</tbody>
+            </table></div>
+          </details>` : ''}
+        </section>`;
+
+    return `
+      <section class="${APP}-analysis-section ${APP}-analysis-overview">
+        <div class="${APP}-analysis-heading">
+          <div><h3>تحليل الواجب</h3><p>${esc(data.assignmentMode?.label || 'الواجب')} · ${esc(filterContext)} · تحديث: ${new Date().toLocaleString('ar-SA')}</p></div>
+          <span class="${APP}-pill">v${VERSION}</span>
+        </div>
+        <div class="${APP}-overview-metrics">${topMetrics}</div>
+        ${s.discrepancyCount ? `<div class="${APP}-analysis-note ${APP}-analysis-warning">⚠ تم اكتشاف ${s.discrepancyCount} حالة تعارض بين درجة صفحة الرصد
