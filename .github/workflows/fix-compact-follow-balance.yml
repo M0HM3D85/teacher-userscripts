@@ -1,0 +1,45 @@
+name: Fix Compact Follow Balance
+
+on:
+  push:
+    branches:
+      - feat/student-rased-follow-studio-v2-1
+    paths:
+      - '.github/scripts/fix_compact_follow_balance.py'
+      - '.github/workflows/fix-compact-follow-balance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/student-rased-follow-studio-v2-1
+          fetch-depth: 0
+
+      - name: Apply compact balance fix
+        run: python .github/scripts/fix_compact_follow_balance.py
+
+      - name: Validate userscript syntax
+        run: node --check scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Validate repository metadata
+        run: node tools/validate-userscripts.mjs
+
+      - name: Validate compact balance marker
+        run: grep -q "minRowsPerFlow" scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js
+
+      - name: Commit product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js scripts/student-rased-madrasati-noor/README.md scripts/student-rased-madrasati-noor/CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "fix(student-rased): balance compact follow columns"
+          git push origin HEAD:feat/student-rased-follow-studio-v2-1
