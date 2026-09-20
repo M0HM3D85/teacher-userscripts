@@ -165,16 +165,17 @@
     {
       "id": "student-rased-madrasati-noor",
       "name": "راصد الطلاب | مدرستي + نور",
-      "version": "1.9.1",
+      "version": "2.1.0",
       "status": "stable",
-      "description": "راصد دقيق لبيانات الطلاب من صفحات الطلاب المطلوبة فقط في مدرستي ونور: استخراج دقيق، مدرسة نور كاملة، نسخ مقارنة ببصمة تحقق، مقارنة شاملة محافظة، سجل زمني، ومركز مراجعة يدوية.",
+      "description": "راصد دقيق لبيانات الطلاب من مدرستي ونور مع دعم نور القديم وV2، استخراج المدرسة كاملة، مقارنة محافظة وسجل زمني، واستوديو كشوف متابعة بفلترة الصفوف والفصول والقوالب والطباعة وExcel.",
       "sourcePath": "scripts/student-rased-madrasati-noor/student-rased-madrasati-noor.user.js",
       "additionalInfoPath": "scripts/student-rased-madrasati-noor/README.md",
       "greasyFork": "https://greasyfork.org/scripts/592894",
       "legacyVersionFormat": false,
       "targets": [
         "https://schools.madrasati.sa/SchoolManagmentReports/StudentInfo/ClassStudentInfo/*",
-        "https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReport.aspx*"
+        "https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReport.aspx*",
+        "https://noor.moe.gov.sa/Noor/EduWavek12Portal/ReportPages/StudntNamesReportV2.aspx*"
       ],
       "normalizedIdentity": true
     },
