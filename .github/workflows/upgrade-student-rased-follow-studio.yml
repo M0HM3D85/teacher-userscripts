@@ -20,7 +20,7 @@ jobs:
           ref: feat/student-rased-follow-studio-v2-1
           fetch-depth: 0
 
-      - name: Make patch replacements literal
+      - name: Make patch replacements safe
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -28,7 +28,11 @@ jobs:
           s = p.read_text(encoding='utf-8')
           s = s.replace(
               "new_text, count = re.subn(pattern, replacement, text, count=1, flags=flags)",
-              "new_text, count = re.subn(pattern, lambda _m: replacement, text, count=1, flags=flags)"
+              "repl = replacement if callable(replacement) else (lambda _m: replacement)\n    new_text, count = re.subn(pattern, repl, text, count=1, flags=flags)"
+          )
+          s = s.replace(
+              "    r'\\1' + extra_settings + r'\\2',",
+              "    lambda m: m.group(1) + extra_settings + m.group(2),"
           )
           p.write_text(s, encoding='utf-8')
           PY
