@@ -6,6 +6,7 @@ on:
       - feat/student-rased-follow-studio-v2-1
     paths:
       - '.github/scripts/upgrade_student_rased_follow_studio.py'
+      - '.github/scripts/rerun_follow_studio.flag'
 
 permissions:
   contents: write
@@ -18,6 +19,19 @@ jobs:
         with:
           ref: feat/student-rased-follow-studio-v2-1
           fetch-depth: 0
+
+      - name: Make patch replacements literal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/upgrade_student_rased_follow_studio.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace(
+              "new_text, count = re.subn(pattern, replacement, text, count=1, flags=flags)",
+              "new_text, count = re.subn(pattern, lambda _m: replacement, text, count=1, flags=flags)"
+          )
+          p.write_text(s, encoding='utf-8')
+          PY
 
       - name: Apply follow studio upgrade
         run: python .github/scripts/upgrade_student_rased_follow_studio.py
