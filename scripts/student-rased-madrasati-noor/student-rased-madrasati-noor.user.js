@@ -1698,6 +1698,14 @@ css.textContent = `
     min-width:12mm
 }
 
+#${APP} .preview .group-row td{
+    background:#ecfdf5;
+    color:#065f46;
+    font-weight:800;
+    text-align:right;
+    padding-right:12px
+}
+
 @media(max-width:900px){
 
     #${APP} .m0-tabs,
@@ -2234,7 +2242,7 @@ host.innerHTML = `
   <div class="bar">
    <label class="check"><input class="fperclass" type="checkbox"><span>كشف مستقل لكل فصل</span></label>
    <label class="check"><input class="frepeathead" type="checkbox"><span>رأس مستقل لكل صفحة</span></label>
-   <button class="b fselectall" type="button">تحديد الظاهر</button>
+   <button class="b fselectall" type="button">تحديد نتائج الفلاتر</button>
    <button class="b fselectnone" type="button">إلغاء التحديد</button>
    <button class="b fselectinvert" type="button">عكس التحديد</button>
    <button class="b fcopynames" type="button">📋 نسخ أسماء النطاق</button>
@@ -3949,6 +3957,8 @@ function afterExtract(
 
     state.rows = rows;
     state.filtered = [...rows];
+    state.followSelection.clear();
+    state.followSelectionTouched = false;
     state.pages = pages;
     state.scope = scope || emptyScope();
     state.audit = audit || {
@@ -3995,6 +4005,8 @@ function clearAll(options = {}) {
 
     state.rows = [];
     state.filtered = [];
+    state.followSelection.clear();
+    state.followSelectionTouched = false;
     state.pages = 0;
     state.scope = emptyScope();
     state.audit = null;
@@ -8087,7 +8099,10 @@ function followRowKey(row) {
 }
 
 function followClassKey(row) {
-    return `${clean(row.grade)}\u0001${clean(row.className)}`;
+    return encodeURIComponent(JSON.stringify([
+        clean(row.grade),
+        clean(row.className)
+    ]));
 }
 
 function followClassLabel(row) {
@@ -8216,28 +8231,11 @@ function followCandidateRows() {
     return followSortRows(followApplyFilters([...state.rows], false));
 }
 
-function followGroups(rows = followRows()) {
-    const p = state.prefs;
-    const byClass = p.followPerClass || p.followGroup === 'class' || p.followGroup === 'grade-class';
-
-    if (!byClass) {
-        const grades = [...new Set(rows.map(r => clean(r.grade)).filter(Boolean))];
-        const classes = [...new Set(rows.map(r => clean(r.className)).filter(Boolean))];
-        return [{
-            key: 'all',
-            label: 'النطاق المحدد',
-            grade: grades.length === 1 ? grades[0] : '',
-            className: classes.length === 1 ? classes[0] : '',
-            rows
-        }];
-    }
-
+function followClassGroups(rows = followRows()) {
     const map = new Map();
 
     for (const row of rows) {
-        const key = p.followGroup === 'class' && !p.followPerClass
-            ? clean(row.className) || 'غير محدد'
-            : followClassKey(row);
+        const key = followClassKey(row);
 
         if (!map.has(key)) {
             map.set(key, {
@@ -8256,6 +8254,37 @@ function followGroups(rows = followRows()) {
         collator.compare(a.grade, b.grade)
         || collator.compare(a.className, b.className)
     );
+}
+
+function followGroups(rows = followRows()) {
+    const p = state.prefs;
+
+    if (p.followPerClass) {
+        return followClassGroups(rows);
+    }
+
+    const grades = [...new Set(rows.map(r => clean(r.grade)).filter(Boolean))];
+    const classes = [...new Set(rows.map(r => clean(r.className)).filter(Boolean))];
+
+    return [{
+        key: 'all',
+        label: 'النطاق المحدد',
+        grade: grades.length === 1 ? grades[0] : '',
+        className: classes.length === 1 ? classes[0] : '',
+        rows
+    }];
+}
+
+function followInlineGroupLabel(row) {
+    const mode = state.prefs.followGroup || 'none';
+
+    if (mode === 'none') return '';
+
+    if (mode === 'class') {
+        return clean(row.className) || 'غير محدد';
+    }
+
+    return followClassLabel(row);
 }
 
 function followColumns() {
@@ -8318,9 +8347,17 @@ function refreshFollowControls() {
     prefsSave();
 
     const cmp = !!state.comparison;
+    const comparisonScopes = ['added', 'changed', 'class-changed'];
+
     [...ui.fscope.options].forEach(o => {
-        if (['added', 'changed', 'class-changed'].includes(o.value)) o.disabled = !cmp;
+        if (comparisonScopes.includes(o.value)) o.disabled = !cmp;
     });
+
+    if (!cmp && comparisonScopes.includes(p.followScope)) {
+        p.followScope = 'all';
+        ui.fscope.value = 'all';
+        prefsSave();
+    }
 }
 
 function renderFollowPicker() {
@@ -8367,8 +8404,9 @@ function renderFollowPicker() {
 }
 
 function renderFollowSummary(rows = followRows()) {
-    const groups = followGroups(rows);
-    ui.fcountsummary.textContent = `${rows.length} طالب · ${groups.filter(g => g.rows.length).length} كشف`;
+    const groups = followGroups(rows).filter(g => g.rows.length);
+    const classes = followClassGroups(rows).filter(g => g.rows.length);
+    ui.fcountsummary.textContent = `${rows.length} طالب · ${classes.length} فصل · ${groups.length} كشف`;
 }
 
 function hydrateFollow() {
@@ -8474,12 +8512,26 @@ function followHtmlSheets() {
                     + cols.map(col => `<th>${esc(col.label)}</th>`).join('')
                     + '</tr>';
 
-                const bodyRows = page.map((r, i) => {
+                const bodyRows = [];
+                let previousInlineGroup = '';
+
+                page.forEach((r, i) => {
                     const serial = pageIndex * pageRows + i + 1;
-                    return '<tr>'
+                    const inlineGroup = p.followPerClass ? '' : followInlineGroupLabel(r);
+
+                    if (inlineGroup && inlineGroup !== previousInlineGroup) {
+                        bodyRows.push(
+                            `<tr class="group-row"><td colspan="${fields.length + cols.length}">${esc(inlineGroup)}</td></tr>`
+                        );
+                        previousInlineGroup = inlineGroup;
+                    }
+
+                    bodyRows.push(
+                        '<tr>'
                         + fields.map(([k]) => `<td class="${k === 'name' ? 'name' : ''}">${esc(k === 'serial' ? String(serial) : (r[k] || ''))}</td>`).join('')
                         + cols.map(followCellHtml).join('')
-                        + '</tr>';
+                        + '</tr>'
+                    );
                 });
 
                 if (pageIndex === rowPages.length - 1 && colIndex === 0 && p.extra) {
@@ -8496,6 +8548,7 @@ function followHtmlSheets() {
                 const groupMark = groups.length > 1 ? group.label : 'النطاق المحدد';
                 const pageMark = `صفحة ${pageIndex + 1}/${rowPages.length}`;
                 const colMark = colChunks.length > 1 ? `أعمدة ${colIndex + 1}/${colChunks.length}` : '';
+                const showHeader = p.followRepeatHeader || (pageIndex === 0 && colIndex === 0);
 
                 sections.push(`
                     <section class="sheet ${p.orientation}">
@@ -8503,8 +8556,8 @@ function followHtmlSheets() {
                             <span>${esc(groupMark)}</span>
                             <span>${esc([pageMark, colMark].filter(Boolean).join(' · '))}</span>
                         </div>
-                        <h3 style="text-align:center;margin:8px">${esc(p.title)}</h3>
-                        <div class="sheetmeta">${esc(followMeta(group, p))}</div>
+                        ${showHeader ? `<h3 style="text-align:center;margin:8px">${esc(p.title)}</h3>` : ''}
+                        ${showHeader ? `<div class="sheetmeta">${esc(followMeta(group, p))}</div>` : ''}
                         <table>
                             ${cg}
                             <thead>${head}</thead>
@@ -8544,6 +8597,7 @@ function followHTML(print = false) {
                 .follow-check{font-size:15px;color:#475569}
                 .follow-note{min-width:22mm}
                 .follow-score{min-width:12mm}
+                .group-row td{background:#ecfdf5;color:#065f46;font-weight:800;text-align:right;padding-right:3mm}
             </style>
         </head>
         <body>${built.html}</body>
@@ -8593,9 +8647,18 @@ async function printFollow() {
 function followGroupMatrix(group) {
     const fields = followFieldDefs();
     const cols = followColumns();
+    const width = fields.length + cols.length;
     const matrixRows = [[...fields.map(x => x[1]), ...cols.map(x => x.label)]];
+    let previousInlineGroup = '';
 
     group.rows.forEach((r, i) => {
+        const inlineGroup = state.prefs.followPerClass ? '' : followInlineGroupLabel(r);
+
+        if (inlineGroup && inlineGroup !== previousInlineGroup) {
+            matrixRows.push([inlineGroup, ...Array(Math.max(0, width - 1)).fill('')]);
+            previousInlineGroup = inlineGroup;
+        }
+
         matrixRows.push([
             ...fields.map(([k]) => k === 'serial' ? String(i + 1) : String(r[k] || '')),
             ...cols.map(followCellText)
@@ -8709,8 +8772,9 @@ async function copyFollowNames(grouped = false) {
 
     if (!rows.length) return;
 
+    const nameGroups = grouped ? followClassGroups(rows) : [];
     const text = grouped
-        ? groups.map(group => `${group.label}\n${group.rows.map(r => r.name).join('\n')}`).join('\n\n')
+        ? nameGroups.map(group => `${group.label}\n${group.rows.map(r => r.name).join('\n')}`).join('\n\n')
         : rows.map(r => r.name).join('\n');
 
     try {
@@ -8735,6 +8799,11 @@ function applyFollowTemplate() {
         if (tpl.orientation) ui.forient.value = tpl.orientation;
         if (tpl.cellMode) ui.fcellmode.value = tpl.cellMode;
         if (Number(tpl.rowsPerPage)) ui.frowsperpage.value = tpl.rowsPerPage;
+        if (Number.isFinite(Number(tpl.extra))) ui.fextra.value = Number(tpl.extra);
+        if (tpl.sort) ui.fsort.value = tpl.sort;
+        if (tpl.group) ui.fgroup.value = tpl.group;
+        if (typeof tpl.perClass === 'boolean') ui.fperclass.checked = tpl.perClass;
+        if (typeof tpl.repeatHeader === 'boolean') ui.frepeathead.checked = tpl.repeatHeader;
 
         if (Array.isArray(tpl.fields)) {
             ui.fields.querySelectorAll('[data-f]').forEach(box => {
@@ -8769,7 +8838,12 @@ function saveFollowTemplate() {
         fields: [...state.prefs.fields],
         orientation: state.prefs.orientation,
         cellMode: state.prefs.followCellMode,
-        rowsPerPage: state.prefs.followRowsPerPage
+        rowsPerPage: state.prefs.followRowsPerPage,
+        extra: state.prefs.extra,
+        sort: state.prefs.followSort,
+        group: state.prefs.followGroup,
+        perClass: state.prefs.followPerClass,
+        repeatHeader: state.prefs.followRepeatHeader
     });
 
     followTemplatesSave(items);
@@ -9504,6 +9578,15 @@ ui.fgradefilter.onchange =
 
 ui.fclassfilter.onchange =
     renderFollow;
+
+ui.fclassfilter.onmousedown =
+    event => {
+        const option = event.target.closest?.('option');
+        if (!option) return;
+        event.preventDefault();
+        option.selected = !option.selected;
+        renderFollow();
+    };
 
 ui.fclassall.onclick =
     () => {
