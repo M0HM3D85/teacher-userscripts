@@ -8517,10 +8517,22 @@ function followCompactSections(group, groupIndex, groups, fields, custom, width,
 
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
         const pageEntries = entries.slice(pageIndex * pageCapacity, (pageIndex + 1) * pageCapacity);
-        const usedFlowCount = Math.max(1, Math.min(
-            flowCount,
+        // في وضع استغلال عرض الصفحة نستخدم العرض فعليًا حتى لو كان جميع الطلاب
+        // يستطيعون النزول في قائمة واحدة. قيمة pageRows تبقى حدًا أعلى لكل قائمة.
+        // نتجنب فقط تقسيم القوائم الصغيرة جدًا حتى لا يصبح شكل الكشف مبالغًا فيه.
+        const minRowsPerFlow = p.orientation === 'landscape' ? 6 : 8;
+        const maxUsefulFlows = Math.max(
+            1,
+            Math.min(flowCount, Math.ceil(pageEntries.length / minRowsPerFlow))
+        );
+        const requiredFlows = Math.max(
+            1,
             Math.ceil(pageEntries.length / pageRows) || 1
-        ));
+        );
+        const usedFlowCount = Math.max(
+            requiredFlows,
+            Math.min(flowCount, maxUsefulFlows)
+        );
         const chunkSize = Math.max(1, Math.ceil(pageEntries.length / usedFlowCount));
         const blocks = Array.from({ length: usedFlowCount }, (_, blockIndex) =>
             pageEntries.slice(blockIndex * chunkSize, Math.min((blockIndex + 1) * chunkSize, pageEntries.length))
