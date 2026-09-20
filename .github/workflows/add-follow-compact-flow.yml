@@ -6,6 +6,7 @@ on:
       - feat/student-rased-follow-studio-v2-1
     paths:
       - '.github/scripts/add_follow_compact_flow.py'
+      - '.github/workflows/add-follow-compact-flow.yml'
 
 permissions:
   contents: write
