@@ -6,6 +6,7 @@ on:
       - feat/student-rased-follow-studio-v2-1
     paths:
       - '.github/scripts/refine_student_rased_follow_studio.py'
+      - '.github/scripts/refine_follow_studio.flag'
 
 permissions:
   contents: write
