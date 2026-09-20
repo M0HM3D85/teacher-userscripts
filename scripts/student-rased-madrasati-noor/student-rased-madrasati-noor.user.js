@@ -916,6 +916,9 @@ function prefsDefault() {
         followRowsPerPage:
             32,
 
+        followCompactFlow:
+            false,
+
         followRepeatHeader:
             true,
 
@@ -2485,6 +2488,15 @@ host.innerHTML = `
    <input class="frowsperpage" type="number" min="10" max="60" value="32">
   </div>
 
+  <div class="field">
+   <label>استغلال عرض الصفحة</label>
+   <label class="check">
+    <input class="fcompactflow" type="checkbox">
+    <span>إكمال الطلاب بقوائم جانبية عند قلة الأعمدة</span>
+   </label>
+   <div class="followhint">مثال: الاسم + خانة متابعة يمكن توزيعه على قائمتين في العمودي أو حتى 3 في الأفقي. قيمة «طلاب لكل صفحة» تصبح الحد الأعلى لكل قائمة جانبية.</div>
+  </div>
+
  </div>
 
  <div class="bar">
@@ -2922,6 +2934,9 @@ const ui = {
 
     frowsperpage:
         $('.frowsperpage'),
+
+    fcompactflow:
+        $('.fcompactflow'),
 
     applytpl:
         $('.applytpl'),
@@ -8040,6 +8055,7 @@ function prefsToUI() {
     ui.frepeathead.checked = p.followRepeatHeader !== false;
     ui.fcellmode.value = p.followCellMode || 'blank';
     ui.frowsperpage.value = Number(p.followRowsPerPage) || 32;
+    ui.fcompactflow.checked = !!p.followCompactFlow;
 
     refreshFollowTemplateOptions();
 }
@@ -8080,6 +8096,7 @@ function prefsFromUI() {
         ? ui.fcellmode.value
         : 'blank';
     p.followRowsPerPage = Math.max(10, Math.min(60, Number(ui.frowsperpage.value) || 32));
+    p.followCompactFlow = !!ui.fcompactflow.checked;
 
     prefsSave();
 }
@@ -8456,6 +8473,140 @@ function followFieldDefs() {
         .filter(Boolean);
 }
 
+function followCompactFlowCount(fields, custom, p) {
+    if (!p.followCompactFlow) return 1;
+    if (!custom.length) return 1;
+    if (custom.some(col => col.type === 'note')) return 1;
+
+    const dataColumns = fields.filter(([key]) => key !== 'serial').length;
+    const followWeight = custom.reduce((sum, col) =>
+        sum + (col.type === 'score' ? 1.2 : 1), 0);
+    const weight = dataColumns + followWeight;
+
+    if (weight <= 3) {
+        return p.orientation === 'landscape' ? 3 : 2;
+    }
+
+    if (weight <= 4 && p.orientation === 'landscape') {
+        return 2;
+    }
+
+    return 1;
+}
+
+function followCompactSections(group, groupIndex, groups, fields, custom, width, w, base, pageRows, p) {
+    const flowCount = followCompactFlowCount(fields, custom, p);
+    if (flowCount <= 1) return null;
+
+    const entries = group.rows.map((row, index) => ({
+        row,
+        serial: index + 1
+    }));
+
+    for (let i = 0; i < p.extra; i++) {
+        entries.push({
+            row: null,
+            serial: group.rows.length + i + 1
+        });
+    }
+
+    const pageCapacity = pageRows * flowCount;
+    const pageCount = Math.max(1, Math.ceil(entries.length / pageCapacity));
+    const sections = [];
+    const gapMm = 3;
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+        const pageEntries = entries.slice(pageIndex * pageCapacity, (pageIndex + 1) * pageCapacity);
+        const usedFlowCount = Math.max(1, Math.min(
+            flowCount,
+            Math.ceil(pageEntries.length / pageRows) || 1
+        ));
+        const chunkSize = Math.max(1, Math.ceil(pageEntries.length / usedFlowCount));
+        const blocks = Array.from({ length: usedFlowCount }, (_, blockIndex) =>
+            pageEntries.slice(blockIndex * chunkSize, Math.min((blockIndex + 1) * chunkSize, pageEntries.length))
+        ).filter(block => block.length);
+
+        const blockWidth = (width - gapMm * Math.max(0, usedFlowCount - 1)) / usedFlowCount;
+        const followWidth = custom.length
+            ? Math.max(10, blockWidth - base) / custom.length
+            : 0;
+
+        const colgroup = '<colgroup>'
+            + fields.map(([key]) => `<col style="width:${w[key]}mm">`).join('')
+            + custom.map(col => `<col style="width:${(col.type === 'score' ? Math.max(10, followWidth) : Math.max(9, followWidth)).toFixed(2)}mm">`).join('')
+            + '</colgroup>';
+
+        const tableHead = '<tr>'
+            + fields.map(([, label]) => `<th>${esc(label)}</th>`).join('')
+            + custom.map(col => `<th>${esc(col.label)}</th>`).join('')
+            + '</tr>';
+
+        const blockHtml = blocks.map(block => {
+            const bodyRows = [];
+            let previousInlineGroup = '';
+
+            block.forEach(entry => {
+                const row = entry.row;
+                const inlineGroup = row && !p.followPerClass
+                    ? followInlineGroupLabel(row)
+                    : '';
+
+                if (inlineGroup && inlineGroup !== previousInlineGroup) {
+                    bodyRows.push(
+                        `<tr class="group-row"><td colspan="${fields.length + custom.length}">${esc(inlineGroup)}</td></tr>`
+                    );
+                    previousInlineGroup = inlineGroup;
+                }
+
+                bodyRows.push(
+                    '<tr>'
+                    + fields.map(([key]) => {
+                        const value = key === 'serial'
+                            ? String(entry.serial)
+                            : (row ? (row[key] || '') : '');
+                        return `<td class="${key === 'name' ? 'name' : ''}">${esc(value)}</td>`;
+                    }).join('')
+                    + custom.map(followCellHtml).join('')
+                    + '</tr>'
+                );
+            });
+
+            return `
+                <div class="compact-flow-block" style="min-width:0">
+                    <table>
+                        ${colgroup}
+                        <thead>${tableHead}</thead>
+                        <tbody>${bodyRows.join('')}</tbody>
+                    </table>
+                </div>
+            `;
+        }).join('');
+
+        const groupMark = groups.length > 1 ? group.label : 'النطاق المحدد';
+        const pageMark = `صفحة ${pageIndex + 1}/${pageCount}`;
+        const flowMark = `تعبئة ذكية ×${usedFlowCount}`;
+        const showHeader = p.followRepeatHeader || pageIndex === 0;
+
+        sections.push(`
+            <section class="sheet ${p.orientation}">
+                <div class="sheetmark">
+                    <span>${esc(groupMark)}</span>
+                    <span>${esc(`${pageMark} · ${flowMark}`)}</span>
+                </div>
+                ${showHeader ? `
+                    <h3 style="text-align:center;margin:8px">${esc(p.title)}</h3>
+                    <div class="sheetmeta">${esc(followMeta(group, p))}</div>
+                ` : ''}
+                <div class="compact-flow" style="display:grid;grid-template-columns:repeat(${usedFlowCount},minmax(0,1fr));gap:${gapMm}mm;align-items:start;direction:rtl">
+                    ${blockHtml}
+                </div>
+            </section>
+        `);
+    }
+
+    return sections;
+}
+
 function followHtmlSheets() {
     prefsFromUI();
 
@@ -8494,6 +8645,15 @@ function followHtmlSheets() {
     const sections = [];
 
     groups.forEach((group, groupIndex) => {
+        const compactSections = colChunks.length === 1
+            ? followCompactSections(group, groupIndex, groups, fields, custom, width, w, base, pageRows, p)
+            : null;
+
+        if (compactSections?.length) {
+            sections.push(...compactSections);
+            return;
+        }
+
         const rowPages = Array.from(
             { length: Math.max(1, Math.ceil(group.rows.length / pageRows)) },
             (_, i) => group.rows.slice(i * pageRows, (i + 1) * pageRows)
@@ -8799,6 +8959,7 @@ function applyFollowTemplate() {
         if (tpl.orientation) ui.forient.value = tpl.orientation;
         if (tpl.cellMode) ui.fcellmode.value = tpl.cellMode;
         if (Number(tpl.rowsPerPage)) ui.frowsperpage.value = tpl.rowsPerPage;
+        if (typeof tpl.compactFlow === 'boolean') ui.fcompactflow.checked = tpl.compactFlow;
         if (Number.isFinite(Number(tpl.extra))) ui.fextra.value = Number(tpl.extra);
         if (tpl.sort) ui.fsort.value = tpl.sort;
         if (tpl.group) ui.fgroup.value = tpl.group;
@@ -8839,6 +9000,7 @@ function saveFollowTemplate() {
         orientation: state.prefs.orientation,
         cellMode: state.prefs.followCellMode,
         rowsPerPage: state.prefs.followRowsPerPage,
+        compactFlow: state.prefs.followCompactFlow,
         extra: state.prefs.extra,
         sort: state.prefs.followSort,
         group: state.prefs.followGroup,
@@ -9613,6 +9775,9 @@ ui.fcellmode.onchange =
     renderFollow;
 
 ui.frowsperpage.onchange =
+    renderFollow;
+
+ui.fcompactflow.onchange =
     renderFollow;
 
 ui.fselectall.onclick =
