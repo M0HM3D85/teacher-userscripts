@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - بنك الأسئلة والإدخال الجماعي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.7.0
-// @description  بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات كعنوان فرعي، تصنيف مهارات الأسئلة القديمة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.
+// @version      0.9.0
+// @description  بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات، تحويل الاختبارات القديمة من Word/PDF/Excel عبر AI، دعم الأسئلة البصرية المؤقتة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -34,8 +34,8 @@
 (() => {
     'use strict';
 
-    const VERSION = '0.7.0';
-    const HOST_ID = 'mfbi-v070-host';
+    const VERSION = '0.9.0';
+    const HOST_ID = 'mfbi-v090-host';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -87,7 +87,13 @@
         legacySkillSkippedMetadata: 0,
         legacySkillBusy: false,
         legacySkillIgnoreMetadata: true,
-        legacySkillReplaceExisting: false
+        legacySkillReplaceExisting: false,
+
+        // محول الاختبارات القديمة: استخراج حرفي ثم دمج الإجابات والمهارات بالـ QID.
+        oldTestExtracted: [],
+        oldTestEnriched: [],
+        oldTestMerged: [],
+        oldTestStats: null
     };
 
     const sleep = ms =>
@@ -274,7 +280,7 @@
         }
 
         if (
-            /^(صح خطا|صح وخطا|صح او خطا|true false|truefalse)$/
+            /^(صح خطا|صح\/خطا|صح وخطا|صح او خطا|true false|true\/false|truefalse)$/
                 .test(v)
         ) {
             return 'truefalse';
@@ -391,6 +397,20 @@
 
                 textAnswer:
                     '',
+
+                // إجابة نموذجية للأسئلة النصية. لا تُرسل إلى Forms تلقائيًا إلا باختيار المستخدم.
+                modelAnswer:
+                    '',
+
+                // بيانات داخلية لمسار تحويل الاختبارات القديمة.
+                sourceQid:
+                    '',
+
+                sourceNote:
+                    '',
+
+                visualReview:
+                    false,
 
                 points:
                     defaults.points,
@@ -718,12 +738,86 @@
 
             m =
                 line.match(
+                    /^(?:qid|المعرف)\s*[:：\-–—]\s*(.+)$/i
+                );
+
+            if (m) {
+                if (q) {
+                    q.sourceQid =
+                        normalizeQid(
+                            m[1]
+                        );
+                }
+
+                continue;
+            }
+
+            m =
+                line.match(
+                    /^(?:مراجعة\s*بصرية|visual\s*review)\s*[:：\-–—]\s*(.+)$/i
+                );
+
+            if (m) {
+                if (q) {
+                    q.visualReview =
+                        parseBool(
+                            m[1],
+                            false
+                        );
+                }
+
+                continue;
+            }
+
+            m =
+                line.match(
+                    /^(?:ملاحظة|ملاحظه|note)\s*[:：\-–—]\s*(.+)$/i
+                );
+
+            if (m) {
+                if (q) {
+                    q.sourceNote =
+                        clean(
+                            m[1]
+                        );
+
+                    if (
+                        /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(
+                            q.sourceNote
+                        )
+                    ) {
+                        q.visualReview =
+                            true;
+                    }
+                }
+
+                continue;
+            }
+
+            m =
+                line.match(
                     /^(?:النوع|نوع السؤال|type)\s*[:：\-–—]\s*(.+)$/i
                 );
 
             if (m) {
                 if (q) {
                     q.typeRaw =
+                        clean(
+                            m[1]
+                        );
+                }
+
+                continue;
+            }
+
+            m =
+                line.match(
+                    /^(?:الإجابة\s*النموذجية|الاجابة\s*النموذجية|model\s*answer)\s*[:：\-–—]\s*(.+)$/i
+                );
+
+            if (m) {
+                if (q) {
+                    q.modelAnswer =
                         clean(
                             m[1]
                         );
@@ -1385,6 +1479,155 @@
         );
     }
 
+    function getCurrentMaxQuestionNumber() {
+        let max = 0;
+
+        const nodes = [
+            ...document.querySelectorAll(
+                '[data-automation-id="questionDesignerCard"],button[data-automation-id="questionWrapper"],[data-automation-id="questionTitle"]'
+            )
+        ];
+
+        for (const node of nodes) {
+            const value = westernDigits(
+                node.getAttribute?.('aria-label') ||
+                node.innerText ||
+                node.textContent ||
+                ''
+            );
+
+            const match = value.match(
+                /(?:السؤال|question)\s*(\d+)/i
+            );
+
+            if (match) {
+                max = Math.max(
+                    max,
+                    Number(match[1]) || 0
+                );
+            }
+        }
+
+        for (const card of getCards()) {
+            max = Math.max(
+                max,
+                cardNumber(card) || 0
+            );
+        }
+
+        return max;
+    }
+
+    function getDeleteQuestionButton(
+        number
+    ) {
+        const card =
+            getLiveCard(
+                number
+            );
+
+        if (!card) {
+            return null;
+        }
+
+        return [
+            ...card.querySelectorAll(
+                'button,[role="button"]'
+            )
+        ].find(
+            el =>
+                visible(el) &&
+                /حذف\s*السؤال|delete\s*question/i.test(
+                    labelOf(el)
+                )
+        ) || null;
+    }
+
+    async function removePartialQuestion(
+        number,
+        progress = () => {}
+    ) {
+        const card =
+            getLiveCard(
+                number
+            );
+
+        if (!card) {
+            return true;
+        }
+
+        const del =
+            getDeleteQuestionButton(
+                number
+            );
+
+        if (!del) {
+            return false;
+        }
+
+        progress(
+            'تنظيف بطاقة السؤال غير المكتملة...'
+        );
+
+        await clickElement(
+            del
+        );
+
+        await sleep(
+            350
+        );
+
+        if (card.isConnected) {
+            const dialog =
+                [
+                    ...document.querySelectorAll(
+                        '[role="dialog"]'
+                    )
+                ].find(
+                    visible
+                ) || null;
+
+            const confirmDelete =
+                dialog
+                    ? [
+                        ...dialog.querySelectorAll(
+                            'button,[role="button"]'
+                        )
+                    ].find(
+                        el =>
+                            visible(el) &&
+                            /^(?:حذف|Delete)$/i.test(
+                                clean(labelOf(el))
+                            )
+                    )
+                    : null;
+
+            if (confirmDelete) {
+                await clickElement(
+                    confirmDelete
+                );
+            }
+        }
+
+        try {
+            await waitFor(
+                () =>
+                    !card.isConnected ||
+                    !document.contains(card)
+                        ? true
+                        : null,
+                7000,
+                120,
+                'حذف بطاقة السؤال غير المكتملة'
+            );
+
+            return true;
+        }
+        catch (_) {
+            return false;
+        }
+    }
+
     function getMoveUpButton(
         number
     ) {
@@ -1427,7 +1670,7 @@
                 );
 
             progress(
-                `نقل الحقل التعريفي إلى الموضع ${target}...`
+                `نقل السؤال إلى الموضع ${target}...`
             );
 
             await clickElement(
@@ -2048,6 +2291,8 @@
                 progress
             );
 
+        try {
+
         progress(
             'كتابة عنوان السؤال...'
         );
@@ -2346,6 +2591,18 @@
         }
 
         return number;
+        }
+        catch (err) {
+            try {
+                err.createdQuestionNumber =
+                    number;
+                err.createdQuestionTitle =
+                    q.title;
+            }
+            catch (_) {}
+
+            throw err;
+        }
     }
 
     function textAnswerCandidates(
@@ -2549,6 +2806,8 @@
                 progress
             );
 
+        try {
+
         progress(
             'كتابة عنوان السؤال...'
         );
@@ -2598,6 +2857,18 @@
         );
 
         return number;
+        }
+        catch (err) {
+            try {
+                err.createdQuestionNumber =
+                    number;
+                err.createdQuestionTitle =
+                    q.title;
+            }
+            catch (_) {}
+
+            throw err;
+        }
     }
 
     function existingTitleSet() {
@@ -3154,6 +3425,24 @@
             );
         }
 
+        if (clean(q.sourceQid)) {
+            lines.push(
+                `QID: ${clean(q.sourceQid)}`
+            );
+        }
+
+        if (q.visualReview) {
+            lines.push(
+                'مراجعة بصرية: نعم'
+            );
+        }
+
+        if (clean(q.sourceNote)) {
+            lines.push(
+                `ملاحظة: ${clean(q.sourceNote)}`
+            );
+        }
+
         if (q.type) {
             lines.push(
                 `النوع: ${
@@ -3221,13 +3510,22 @@
             );
         }
         else {
+            const textAnswer =
+                clean(
+                    q.textAnswer ||
+                    q.answerRaw
+                );
+
+            if (textAnswer) {
+                lines.push(
+                    `الإجابة: ${textAnswer}`
+                );
+            }
+        }
+
+        if (clean(q.modelAnswer)) {
             lines.push(
-                `الإجابة: ${
-                    clean(
-                        q.textAnswer ||
-                        q.answerRaw
-                    )
-                }`
+                `الإجابة النموذجية: ${clean(q.modelAnswer)}`
             );
         }
 
@@ -3272,7 +3570,12 @@
             return q;
         }
 
-        return parsed;
+        return {
+            ...parsed,
+            sourceQid: q.sourceQid || '',
+            sourceNote: q.sourceNote || '',
+            modelAnswer: clean(parsed.modelAnswer || q.modelAnswer || '')
+        };
     }
 
     function rowsToText(rows) {
@@ -3341,6 +3644,15 @@
                     row['الإجابة'] ??
                     row['Answer'] ??
                     row['answer'] ??
+                    ''
+                );
+
+            const modelAnswer =
+                clean(
+                    row['الإجابة النموذجية'] ??
+                    row['الاجابة النموذجية'] ??
+                    row['Model Answer'] ??
+                    row['model answer'] ??
                     ''
                 );
 
@@ -3453,6 +3765,12 @@
                 );
             }
 
+            if (modelAnswer) {
+                lines.push(
+                    `الإجابة النموذجية: ${modelAnswer}`
+                );
+            }
+
             if (points) {
                 lines.push(
                     `الدرجة: ${points}`
@@ -3540,6 +3858,14 @@
                     options: $('.aiOptions')?.value || 4,
                     points: $('.aiPoints')?.value || 1,
                     filename: $('.aiFilename')?.value || 'اختبار-Microsoft-Forms.xlsx'
+                },
+
+                oldTest: {
+                    testName: $('.oldTestName')?.value || '',
+                    bookName: $('.oldTestBookName')?.value || '',
+                    extractResult: $('.oldTestExtractResult')?.value || '',
+                    enrichResult: $('.oldTestEnrichResult')?.value || '',
+                    useModelAnswer: $('.oldTestUseModelAnswer')?.checked || false
                 }
             };
 
@@ -3636,6 +3962,13 @@
             if ($('.aiPoints')) $('.aiPoints').value = ai.points ?? 1;
             if ($('.aiFilename')) $('.aiFilename').value = ai.filename || 'اختبار-Microsoft-Forms.xlsx';
 
+            const oldTest = data.oldTest || {};
+            if ($('.oldTestName')) $('.oldTestName').value = oldTest.testName || '';
+            if ($('.oldTestBookName')) $('.oldTestBookName').value = oldTest.bookName || '';
+            if ($('.oldTestExtractResult')) $('.oldTestExtractResult').value = oldTest.extractResult || '';
+            if ($('.oldTestEnrichResult')) $('.oldTestEnrichResult').value = oldTest.enrichResult || '';
+            if ($('.oldTestUseModelAnswer')) $('.oldTestUseModelAnswer').checked = !!oldTest.useModelAnswer;
+
             if (
                 Array.isArray(
                     data.questions
@@ -3731,6 +4064,11 @@
                 )
             );
 
+        const includeModelAnswer =
+            questions.some(
+                q => clean(q.modelAnswer)
+            );
+
         const exportHeaders =
             [
                 'السؤال',
@@ -3743,6 +4081,7 @@
                             `خيار ${letter}`
                     ),
                 'الصحيح',
+                ...(includeModelAnswer ? ['الإجابة النموذجية'] : []),
                 'الدرجة',
                 'مطلوب'
             ];
@@ -3775,6 +4114,13 @@
                                     : derivedCorrect(
                                         q
                                     ),
+
+                            ...(includeModelAnswer
+                                ? {
+                                    'الإجابة النموذجية':
+                                        clean(q.modelAnswer)
+                                }
+                                : {}),
 
                             'الدرجة':
                                 q.points,
@@ -6140,6 +6486,177 @@ tr.unselected td {
     }
 }
 
+.oldTestTool {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid #cfe1e5;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #fbfeff 0%, #f6fbfc 100%);
+}
+
+.oldTestTool h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    color: #124c52;
+}
+
+.oldTestStep {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed #d7e3e6;
+}
+
+.oldTestNames {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 9px;
+}
+
+.oldTestNames label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.oldTestNames input {
+    width: 100%;
+    border: 1px solid #ccd8dd;
+    border-radius: 8px;
+    padding: 8px 9px;
+    font: 11px "Segoe UI", Tahoma, Arial;
+    direction: rtl;
+    outline: none;
+    background: #fff;
+}
+
+.oldTestText {
+    width: 100%;
+    min-height: 130px;
+    resize: vertical;
+    border: 1px solid #ccd8dd;
+    border-radius: 9px;
+    padding: 9px 10px;
+    margin-top: 8px;
+    direction: rtl;
+    font: 11px/1.65 Consolas, "Segoe UI", Tahoma, Arial;
+    outline: none;
+    background: #fff;
+}
+
+.oldTestText:focus,
+.oldTestNames input:focus {
+    border-color: #087f83;
+    box-shadow: 0 0 0 3px #087f8318;
+}
+
+.oldTestStats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 7px;
+    margin: 10px 0;
+}
+
+.oldTestStat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px;
+    border: 1px solid #dce5e8;
+    border-radius: 9px;
+    background: #fff;
+    font-size: 10px;
+    color: #667;
+}
+
+.oldTestStat b {
+    font-size: 18px;
+    color: #244;
+}
+
+.oldTestStat.good b { color: #11834a; }
+.oldTestStat.warn b { color: #a56d00; }
+.oldTestStat.visual b { color: #8a4d9c; }
+
+.oldTestPreview {
+    max-height: 330px;
+    overflow: auto;
+    border: 1px solid #e0e7e9;
+    border-radius: 9px;
+    background: #fff;
+    margin-top: 9px;
+}
+
+.oldTestPreview table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+}
+
+.oldTestPreview th,
+.oldTestPreview td {
+    padding: 7px 6px;
+    border-bottom: 1px solid #edf1f2;
+    vertical-align: top;
+}
+
+.oldTestPreview th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #f4f8f9;
+    color: #345;
+}
+
+.oldTestQuestionCell {
+    min-width: 230px;
+    max-width: 330px;
+}
+
+.oldTestPreview tr.needsReview {
+    background: #fff9ed;
+}
+
+.oldTestStatus {
+    display: inline-block;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: #fff1ce;
+    color: #7f5d00;
+    white-space: nowrap;
+}
+
+.oldTestStatus.good {
+    background: #e9f9ef;
+    color: #11783f;
+}
+
+.oldTestCheck {
+    display: inline-flex;
+    gap: 7px;
+    align-items: center;
+    padding: 8px 9px;
+    border: 1px solid #dde6e9;
+    border-radius: 9px;
+    background: #fff;
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+.oldTestCheck input {
+    accent-color: #087f83;
+}
+
+@media (max-width: 760px) {
+    .oldTestNames,
+    .oldTestStats {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
 .legacySkillStats {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
@@ -6578,6 +7095,67 @@ tr.unselected td {
 
 <div class="aiHint">
     💡 يمكنك تقييد الاختبار على «الوحدة الأولى» أو «الدرس الأول» أو أي نطاق تكتبه. عند ترك «نطاق المحتوى المستهدف» فارغًا، يغطي البرومبت كامل المصدر. ويُحفظ اسم المهارة كعنوان فرعي للسؤال لتسهيل توافقه مستقبلًا مع «محلل نتائج فورمز الذكي».
+</div>
+
+<div class="oldTestTool">
+    <h3>📄 محول الاختبارات القديمة من Word / PDF / Excel</h3>
+    <div class="note">
+        مسار من مرحلتين: يستخرج NotebookLM الأسئلة حرفيًا مع QID ثابت، ثم يرجع الإجابات والمهارات من الكتاب. السكربت يدمج النتيجتين بنفسه دون إعادة كتابة الأسئلة مرة ثالثة.
+    </div>
+
+    <div class="oldTestNames">
+        <label>
+            اسم ملف الاختبار في NotebookLM (اختياري)
+            <input class="oldTestName" type="text" placeholder="مثال: اختبار الوحدة الأولى 1448">
+        </label>
+        <label>
+            اسم الكتاب / المصدر الدراسي (اختياري)
+            <input class="oldTestBookName" type="text" placeholder="مثال: كتاب المهارات الرقمية أول متوسط">
+        </label>
+    </div>
+
+    <div class="oldTestStep">
+        <b>① استخراج الاختبار كما هو</b>
+        <div class="actions">
+            <button class="btn primary copyOldTestExtractPrompt">📋 نسخ برومبت الاستخراج</button>
+        </div>
+        <textarea class="oldTestText oldTestExtractResult" placeholder="ألصق ناتج NotebookLM هنا:
+QID | السؤال | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | ملاحظة
+Q001 | ..."></textarea>
+        <div class="actions">
+            <button class="btn secondary oldTestParseExtract">🔎 تحليل الاستخراج</button>
+        </div>
+    </div>
+
+    <div class="oldTestStep">
+        <b>② الإجابات الصحيحة + المهارات من الكتاب</b>
+        <div class="actions">
+            <button class="btn primary copyOldTestEnrichPrompt">📚 نسخ برومبت الإجابات والمهارات</button>
+        </div>
+        <textarea class="oldTestText oldTestEnrichResult" placeholder="ألصق الناتج الثاني هنا:
+Q001 | أ | اسم المهارة |
+Q002 | ب | اسم المهارة |
+Q021 | غير محدد | اسم المهارة | إجابة نموذجية"></textarea>
+        <label class="oldTestCheck">
+            <input class="oldTestUseModelAnswer" type="checkbox">
+            استخدام الإجابة النموذجية كسؤال نصي مصحح تلقائيًا في Forms (غير مفعّل افتراضيًا)
+        </label>
+        <div class="actions">
+            <button class="btn primary oldTestMerge">🔗 دمج المرحلتين</button>
+        </div>
+    </div>
+
+    <div class="oldTestStats"></div>
+    <div class="oldTestPreview"></div>
+
+    <div class="actions">
+        <button class="btn primary oldTestLoadBank">📥 نقل إلى بنك الأسئلة</button>
+        <button class="btn secondary oldTestExportExcel">📊 تصدير Excel</button>
+    </div>
+
+    <div class="studentHint">
+        💡 السؤال البصري لا يُستبعد: إذا عاد بخيارات مؤقتة مثل [أضف صورة الخيار أ هنا] ومعه إجابة صحيحة ومهارة، يُدخل في مكانه الطبيعي ثم يظهر ضمن قائمة المراجعة البصرية لتستبدل النصوص المؤقتة بالصور. QID مؤقت ولا يظهر للطالب.
+    </div>
 </div>
 
 </section>
@@ -7488,7 +8066,667 @@ ${scopeRule}
     }
 
     function buildExcelSpecsText() {
-        return `مواصفات ملف Excel لبنك أسئلة Microsoft Forms:\n\nالسؤال | المهارة | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | مطلوب\n\n- «المهارة» تُكتب تلقائيًا كعنوان فرعي للسؤال في Microsoft Forms.\n- النوع المدعوم: اختيار / متعدد / صح/خطأ / نصي.\n- الصحيح يمكن أن يكون حرف الخيار أو رقمه أو نصه.\n- في صح/خطأ: أ = صح، ب = خطأ، ج ود فارغان.\n- مطلوب: نعم أو لا.\n- لا تضف صفوفًا أو عناوين أعلى صف الأعمدة.`;
+        return `مواصفات ملف Excel لبنك أسئلة Microsoft Forms:\n\nالسؤال | المهارة | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | مطلوب\n\n- «المهارة» تُكتب تلقائيًا كعنوان فرعي للسؤال في Microsoft Forms.\n- النوع المدعوم: اختيار / متعدد / صح/خطأ / نصي.\n- الصحيح يمكن أن يكون حرف الخيار أو رقمه أو نصه.\n- في صح/خطأ: أ = صح، ب = خطأ، ج ود فارغان.\n- عمود «الإجابة النموذجية» اختياري للأسئلة النصية عند تصدير الاختبارات القديمة؛ لا يُستخدم للتصحيح التلقائي إلا إذا اختار المستخدم ذلك.\n- مطلوب: نعم أو لا.\n- لا تضف صفوفًا أو عناوين أعلى صف الأعمدة.`;
+    }
+
+    function normalizeQid(value) {
+        const raw = westernDigits(
+            clean(value)
+                .toUpperCase()
+                .replace(/\s+/g, '')
+        );
+
+        const m = raw.match(/^Q0*(\d+)$/i);
+
+        if (!m) {
+            return '';
+        }
+
+        const n = Number(m[1]);
+
+        if (!Number.isInteger(n) || n < 1) {
+            return '';
+        }
+
+        return `Q${String(n).padStart(3, '0')}`;
+    }
+
+    function oldTestCorrectValue(value) {
+        const v = clean(value);
+        const c = canonical(v);
+
+        if (
+            !v ||
+            [
+                'غير محدد',
+                'غير معروف',
+                'غير متاح',
+                'لا يوجد',
+                'n a',
+                'na'
+            ].includes(c)
+        ) {
+            return '';
+        }
+
+        return normalizeLetter(v);
+    }
+
+    function oldTestSkillValue(value) {
+        const v = clean(value);
+        const c = canonical(v);
+
+        if (
+            !v ||
+            [
+                'غير مصنف',
+                'غير محدد',
+                'غير معروف'
+            ].includes(c)
+        ) {
+            return '';
+        }
+
+        return v;
+    }
+
+    function parseOldTestExtraction(raw) {
+        const lines = String(raw || '')
+            .replace(/^\uFEFF/, '')
+            .replace(/\r\n?/g, '\n')
+            .split('\n');
+
+        const items = [];
+        const seen = new Set();
+        let duplicates = 0;
+        let invalid = 0;
+
+        for (const originalLine of lines) {
+            if (!clean(originalLine)) continue;
+
+            const columns = String(originalLine)
+                .split('|')
+                .map(v => clean(v));
+
+            if (
+                canonical(columns[0] || '') === 'qid' ||
+                /^(?:qid|المعرف)$/i.test(columns[0] || '')
+            ) {
+                continue;
+            }
+
+            const qid = normalizeQid(columns[0] || '');
+
+            if (!qid) {
+                invalid++;
+                continue;
+            }
+
+            if (seen.has(qid)) {
+                duplicates++;
+                continue;
+            }
+
+            if (columns.length < 9) {
+                invalid++;
+                continue;
+            }
+
+            const title = clean(columns[1] || '');
+            const rawType = clean(columns[2] || '');
+            const type = normalizeType(rawType);
+
+            if (!title || !type) {
+                invalid++;
+                continue;
+            }
+
+            let optionTexts = [
+                columns[3] || '',
+                columns[4] || '',
+                columns[5] || '',
+                columns[6] || ''
+            ].map(v => clean(v));
+
+            if (type === 'truefalse') {
+                if (!optionTexts[0]) optionTexts[0] = 'صح';
+                if (!optionTexts[1]) optionTexts[1] = 'خطأ';
+            }
+
+            const options = optionTexts
+                .map((text, index) => ({
+                    label: ['أ', 'ب', 'ج', 'د'][index],
+                    text
+                }))
+                .filter(o => o.text);
+
+            const correct = oldTestCorrectValue(columns[7] || '');
+            const points = parsePoints(columns[8] || 1, 1);
+            const note = clean(columns.slice(9).join(' | '));
+
+            items.push({
+                qid,
+                title,
+                type,
+                rawType,
+                options,
+                correct,
+                points,
+                note
+            });
+
+            seen.add(qid);
+        }
+
+        items.sort(
+            (a, b) =>
+                Number(a.qid.slice(1)) -
+                Number(b.qid.slice(1))
+        );
+
+        const missingQids = [];
+        const max = items.length
+            ? Math.max(...items.map(x => Number(x.qid.slice(1))))
+            : 0;
+
+        for (let i = 1; i <= max; i++) {
+            const qid = `Q${String(i).padStart(3, '0')}`;
+            if (!seen.has(qid)) missingQids.push(qid);
+        }
+
+        return {
+            items,
+            duplicates,
+            invalid,
+            missingQids
+        };
+    }
+
+    function parseOldTestEnrichment(raw) {
+        const lines = String(raw || '')
+            .replace(/^\uFEFF/, '')
+            .replace(/\r\n?/g, '\n')
+            .split('\n');
+
+        const items = [];
+        const seen = new Set();
+        let duplicates = 0;
+        let invalid = 0;
+
+        for (const originalLine of lines) {
+            if (!clean(originalLine)) continue;
+
+            const columns = String(originalLine)
+                .split('|')
+                .map(v => clean(v));
+
+            if (
+                canonical(columns[0] || '') === 'qid' ||
+                /^(?:qid|المعرف)$/i.test(columns[0] || '')
+            ) {
+                continue;
+            }
+
+            const qid = normalizeQid(columns[0] || '');
+
+            if (!qid || columns.length < 3) {
+                invalid++;
+                continue;
+            }
+
+            if (seen.has(qid)) {
+                duplicates++;
+                continue;
+            }
+
+            items.push({
+                qid,
+                correct: oldTestCorrectValue(columns[1] || ''),
+                skill: oldTestSkillValue(columns[2] || ''),
+                modelAnswer: clean(columns.slice(3).join(' | '))
+            });
+
+            seen.add(qid);
+        }
+
+        return {
+            items,
+            duplicates,
+            invalid
+        };
+    }
+
+    function buildOldTestExtractionPrompt() {
+        const testName = clean($('.oldTestName')?.value || '');
+        const sourceLine = testName
+            ? `اعتمد فقط على مصدر الاختبار المسمى «${testName}».`
+            : 'اعتمد فقط على ملف الاختبار المرفق كمصدر.';
+
+        return `${sourceLine}
+
+أريد استخراج جميع أسئلة الاختبار وتحويلها إلى صيغة منظمة قابلة للاستيراد لاحقًا إلى Microsoft Forms.
+
+قواعد صارمة:
+1) استخرج الأسئلة فقط. تجاهل اسم الطالب والفصل وبيانات المدرسة والتعليمات وعناوين الأقسام والتوقيع والعبارات الختامية.
+2) انقل نص السؤال حرفيًا كما يظهر في الاختبار قدر الإمكان من القراءة، ولا تعِد صياغته ولا تصححه لغويًا ولا تختصره.
+3) لا تغيّر ترتيب الكلمات أو العناصر أو القوائم أو الوحدات الموجودة داخل السؤال أو بين الأقواس، حتى إذا كان السؤال نفسه يطلب ترتيبها. لا تنفذ المطلوب داخل السؤال أثناء الاستخراج.
+4) حافظ على ترتيب الأسئلة الأصلي، وأعط كل سؤال معرفًا متسلسلًا: Q001 ثم Q002 ثم Q003... دون فجوات.
+5) صنف النوع إلى واحد فقط: صح/خطأ، اختيار، نصي.
+6) صح/خطأ: خيار أ = صح، خيار ب = خطأ، وخيارا ج ود فارغان.
+7) الاختيار: انقل الخيارات كما وردت وبالترتيب نفسه. إذا كان السؤال يحتوي 2 أو 3 خيارات فقط فلا تنشئ خيارات إضافية.
+8) النصي/المقالي: اترك جميع خانات الخيارات فارغة.
+9) لا تخمن الإجابة الصحيحة. إذا لم يكن مفتاح الإجابة مثبتًا بوضوح في ملف الاختبار فاترك «الصحيح» فارغًا.
+10) استخرج الدرجة من توزيع درجات القسم إذا أمكن. مثال: 10 أسئلة لقسم درجته 10 = درجة كل سؤال 1. إذا تعذر تحديد الدرجة استخدم 1 واكتب في الملاحظة «الدرجة تحتاج مراجعة».
+11) التعامل مع الصور والرموز والعناصر البصرية:
+- لا تحذف السؤال ولا تحذف أي خيار بصري ولا تترك مكانه فارغًا.
+- لا تخمن معنى الصورة أو الرمز إذا لم يكن واضحًا.
+- إذا كانت الصورة داخل نص السؤال فاكتب في موضعها: [أضف صورة السؤال هنا].
+- إذا كان الخيار أ صورة فاكتب: [أضف صورة الخيار أ هنا].
+- إذا كان الخيار ب صورة فاكتب: [أضف صورة الخيار ب هنا].
+- إذا كان الخيار ج صورة فاكتب: [أضف صورة الخيار ج هنا].
+- إذا كان الخيار د صورة فاكتب: [أضف صورة الخيار د هنا].
+- حافظ على العدد الحقيقي للخيارات وترتيبها كما يظهر في الاختبار.
+- إذا أمكن نقل الرمز نفسه كنص Unicode بوضوح ومن دون تخمين، انقله كما هو بدل النص المؤقت.
+- في خانة الملاحظة اكتب: يحتاج مراجعة بصرية.
+12) إذا كان السؤال نفسه يحتوي نصًا وصورة معًا، احتفظ بالنص كاملًا وضع [أضف صورة السؤال هنا] في موضع الصورة.
+13) لا تستبعد أي سؤال بسبب وجود صورة أو رمز.
+14) لا تضف أي سؤال غير موجود في الاختبار ولا تحذف سؤالًا موجودًا.
+15) راجع عدد الأسئلة وترتيب QID قبل الإخراج.
+
+أخرج النتيجة فقط، سطرًا واحدًا لكل سؤال، بهذا التنسيق الحرفي:
+QID | السؤال | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | ملاحظة
+
+مثال للتنسيق فقط:
+Q001 | نص السؤال | اختيار | الخيار الأول | الخيار الثاني | الخيار الثالث | | | 1 |
+
+لا تكتب شرحًا أو جدول Markdown أو مقدمة أو خاتمة.`;
+    }
+
+    function buildOldTestEnrichmentPrompt() {
+        const items = state.oldTestExtracted || [];
+
+        if (!items.length) {
+            return '';
+        }
+
+        const testName = clean($('.oldTestName')?.value || '');
+        const bookName = clean($('.oldTestBookName')?.value || '');
+        const qids = items.map(x => x.qid).join(', ');
+
+        return `لدي ${items.length} سؤالًا مستخرجًا من اختبار قديم وتحمل معرفات QID ثابتة.
+${testName ? `مصدر الاختبار: «${testName}».` : 'استخدم ملف الاختبار الموجود في المصادر للتحقق من صياغة السؤال عند الحاجة.'}
+${bookName ? `مصدر الكتاب الدراسي المعتمد: «${bookName}».` : 'استخدم الكتاب الدراسي الموجود في المصادر لتحديد الإجابات والمهارات.'}
+
+المعرفات المطلوبة فقط:
+${qids}
+
+المطلوب لكل سؤال:
+1) تحديد الإجابة الصحيحة اعتمادًا على الكتاب الدراسي والمصادر المحددة فقط.
+2) تحديد مهارة أو مفهوم تعليمي واحد يقيسه السؤال.
+3) توحيد أسماء المهارات بين الأسئلة المتشابهة؛ لا تنشئ اسمًا مختلفًا لكل سؤال ولا أسماء متقاربة للمفهوم نفسه.
+4) اجعل اسم المهارة قصيرًا وواضحًا ومناسبًا للتقارير التعليمية.
+5) لا تغيّر QID ولا تعِد كتابة السؤال ولا الخيارات.
+6) لا تخمن من خارج المصادر. إذا تعذر إثبات الإجابة اكتب «غير محدد».
+7) صح/خطأ: الصحيح = أ إذا كانت العبارة صحيحة، وب إذا كانت خاطئة.
+8) الاختيار: الصحيح = حرف واحد فقط أ أو ب أو ج أو د وفق ترتيب الخيارات المستخرج.
+9) النصي/المقالي: اكتب في حقل الصحيح «غير محدد»، ثم اكتب إجابة نموذجية مختصرة فقط إذا كانت مدعومة بوضوح من الكتاب.
+10) إذا كان السؤال يعتمد على صورة/رمز في ملف الاختبار، استخدم الملف الأصلي والكتاب لتحديد الإجابة فقط إذا كان ذلك واضحًا؛ وإلا اكتب «غير محدد».
+11) يجب أن يظهر كل QID المطلوب مرة واحدة فقط، دون أسطر إضافية.
+
+أخرج النتيجة فقط بهذه الصيغة:
+Q001 | الصحيح | اسم المهارة | الإجابة النموذجية إن وجدت
+Q002 | الصحيح | اسم المهارة | الإجابة النموذجية إن وجدت
+
+لا تكتب مقدمة أو شرحًا أو جدول Markdown أو خاتمة.`;
+    }
+
+    function oldTestQuestionFromMerged(item) {
+        const useModelAnswer = !!$('.oldTestUseModelAnswer')?.checked;
+        const letters = ['أ', 'ب', 'ج', 'د'];
+        const lines = [
+            `س: ${item.title}`
+        ];
+
+        if (clean(item.skill)) {
+            lines.push(`المهارة: ${item.skill}`);
+        }
+
+        lines.push(`النوع: ${typeLabel(item.type)}`);
+
+        if (item.type !== 'text') {
+            (item.options || []).forEach((o, index) => {
+                lines.push(`${o.label || letters[index] || index + 1}: ${o.text}`);
+            });
+
+            if (item.correct) {
+                lines.push(`الصحيح: ${item.correct}`);
+            }
+        }
+        else if (useModelAnswer && item.modelAnswer) {
+            lines.push(`الإجابة: ${item.modelAnswer}`);
+        }
+
+        if (item.modelAnswer) {
+            lines.push(`الإجابة النموذجية: ${item.modelAnswer}`);
+        }
+
+        lines.push(`الدرجة: ${item.points}`);
+        lines.push('مطلوب: نعم');
+
+        const parsed = parseQuestions(
+            lines.join('\n'),
+            {
+                points: item.points,
+                required: true
+            }
+        )[0];
+
+        if (!parsed) {
+            return null;
+        }
+
+        parsed.sourceQid = item.qid;
+        parsed.sourceNote = item.note || '';
+        parsed.modelAnswer = clean(item.modelAnswer || parsed.modelAnswer || '');
+        parsed.visualReview = !!(
+            item.note &&
+            /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(item.note)
+        );
+
+        if (parsed.visualReview) {
+            parsed.warnings = parsed.warnings || [];
+            parsed.warnings.push(
+                `مراجعة بصرية بعد الإدخال${item.qid ? ` — ${item.qid}` : ''}: ${item.note}`
+            );
+        }
+
+        return parsed;
+    }
+
+    function mergeOldTestData() {
+        const extractRaw = $('.oldTestExtractResult')?.value || '';
+        const enrichRaw = $('.oldTestEnrichResult')?.value || '';
+
+        const extraction = parseOldTestExtraction(extractRaw);
+        state.oldTestExtracted = extraction.items;
+
+        if (!extraction.items.length) {
+            state.oldTestEnriched = [];
+            state.oldTestMerged = [];
+            state.oldTestStats = {
+                extraction,
+                enrichment: null,
+                unknown: 0,
+                missing: 0,
+                ready: 0,
+                review: 0
+            };
+            renderOldTestConverter();
+            setStatus('❌ لم أتمكن من قراءة أسئلة المرحلة الأولى. تحقق من صيغة QID والأعمدة.');
+            return null;
+        }
+
+        const enrichment = parseOldTestEnrichment(enrichRaw);
+        state.oldTestEnriched = enrichment.items;
+
+        const enrichMap = new Map(
+            enrichment.items.map(x => [x.qid, x])
+        );
+        const extractIds = new Set(
+            extraction.items.map(x => x.qid)
+        );
+        const unknown = enrichment.items.filter(x => !extractIds.has(x.qid)).length;
+        let missing = 0;
+
+        const merged = extraction.items.map(item => {
+            const extra = enrichMap.get(item.qid) || null;
+            if (!extra) missing++;
+
+            const correct =
+                (extra && extra.correct) ||
+                item.correct ||
+                '';
+            const skill = extra ? extra.skill : '';
+            const modelAnswer = extra ? extra.modelAnswer : '';
+
+            const mergedItem = {
+                ...item,
+                correct,
+                skill,
+                modelAnswer
+            };
+
+            const question = oldTestQuestionFromMerged(mergedItem);
+            const visualReview = !!(
+                item.note &&
+                /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(item.note)
+            );
+            const missingSkill = !clean(skill);
+            const missingCorrect =
+                item.type !== 'text' &&
+                !clean(correct);
+            // وجود مراجعة بصرية لا يمنع الإدخال إذا كانت الخيارات المؤقتة
+            // والإجابة والمهارة تجعل السؤال صالحًا. يبقى فقط بعلامة مراجعة بعد التنفيذ.
+            const ready = !!(
+                question &&
+                question.valid &&
+                !missingSkill &&
+                !missingCorrect
+            );
+
+            return {
+                ...mergedItem,
+                question,
+                ready,
+                visualReview,
+                missingSkill,
+                missingCorrect
+            };
+        });
+
+        state.oldTestMerged = merged;
+
+        const ready = merged.filter(x => x.ready).length;
+        const review = merged.length - ready;
+
+        state.oldTestStats = {
+            extraction,
+            enrichment,
+            unknown,
+            missing,
+            ready,
+            review
+        };
+
+        renderOldTestConverter();
+        saveWorkspace();
+
+        setStatus(
+            `✅ تم دمج ${merged.length} سؤالًا: ${ready} جاهز، ${review} يحتاج مراجعة` +
+            `${missing ? `، ${missing} بلا نتيجة مرحلة ثانية` : ''}` +
+            `${unknown ? `، ${unknown} QID غير معروف` : ''}.`
+        );
+
+        return merged;
+    }
+
+    function analyzeOldTestExtraction() {
+        const raw = $('.oldTestExtractResult')?.value || '';
+        const result = parseOldTestExtraction(raw);
+        state.oldTestExtracted = result.items;
+        state.oldTestEnriched = [];
+        state.oldTestMerged = [];
+        state.oldTestStats = {
+            extraction: result,
+            enrichment: null,
+            unknown: 0,
+            missing: 0,
+            ready: 0,
+            review: 0
+        };
+
+        renderOldTestConverter();
+        saveWorkspace();
+
+        if (!result.items.length) {
+            setStatus('❌ لم يتم استخراج أي سؤال. ألصق ناتج المرحلة الأولى بالصيغة المطلوبة.');
+            return;
+        }
+
+        setStatus(
+            `✅ تم فهم ${result.items.length} سؤالًا من المرحلة الأولى` +
+            `${result.duplicates ? `، مكرر ${result.duplicates}` : ''}` +
+            `${result.invalid ? `، أسطر غير مفهومة ${result.invalid}` : ''}` +
+            `${result.missingQids.length ? `، QID مفقودة ${result.missingQids.length}` : ''}.`
+        );
+    }
+
+    function loadOldTestIntoQuestionBank() {
+        if (!state.oldTestMerged.length) {
+            mergeOldTestData();
+        }
+
+        if (!state.oldTestMerged.length) {
+            return;
+        }
+
+        const questions = state.oldTestMerged
+            .map(item => oldTestQuestionFromMerged(item))
+            .filter(Boolean);
+
+        state.questions = questions;
+        state.results = questions.map(() => ({
+            status: 'pending',
+            error: ''
+        }));
+        state.selected = new Set();
+
+        questions.forEach((q, index) => {
+            const merged = state.oldTestMerged.find(
+                x => x.qid === q.sourceQid
+            );
+
+            if (merged?.ready) {
+                state.selected.add(index);
+            }
+        });
+
+        $('.source').value = questions
+            .map(questionToText)
+            .join('\n\n');
+
+        switchTab('preview');
+        render();
+
+        const review = questions.length - state.selected.size;
+        const visual = questions.filter(
+            q => q.visualReview
+        ).length;
+
+        setStatus(
+            `✅ تم نقل ${questions.length} سؤالًا إلى بنك الأسئلة. تم تحديد ${state.selected.size} سؤالًا جاهزًا` +
+            `${review ? `، وترك ${review} سؤالًا غير محدد للمراجعة` : ''}` +
+            `${visual ? `، ويوجد ${visual} سؤال/أسئلة ستُدخل بخيارات مؤقتة وتحتاج مراجعة بصرية بعد الإدخال` : ''}.`
+        );
+    }
+
+    function exportOldTestMergedExcel() {
+        if (!state.oldTestMerged.length) {
+            mergeOldTestData();
+        }
+
+        if (!state.oldTestMerged.length) {
+            return;
+        }
+
+        const questions = state.oldTestMerged
+            .map(item => oldTestQuestionFromMerged(item))
+            .filter(Boolean);
+
+        exportWorkbook(
+            questions,
+            'اختبار-قديم-محول-Microsoft-Forms.xlsx'
+        );
+    }
+
+    function renderOldTestConverter() {
+        const statsBox = $('.oldTestStats');
+        const previewBox = $('.oldTestPreview');
+
+        if (!statsBox || !previewBox) {
+            return;
+        }
+
+        const extraction = state.oldTestStats?.extraction || null;
+        const merged = state.oldTestMerged || [];
+
+        if (!extraction) {
+            statsBox.innerHTML = `
+                <div class="oldTestStat"><b>0</b><span>مستخرج</span></div>
+                <div class="oldTestStat"><b>0</b><span>جاهز</span></div>
+                <div class="oldTestStat"><b>0</b><span>مراجعة</span></div>
+                <div class="oldTestStat"><b>0</b><span>مرئي</span></div>
+            `;
+            previewBox.innerHTML = '<div class="legacyEmpty">ألصق ناتج استخراج الاختبار ثم اضغط «تحليل الاستخراج».</div>';
+            return;
+        }
+
+        const visual = merged.length
+            ? merged.filter(x => x.visualReview).length
+            : extraction.items.filter(x => /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(x.note || '')).length;
+        const ready = state.oldTestStats?.ready || 0;
+        const review = merged.length ? (state.oldTestStats?.review || 0) : 0;
+
+        statsBox.innerHTML = `
+            <div class="oldTestStat"><b>${extraction.items.length}</b><span>مستخرج</span></div>
+            <div class="oldTestStat good"><b>${ready}</b><span>جاهز</span></div>
+            <div class="oldTestStat warn"><b>${review}</b><span>مراجعة</span></div>
+            <div class="oldTestStat visual"><b>${visual}</b><span>مرئي</span></div>
+        `;
+
+        const rows = (merged.length ? merged : extraction.items).map(item => {
+            const status = merged.length
+                ? (
+                    item.ready
+                        ? (item.visualReview ? 'جاهز · بصري' : 'جاهز')
+                        : 'مراجعة'
+                )
+                : 'مستخرج';
+            const correct = clean(item.correct || '');
+            const skill = clean(item.skill || '');
+            const note = clean(item.note || '');
+
+            return `
+                <tr class="${merged.length && !item.ready ? 'needsReview' : ''}">
+                    <td>${html(item.qid)}</td>
+                    <td>${html(typeLabel(item.type))}</td>
+                    <td class="oldTestQuestionCell">${html(item.title)}</td>
+                    <td>${html(correct || '—')}</td>
+                    <td>${html(skill || '—')}</td>
+                    <td>${html(clean(item.modelAnswer || '') || '—')}</td>
+                    <td>${html(note || (merged.length && !item.ready ? 'تحقق من الإجابة/المهارة/الخيارات' : ''))}</td>
+                    <td><span class="oldTestStatus ${item.ready ? 'good' : ''}">${html(status)}</span></td>
+                </tr>
+            `;
+        }).join('');
+
+        previewBox.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>QID</th>
+                        <th>النوع</th>
+                        <th>السؤال</th>
+                        <th>الصحيح</th>
+                        <th>المهارة</th>
+                        <th>الإجابة النموذجية</th>
+                        <th>ملاحظة</th>
+                        <th>الحالة</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
     }
 
     async function copyText(text, successMessage) {
@@ -8947,15 +10185,28 @@ ${
                 state.questions
                     .map(
                         (
-                            _,
+                            q,
                             i
                         ) =>
-                            i
+                            q?.valid
+                                ? i
+                                : -1
+                    )
+                    .filter(
+                        i => i >= 0
                     )
             );
 
         state.nextIndex =
             0;
+
+        state.questions.forEach(
+            q => {
+                if (q) {
+                    delete q.importTargetPosition;
+                }
+            }
+        );
 
         state.log =
             [];
@@ -9012,6 +10263,35 @@ ${
             v;
 
         render();
+    }
+
+    function getCompletedVisualReviews() {
+        return state.questions
+            .map((q, i) => ({
+                q,
+                i,
+                result: state.results[i]
+            }))
+            .filter(
+                x =>
+                    x.q?.visualReview &&
+                    x.result?.status === 'done'
+            );
+    }
+
+    function visualReviewSummary(
+        items
+    ) {
+        if (!items?.length) {
+            return '';
+        }
+
+        return items
+            .map(
+                ({ q, i }) =>
+                    `س${i + 1}${q.sourceQid ? ` (${q.sourceQid})` : ''}`
+            )
+            .join('، ');
     }
 
     async function runIndices(
@@ -9141,6 +10421,26 @@ ${
                 );
             }
 
+            // نحفظ الموضع المستهدف من أول محاولة حتى تعود الأسئلة الفاشلة
+            // إلى مكانها الأصلي عند «إعادة الفاشل» بدل أن تبقى في نهاية النموذج.
+            const basePosition =
+                getCurrentMaxQuestionNumber();
+
+            target.forEach(
+                (questionIndex, ordinal) => {
+                    const question =
+                        state.questions[questionIndex];
+
+                    if (
+                        question &&
+                        !(Number(question.importTargetPosition) > 0)
+                    ) {
+                        question.importTargetPosition =
+                            basePosition + ordinal + 1;
+                    }
+                }
+            );
+
             for (
                 const i
                 of target
@@ -9155,7 +10455,12 @@ ${
                         i
                     ];
 
+                const previousStatus =
+                    state.results[i]?.status ||
+                    'pending';
+
                 if (
+                    previousStatus !== 'error' &&
                     $('.skipDup')
                         .checked &&
                     existing.has(
@@ -9223,18 +10528,34 @@ ${
                             );
                         };
 
+                    let addedNumber;
+
                     if (
                         q.type ===
                         'text'
                     ) {
-                        await addTextQuestion(
-                            q,
-                            progress
-                        );
+                        addedNumber =
+                            await addTextQuestion(
+                                q,
+                                progress
+                            );
                     }
                     else {
-                        await addChoiceQuestion(
-                            q,
+                        addedNumber =
+                            await addChoiceQuestion(
+                                q,
+                                progress
+                            );
+                    }
+
+                    if (
+                        Number(addedNumber) > 0 &&
+                        Number(q.importTargetPosition) > 0 &&
+                        Number(addedNumber) > Number(q.importTargetPosition)
+                    ) {
+                        await moveQuestionToPosition(
+                            addedNumber,
+                            q.importTargetPosition,
                             progress
                         );
                     }
@@ -9282,6 +10603,46 @@ ${
                         '__CANCELLED__'
                     ) {
                         throw err;
+                    }
+
+                    if (
+                        Number(err.createdQuestionNumber) > 0
+                    ) {
+                        try {
+                            const cleaned =
+                                await removePartialQuestion(
+                                    err.createdQuestionNumber,
+                                    msg => {
+                                        setStatus(
+                                            `السؤال ${i + 1}: ${msg}`
+                                        );
+
+                                        log(
+                                            `س${i + 1}: ${msg}`,
+                                            'warn'
+                                        );
+                                    }
+                                );
+
+                            if (cleaned) {
+                                log(
+                                    `سؤال ${i + 1}: تم حذف البطاقة غير المكتملة قبل إعادة المحاولة.`,
+                                    'warn'
+                                );
+                            }
+                            else {
+                                log(
+                                    `سؤال ${i + 1}: تعذر حذف البطاقة غير المكتملة تلقائيًا؛ راجع النموذج قبل إعادة المحاولة.`,
+                                    'error'
+                                );
+                            }
+                        }
+                        catch (cleanupErr) {
+                            log(
+                                `سؤال ${i + 1}: تعذر تنظيف البطاقة الجزئية: ${cleanupErr.message || cleanupErr}`,
+                                'error'
+                            );
+                        }
                     }
 
                     state.results[
@@ -9361,6 +10722,14 @@ ${
                     )
                     .length;
 
+            const visualDone =
+                getCompletedVisualReviews();
+
+            const visualText =
+                visualReviewSummary(
+                    visualDone
+                );
+
             setStatus(
                 `✅ انتهت العملية: تم ${
                     done
@@ -9368,8 +10737,20 @@ ${
                     skipped
                 }، أخطاء ${
                     failed
-                }.`
+                }.` +
+                (
+                    visualDone.length
+                        ? ` 🖼️ راجع بصريًا بعد الإدخال: ${visualText}. استبدل النصوص المؤقتة بالصور الأصلية ولا تغيّر الإجابة الصحيحة.`
+                        : ''
+                )
             );
+
+            if (visualDone.length) {
+                log(
+                    `مراجعة بصرية مطلوبة بعد الإدخال: ${visualText}.`,
+                    'warn'
+                );
+            }
         }
         catch (err) {
 
@@ -9947,6 +11328,62 @@ ${
                 '✅ تم نسخ مواصفات ملف Excel.'
             );
 
+    $('.copyOldTestExtractPrompt').onclick =
+        () => {
+            saveWorkspace();
+            copyText(
+                buildOldTestExtractionPrompt(),
+                '✅ تم نسخ برومبت استخراج الاختبار القديم.'
+            );
+        };
+
+    $('.oldTestParseExtract').onclick =
+        analyzeOldTestExtraction;
+
+    $('.copyOldTestEnrichPrompt').onclick =
+        () => {
+            if (!state.oldTestExtracted.length) {
+                analyzeOldTestExtraction();
+            }
+
+            const text = buildOldTestEnrichmentPrompt();
+
+            if (!text) {
+                setStatus('حلل ناتج المرحلة الأولى قبل نسخ برومبت الإجابات والمهارات.');
+                return;
+            }
+
+            saveWorkspace();
+            copyText(
+                text,
+                `✅ تم نسخ برومبت الإجابات والمهارات لـ ${state.oldTestExtracted.length} سؤالًا.`
+            );
+        };
+
+    $('.oldTestMerge').onclick =
+        mergeOldTestData;
+
+    $('.oldTestLoadBank').onclick =
+        loadOldTestIntoQuestionBank;
+
+    $('.oldTestExportExcel').onclick =
+        exportOldTestMergedExcel;
+
+    $('.oldTestUseModelAnswer').onchange =
+        () => {
+            saveWorkspace();
+            if (state.oldTestMerged.length) {
+                mergeOldTestData();
+            }
+        };
+
+    ['.oldTestName', '.oldTestBookName', '.oldTestExtractResult', '.oldTestEnrichResult']
+        .forEach(sel => {
+            const el = $(sel);
+            if (!el) return;
+            el.addEventListener('change', saveWorkspace);
+        });
+
     $('.chooseFile').onclick =
         () =>
             $('.fileInput')
@@ -10110,7 +11547,10 @@ ${
         '.aiTrueFalse',
         '.aiOptions',
         '.aiPoints',
-        '.aiFilename'
+        '.aiFilename',
+        '.oldTestName',
+        '.oldTestBookName',
+        '.oldTestUseModelAnswer'
     ].forEach(
         sel => {
 
@@ -10161,6 +11601,7 @@ ${
 
     renderLog();
 
+    renderOldTestConverter();
     render();
 
     window.FormsBulkImporter = {
@@ -10210,7 +11651,20 @@ ${
             buildQuestionGenerationPrompt,
 
         promptExcel:
-            buildExcelConversionPrompt
+            buildExcelConversionPrompt,
+
+        promptOldTestExtraction:
+            buildOldTestExtractionPrompt,
+
+        parseOldTestExtraction,
+
+        promptOldTestEnrichment:
+            buildOldTestEnrichmentPrompt,
+
+        parseOldTestEnrichment,
+
+        mergeOldTest:
+            mergeOldTestData
     };
 
     console.log(

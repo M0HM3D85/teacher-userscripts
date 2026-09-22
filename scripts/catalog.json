@@ -101,9 +101,9 @@
     {
       "id": "microsoft-forms-question-bank",
       "name": "Microsoft Forms - بنك الأسئلة والإدخال الجماعي",
-      "version": "0.7.0",
+      "version": "0.9.0",
       "status": "stable",
-      "description": "بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات كعنوان فرعي، تصنيف مهارات الأسئلة القديمة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.",
+      "description": "بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات كعنوان فرعي، تحويل اختبارات Word/PDF/Excel القديمة عبر AI، أسئلة بصرية مؤقتة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.",
       "sourcePath": "scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js",
       "additionalInfoPath": "scripts/microsoft-forms-question-bank/README.md",
       "greasyFork": "https://greasyfork.org/scripts/592704",
