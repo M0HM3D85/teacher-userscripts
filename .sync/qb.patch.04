@@ -1,3 +1,143 @@
++    function exportOldTestMergedExcel() {
++        if (!state.oldTestMerged.length) {
++            mergeOldTestData();
++        }
++
++        if (!state.oldTestMerged.length) {
++            return;
++        }
++
++        const questions = state.oldTestMerged
++            .map(item => oldTestQuestionFromMerged(item))
++            .filter(Boolean);
++
++        exportWorkbook(
++            questions,
++            'اختبار-قديم-محول-Microsoft-Forms.xlsx'
++        );
++    }
++
++    function renderOldTestConverter() {
++        const statsBox = $('.oldTestStats');
++        const previewBox = $('.oldTestPreview');
++
++        if (!statsBox || !previewBox) {
++            return;
++        }
++
++        const extraction = state.oldTestStats?.extraction || null;
++        const merged = state.oldTestMerged || [];
++
++        if (!extraction) {
++            statsBox.innerHTML = `
++                <div class="oldTestStat"><b>0</b><span>مستخرج</span></div>
++                <div class="oldTestStat"><b>0</b><span>جاهز</span></div>
++                <div class="oldTestStat"><b>0</b><span>مراجعة</span></div>
++                <div class="oldTestStat"><b>0</b><span>مرئي</span></div>
++            `;
++            previewBox.innerHTML = '<div class="legacyEmpty">ألصق ناتج استخراج الاختبار ثم اضغط «تحليل الاستخراج».</div>';
++            return;
++        }
++
++        const visual = merged.length
++            ? merged.filter(x => x.visualReview).length
++            : extraction.items.filter(x => /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(x.note || '')).length;
++        const ready = state.oldTestStats?.ready || 0;
++        const review = merged.length ? (state.oldTestStats?.review || 0) : 0;
++
++        statsBox.innerHTML = `
++            <div class="oldTestStat"><b>${extraction.items.length}</b><span>مستخرج</span></div>
++            <div class="oldTestStat good"><b>${ready}</b><span>جاهز</span></div>
++            <div class="oldTestStat warn"><b>${review}</b><span>مراجعة</span></div>
++            <div class="oldTestStat visual"><b>${visual}</b><span>مرئي</span></div>
++        `;
++
++        const rows = (merged.length ? merged : extraction.items).map(item => {
++            const status = merged.length
++                ? (
++                    item.ready
++                        ? (item.visualReview ? 'جاهز · بصري' : 'جاهز')
++                        : 'مراجعة'
++                )
++                : 'مستخرج';
++            const correct = clean(item.correct || '');
++            const skill = clean(item.skill || '');
++            const note = clean(item.note || '');
++
++            return `
++                <tr class="${merged.length && !item.ready ? 'needsReview' : ''}">
++                    <td>${html(item.qid)}</td>
++                    <td>${html(typeLabel(item.type))}</td>
++                    <td class="oldTestQuestionCell">${html(item.title)}</td>
++                    <td>${html(correct || '—')}</td>
++                    <td>${html(skill || '—')}</td>
++                    <td>${html(clean(item.modelAnswer || '') || '—')}</td>
++                    <td>${html(note || (merged.length && !item.ready ? 'تحقق من الإجابة/المهارة/الخيارات' : ''))}</td>
++                    <td><span class="oldTestStatus ${item.ready ? 'good' : ''}">${html(status)}</span></td>
++                </tr>
++            `;
++        }).join('');
++
++        previewBox.innerHTML = `
++            <table>
++                <thead>
++                    <tr>
++                        <th>QID</th>
++                        <th>النوع</th>
++                        <th>السؤال</th>
++                        <th>الصحيح</th>
++                        <th>المهارة</th>
++                        <th>الإجابة النموذجية</th>
++                        <th>ملاحظة</th>
++                        <th>الحالة</th>
++                    </tr>
++                </thead>
++                <tbody>${rows}</tbody>
++            </table>
++        `;
+     }
+ 
+     async function copyText(text, successMessage) {
+@@ -8947,16 +10185,29 @@
+                 state.questions
+                     .map(
+                         (
+-                            _,
++                            q,
+                             i
+                         ) =>
+-                            i
++                            q?.valid
++                                ? i
++                                : -1
++                    )
++                    .filter(
++                        i => i >= 0
+                     )
+             );
+ 
+         state.nextIndex =
+             0;
+ 
++        state.questions.forEach(
++            q => {
++                if (q) {
++                    delete q.importTargetPosition;
++                }
++            }
++        );
++
+         state.log =
+             [];
+ 
+@@ -9014,6 +10265,35 @@
+         render();
+     }
+ 
++    function getCompletedVisualReviews() {
++        return state.questions
++            .map((q, i) => ({
++                q,
 +                i,
 +                result: state.results[i]
 +            }))
