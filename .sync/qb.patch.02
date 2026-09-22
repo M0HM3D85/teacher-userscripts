@@ -1,0 +1,490 @@
++    gap: 8px;
++    margin-top: 9px;
++}
++
++.oldTestNames label {
++    display: flex;
++    flex-direction: column;
++    gap: 5px;
++    font-size: 11px;
++    font-weight: 700;
++}
++
++.oldTestNames input {
++    width: 100%;
++    border: 1px solid #ccd8dd;
++    border-radius: 8px;
++    padding: 8px 9px;
++    font: 11px "Segoe UI", Tahoma, Arial;
++    direction: rtl;
++    outline: none;
++    background: #fff;
++}
++
++.oldTestText {
++    width: 100%;
++    min-height: 130px;
++    resize: vertical;
++    border: 1px solid #ccd8dd;
++    border-radius: 9px;
++    padding: 9px 10px;
++    margin-top: 8px;
++    direction: rtl;
++    font: 11px/1.65 Consolas, "Segoe UI", Tahoma, Arial;
++    outline: none;
++    background: #fff;
++}
++
++.oldTestText:focus,
++.oldTestNames input:focus {
++    border-color: #087f83;
++    box-shadow: 0 0 0 3px #087f8318;
++}
++
++.oldTestStats {
++    display: grid;
++    grid-template-columns: repeat(4, 1fr);
++    gap: 7px;
++    margin: 10px 0;
++}
++
++.oldTestStat {
++    display: flex;
++    flex-direction: column;
++    align-items: center;
++    gap: 2px;
++    padding: 8px;
++    border: 1px solid #dce5e8;
++    border-radius: 9px;
++    background: #fff;
++    font-size: 10px;
++    color: #667;
++}
++
++.oldTestStat b {
++    font-size: 18px;
++    color: #244;
++}
++
++.oldTestStat.good b { color: #11834a; }
++.oldTestStat.warn b { color: #a56d00; }
++.oldTestStat.visual b { color: #8a4d9c; }
++
++.oldTestPreview {
++    max-height: 330px;
++    overflow: auto;
++    border: 1px solid #e0e7e9;
++    border-radius: 9px;
++    background: #fff;
++    margin-top: 9px;
++}
++
++.oldTestPreview table {
++    width: 100%;
++    border-collapse: collapse;
++    font-size: 10.5px;
++}
++
++.oldTestPreview th,
++.oldTestPreview td {
++    padding: 7px 6px;
++    border-bottom: 1px solid #edf1f2;
++    vertical-align: top;
++}
++
++.oldTestPreview th {
++    position: sticky;
++    top: 0;
++    z-index: 1;
++    background: #f4f8f9;
++    color: #345;
++}
++
++.oldTestQuestionCell {
++    min-width: 230px;
++    max-width: 330px;
++}
++
++.oldTestPreview tr.needsReview {
++    background: #fff9ed;
++}
++
++.oldTestStatus {
++    display: inline-block;
++    padding: 3px 6px;
++    border-radius: 999px;
++    background: #fff1ce;
++    color: #7f5d00;
++    white-space: nowrap;
++}
++
++.oldTestStatus.good {
++    background: #e9f9ef;
++    color: #11783f;
++}
++
++.oldTestCheck {
++    display: inline-flex;
++    gap: 7px;
++    align-items: center;
++    padding: 8px 9px;
++    border: 1px solid #dde6e9;
++    border-radius: 9px;
++    background: #fff;
++    font-size: 11px;
++    margin-top: 8px;
++}
++
++.oldTestCheck input {
++    accent-color: #087f83;
++}
++
++@media (max-width: 760px) {
++    .oldTestNames,
++    .oldTestStats {
++        grid-template-columns: 1fr 1fr;
++    }
++}
++
+ .legacySkillStats {
+     display: grid;
+     grid-template-columns: repeat(6, 1fr);
+@@ -6580,6 +7097,67 @@
+     💡 يمكنك تقييد الاختبار على «الوحدة الأولى» أو «الدرس الأول» أو أي نطاق تكتبه. عند ترك «نطاق المحتوى المستهدف» فارغًا، يغطي البرومبت كامل المصدر. ويُحفظ اسم المهارة كعنوان فرعي للسؤال لتسهيل توافقه مستقبلًا مع «محلل نتائج فورمز الذكي».
+ </div>
+ 
++<div class="oldTestTool">
++    <h3>📄 محول الاختبارات القديمة من Word / PDF / Excel</h3>
++    <div class="note">
++        مسار من مرحلتين: يستخرج NotebookLM الأسئلة حرفيًا مع QID ثابت، ثم يرجع الإجابات والمهارات من الكتاب. السكربت يدمج النتيجتين بنفسه دون إعادة كتابة الأسئلة مرة ثالثة.
++    </div>
++
++    <div class="oldTestNames">
++        <label>
++            اسم ملف الاختبار في NotebookLM (اختياري)
++            <input class="oldTestName" type="text" placeholder="مثال: اختبار الوحدة الأولى 1448">
++        </label>
++        <label>
++            اسم الكتاب / المصدر الدراسي (اختياري)
++            <input class="oldTestBookName" type="text" placeholder="مثال: كتاب المهارات الرقمية أول متوسط">
++        </label>
++    </div>
++
++    <div class="oldTestStep">
++        <b>① استخراج الاختبار كما هو</b>
++        <div class="actions">
++            <button class="btn primary copyOldTestExtractPrompt">📋 نسخ برومبت الاستخراج</button>
++        </div>
++        <textarea class="oldTestText oldTestExtractResult" placeholder="ألصق ناتج NotebookLM هنا:
++QID | السؤال | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | ملاحظة
++Q001 | ..."></textarea>
++        <div class="actions">
++            <button class="btn secondary oldTestParseExtract">🔎 تحليل الاستخراج</button>
++        </div>
++    </div>
++
++    <div class="oldTestStep">
++        <b>② الإجابات الصحيحة + المهارات من الكتاب</b>
++        <div class="actions">
++            <button class="btn primary copyOldTestEnrichPrompt">📚 نسخ برومبت الإجابات والمهارات</button>
++        </div>
++        <textarea class="oldTestText oldTestEnrichResult" placeholder="ألصق الناتج الثاني هنا:
++Q001 | أ | اسم المهارة |
++Q002 | ب | اسم المهارة |
++Q021 | غير محدد | اسم المهارة | إجابة نموذجية"></textarea>
++        <label class="oldTestCheck">
++            <input class="oldTestUseModelAnswer" type="checkbox">
++            استخدام الإجابة النموذجية كسؤال نصي مصحح تلقائيًا في Forms (غير مفعّل افتراضيًا)
++        </label>
++        <div class="actions">
++            <button class="btn primary oldTestMerge">🔗 دمج المرحلتين</button>
++        </div>
++    </div>
++
++    <div class="oldTestStats"></div>
++    <div class="oldTestPreview"></div>
++
++    <div class="actions">
++        <button class="btn primary oldTestLoadBank">📥 نقل إلى بنك الأسئلة</button>
++        <button class="btn secondary oldTestExportExcel">📊 تصدير Excel</button>
++    </div>
++
++    <div class="studentHint">
++        💡 السؤال البصري لا يُستبعد: إذا عاد بخيارات مؤقتة مثل [أضف صورة الخيار أ هنا] ومعه إجابة صحيحة ومهارة، يُدخل في مكانه الطبيعي ثم يظهر ضمن قائمة المراجعة البصرية لتستبدل النصوص المؤقتة بالصور. QID مؤقت ولا يظهر للطالب.
++    </div>
++</div>
++
+ </section>
+ 
+ <section
+@@ -7488,7 +8066,667 @@
+     }
+ 
+     function buildExcelSpecsText() {
+-        return `مواصفات ملف Excel لبنك أسئلة Microsoft Forms:\n\nالسؤال | المهارة | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | مطلوب\n\n- «المهارة» تُكتب تلقائيًا كعنوان فرعي للسؤال في Microsoft Forms.\n- النوع المدعوم: اختيار / متعدد / صح/خطأ / نصي.\n- الصحيح يمكن أن يكون حرف الخيار أو رقمه أو نصه.\n- في صح/خطأ: أ = صح، ب = خطأ، ج ود فارغان.\n- مطلوب: نعم أو لا.\n- لا تضف صفوفًا أو عناوين أعلى صف الأعمدة.`;
++        return `مواصفات ملف Excel لبنك أسئلة Microsoft Forms:\n\nالسؤال | المهارة | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | مطلوب\n\n- «المهارة» تُكتب تلقائيًا كعنوان فرعي للسؤال في Microsoft Forms.\n- النوع المدعوم: اختيار / متعدد / صح/خطأ / نصي.\n- الصحيح يمكن أن يكون حرف الخيار أو رقمه أو نصه.\n- في صح/خطأ: أ = صح، ب = خطأ، ج ود فارغان.\n- عمود «الإجابة النموذجية» اختياري للأسئلة النصية عند تصدير الاختبارات القديمة؛ لا يُستخدم للتصحيح التلقائي إلا إذا اختار المستخدم ذلك.\n- مطلوب: نعم أو لا.\n- لا تضف صفوفًا أو عناوين أعلى صف الأعمدة.`;
++    }
++
++    function normalizeQid(value) {
++        const raw = westernDigits(
++            clean(value)
++                .toUpperCase()
++                .replace(/\s+/g, '')
++        );
++
++        const m = raw.match(/^Q0*(\d+)$/i);
++
++        if (!m) {
++            return '';
++        }
++
++        const n = Number(m[1]);
++
++        if (!Number.isInteger(n) || n < 1) {
++            return '';
++        }
++
++        return `Q${String(n).padStart(3, '0')}`;
++    }
++
++    function oldTestCorrectValue(value) {
++        const v = clean(value);
++        const c = canonical(v);
++
++        if (
++            !v ||
++            [
++                'غير محدد',
++                'غير معروف',
++                'غير متاح',
++                'لا يوجد',
++                'n a',
++                'na'
++            ].includes(c)
++        ) {
++            return '';
++        }
++
++        return normalizeLetter(v);
++    }
++
++    function oldTestSkillValue(value) {
++        const v = clean(value);
++        const c = canonical(v);
++
++        if (
++            !v ||
++            [
++                'غير مصنف',
++                'غير محدد',
++                'غير معروف'
++            ].includes(c)
++        ) {
++            return '';
++        }
++
++        return v;
++    }
++
++    function parseOldTestExtraction(raw) {
++        const lines = String(raw || '')
++            .replace(/^\uFEFF/, '')
++            .replace(/\r\n?/g, '\n')
++            .split('\n');
++
++        const items = [];
++        const seen = new Set();
++        let duplicates = 0;
++        let invalid = 0;
++
++        for (const originalLine of lines) {
++            if (!clean(originalLine)) continue;
++
++            const columns = String(originalLine)
++                .split('|')
++                .map(v => clean(v));
++
++            if (
++                canonical(columns[0] || '') === 'qid' ||
++                /^(?:qid|المعرف)$/i.test(columns[0] || '')
++            ) {
++                continue;
++            }
++
++            const qid = normalizeQid(columns[0] || '');
++
++            if (!qid) {
++                invalid++;
++                continue;
++            }
++
++            if (seen.has(qid)) {
++                duplicates++;
++                continue;
++            }
++
++            if (columns.length < 9) {
++                invalid++;
++                continue;
++            }
++
++            const title = clean(columns[1] || '');
++            const rawType = clean(columns[2] || '');
++            const type = normalizeType(rawType);
++
++            if (!title || !type) {
++                invalid++;
++                continue;
++            }
++
++            let optionTexts = [
++                columns[3] || '',
++                columns[4] || '',
++                columns[5] || '',
++                columns[6] || ''
++            ].map(v => clean(v));
++
++            if (type === 'truefalse') {
++                if (!optionTexts[0]) optionTexts[0] = 'صح';
++                if (!optionTexts[1]) optionTexts[1] = 'خطأ';
++            }
++
++            const options = optionTexts
++                .map((text, index) => ({
++                    label: ['أ', 'ب', 'ج', 'د'][index],
++                    text
++                }))
++                .filter(o => o.text);
++
++            const correct = oldTestCorrectValue(columns[7] || '');
++            const points = parsePoints(columns[8] || 1, 1);
++            const note = clean(columns.slice(9).join(' | '));
++
++            items.push({
++                qid,
++                title,
++                type,
++                rawType,
++                options,
++                correct,
++                points,
++                note
++            });
++
++            seen.add(qid);
++        }
++
++        items.sort(
++            (a, b) =>
++                Number(a.qid.slice(1)) -
++                Number(b.qid.slice(1))
++        );
++
++        const missingQids = [];
++        const max = items.length
++            ? Math.max(...items.map(x => Number(x.qid.slice(1))))
++            : 0;
++
++        for (let i = 1; i <= max; i++) {
++            const qid = `Q${String(i).padStart(3, '0')}`;
++            if (!seen.has(qid)) missingQids.push(qid);
++        }
++
++        return {
++            items,
++            duplicates,
++            invalid,
++            missingQids
++        };
++    }
++
++    function parseOldTestEnrichment(raw) {
++        const lines = String(raw || '')
++            .replace(/^\uFEFF/, '')
++            .replace(/\r\n?/g, '\n')
++            .split('\n');
++
++        const items = [];
++        const seen = new Set();
++        let duplicates = 0;
++        let invalid = 0;
++
++        for (const originalLine of lines) {
++            if (!clean(originalLine)) continue;
++
++            const columns = String(originalLine)
++                .split('|')
++                .map(v => clean(v));
++
++            if (
++                canonical(columns[0] || '') === 'qid' ||
++                /^(?:qid|المعرف)$/i.test(columns[0] || '')
++            ) {
++                continue;
++            }
++
++            const qid = normalizeQid(columns[0] || '');
++
++            if (!qid || columns.length < 3) {
++                invalid++;
++                continue;
++            }
++
++            if (seen.has(qid)) {
++                duplicates++;
++                continue;
++            }
++
++            items.push({
++                qid,
++                correct: oldTestCorrectValue(columns[1] || ''),
++                skill: oldTestSkillValue(columns[2] || ''),
++                modelAnswer: clean(columns.slice(3).join(' | '))
++            });
++
++            seen.add(qid);
++        }
++
++        return {
++            items,
++            duplicates,
++            invalid
++        };
++    }
++
++    function buildOldTestExtractionPrompt() {
++        const testName = clean($('.oldTestName')?.value || '');
++        const sourceLine = testName
++            ? `اعتمد فقط على مصدر الاختبار المسمى «${testName}».`
++            : 'اعتمد فقط على ملف الاختبار المرفق كمصدر.';
++
++        return `${sourceLine}
++
++أريد استخراج جميع أسئلة الاختبار وتحويلها إلى صيغة منظمة قابلة للاستيراد لاحقًا إلى Microsoft Forms.
++
++قواعد صارمة:
++1) استخرج الأسئلة فقط. تجاهل اسم الطالب والفصل وبيانات المدرسة والتعليمات وعناوين الأقسام والتوقيع والعبارات الختامية.
++2) انقل نص السؤال حرفيًا كما يظهر في الاختبار قدر الإمكان من القراءة، ولا تعِد صياغته ولا تصححه لغويًا ولا تختصره.
++3) لا تغيّر ترتيب الكلمات أو العناصر أو القوائم أو الوحدات الموجودة داخل السؤال أو بين الأقواس، حتى إذا كان السؤال نفسه يطلب ترتيبها. لا تنفذ المطلوب داخل السؤال أثناء الاستخراج.
++4) حافظ على ترتيب الأسئلة الأصلي، وأعط كل سؤال معرفًا متسلسلًا: Q001 ثم Q002 ثم Q003... دون فجوات.
++5) صنف النوع إلى واحد فقط: صح/خطأ، اختيار، نصي.
++6) صح/خطأ: خيار أ = صح، خيار ب = خطأ، وخيارا ج ود فارغان.
++7) الاختيار: انقل الخيارات كما وردت وبالترتيب نفسه. إذا كان السؤال يحتوي 2 أو 3 خيارات فقط فلا تنشئ خيارات إضافية.
++8) النصي/المقالي: اترك جميع خانات الخيارات فارغة.
++9) لا تخمن الإجابة الصحيحة. إذا لم يكن مفتاح الإجابة مثبتًا بوضوح في ملف الاختبار فاترك «الصحيح» فارغًا.
++10) استخرج الدرجة من توزيع درجات القسم إذا أمكن. مثال: 10 أسئلة لقسم درجته 10 = درجة كل سؤال 1. إذا تعذر تحديد الدرجة استخدم 1 واكتب في الملاحظة «الدرجة تحتاج مراجعة».
++11) التعامل مع الصور والرموز والعناصر البصرية:
++- لا تحذف السؤال ولا تحذف أي خيار بصري ولا تترك مكانه فارغًا.
++- لا تخمن معنى الصورة أو الرمز إذا لم يكن واضحًا.
++- إذا كانت الصورة داخل نص السؤال فاكتب في موضعها: [أضف صورة السؤال هنا].
++- إذا كان الخيار أ صورة فاكتب: [أضف صورة الخيار أ هنا].
++- إذا كان الخيار ب صورة فاكتب: [أضف صورة الخيار ب هنا].
++- إذا كان الخيار ج صورة فاكتب: [أضف صورة الخيار ج هنا].
++- إذا كان الخيار د صورة فاكتب: [أضف صورة الخيار د هنا].
++- حافظ على العدد الحقيقي للخيارات وترتيبها كما يظهر في الاختبار.
++- إذا أمكن نقل الرمز نفسه كنص Unicode بوضوح ومن دون تخمين، انقله كما هو بدل النص المؤقت.
++- في خانة الملاحظة اكتب: يحتاج مراجعة بصرية.
++12) إذا كان السؤال نفسه يحتوي نصًا وصورة معًا، احتفظ بالنص كاملًا وضع [أضف صورة السؤال هنا] في موضع الصورة.
++13) لا تستبعد أي سؤال بسبب وجود صورة أو رمز.
++14) لا تضف أي سؤال غير موجود في الاختبار ولا تحذف سؤالًا موجودًا.
++15) راجع عدد الأسئ
