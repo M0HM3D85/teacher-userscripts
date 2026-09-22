@@ -1,0 +1,440 @@
+لة وترتيب QID قبل الإخراج.
++
++أخرج النتيجة فقط، سطرًا واحدًا لكل سؤال، بهذا التنسيق الحرفي:
++QID | السؤال | النوع | خيار أ | خيار ب | خيار ج | خيار د | الصحيح | الدرجة | ملاحظة
++
++مثال للتنسيق فقط:
++Q001 | نص السؤال | اختيار | الخيار الأول | الخيار الثاني | الخيار الثالث | | | 1 |
++
++لا تكتب شرحًا أو جدول Markdown أو مقدمة أو خاتمة.`;
++    }
++
++    function buildOldTestEnrichmentPrompt() {
++        const items = state.oldTestExtracted || [];
++
++        if (!items.length) {
++            return '';
++        }
++
++        const testName = clean($('.oldTestName')?.value || '');
++        const bookName = clean($('.oldTestBookName')?.value || '');
++        const qids = items.map(x => x.qid).join(', ');
++
++        return `لدي ${items.length} سؤالًا مستخرجًا من اختبار قديم وتحمل معرفات QID ثابتة.
++${testName ? `مصدر الاختبار: «${testName}».` : 'استخدم ملف الاختبار الموجود في المصادر للتحقق من صياغة السؤال عند الحاجة.'}
++${bookName ? `مصدر الكتاب الدراسي المعتمد: «${bookName}».` : 'استخدم الكتاب الدراسي الموجود في المصادر لتحديد الإجابات والمهارات.'}
++
++المعرفات المطلوبة فقط:
++${qids}
++
++المطلوب لكل سؤال:
++1) تحديد الإجابة الصحيحة اعتمادًا على الكتاب الدراسي والمصادر المحددة فقط.
++2) تحديد مهارة أو مفهوم تعليمي واحد يقيسه السؤال.
++3) توحيد أسماء المهارات بين الأسئلة المتشابهة؛ لا تنشئ اسمًا مختلفًا لكل سؤال ولا أسماء متقاربة للمفهوم نفسه.
++4) اجعل اسم المهارة قصيرًا وواضحًا ومناسبًا للتقارير التعليمية.
++5) لا تغيّر QID ولا تعِد كتابة السؤال ولا الخيارات.
++6) لا تخمن من خارج المصادر. إذا تعذر إثبات الإجابة اكتب «غير محدد».
++7) صح/خطأ: الصحيح = أ إذا كانت العبارة صحيحة، وب إذا كانت خاطئة.
++8) الاختيار: الصحيح = حرف واحد فقط أ أو ب أو ج أو د وفق ترتيب الخيارات المستخرج.
++9) النصي/المقالي: اكتب في حقل الصحيح «غير محدد»، ثم اكتب إجابة نموذجية مختصرة فقط إذا كانت مدعومة بوضوح من الكتاب.
++10) إذا كان السؤال يعتمد على صورة/رمز في ملف الاختبار، استخدم الملف الأصلي والكتاب لتحديد الإجابة فقط إذا كان ذلك واضحًا؛ وإلا اكتب «غير محدد».
++11) يجب أن يظهر كل QID المطلوب مرة واحدة فقط، دون أسطر إضافية.
++
++أخرج النتيجة فقط بهذه الصيغة:
++Q001 | الصحيح | اسم المهارة | الإجابة النموذجية إن وجدت
++Q002 | الصحيح | اسم المهارة | الإجابة النموذجية إن وجدت
++
++لا تكتب مقدمة أو شرحًا أو جدول Markdown أو خاتمة.`;
++    }
++
++    function oldTestQuestionFromMerged(item) {
++        const useModelAnswer = !!$('.oldTestUseModelAnswer')?.checked;
++        const letters = ['أ', 'ب', 'ج', 'د'];
++        const lines = [
++            `س: ${item.title}`
++        ];
++
++        if (clean(item.skill)) {
++            lines.push(`المهارة: ${item.skill}`);
++        }
++
++        lines.push(`النوع: ${typeLabel(item.type)}`);
++
++        if (item.type !== 'text') {
++            (item.options || []).forEach((o, index) => {
++                lines.push(`${o.label || letters[index] || index + 1}: ${o.text}`);
++            });
++
++            if (item.correct) {
++                lines.push(`الصحيح: ${item.correct}`);
++            }
++        }
++        else if (useModelAnswer && item.modelAnswer) {
++            lines.push(`الإجابة: ${item.modelAnswer}`);
++        }
++
++        if (item.modelAnswer) {
++            lines.push(`الإجابة النموذجية: ${item.modelAnswer}`);
++        }
++
++        lines.push(`الدرجة: ${item.points}`);
++        lines.push('مطلوب: نعم');
++
++        const parsed = parseQuestions(
++            lines.join('\n'),
++            {
++                points: item.points,
++                required: true
++            }
++        )[0];
++
++        if (!parsed) {
++            return null;
++        }
++
++        parsed.sourceQid = item.qid;
++        parsed.sourceNote = item.note || '';
++        parsed.modelAnswer = clean(item.modelAnswer || parsed.modelAnswer || '');
++        parsed.visualReview = !!(
++            item.note &&
++            /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(item.note)
++        );
++
++        if (parsed.visualReview) {
++            parsed.warnings = parsed.warnings || [];
++            parsed.warnings.push(
++                `مراجعة بصرية بعد الإدخال${item.qid ? ` — ${item.qid}` : ''}: ${item.note}`
++            );
++        }
++
++        return parsed;
++    }
++
++    function mergeOldTestData() {
++        const extractRaw = $('.oldTestExtractResult')?.value || '';
++        const enrichRaw = $('.oldTestEnrichResult')?.value || '';
++
++        const extraction = parseOldTestExtraction(extractRaw);
++        state.oldTestExtracted = extraction.items;
++
++        if (!extraction.items.length) {
++            state.oldTestEnriched = [];
++            state.oldTestMerged = [];
++            state.oldTestStats = {
++                extraction,
++                enrichment: null,
++                unknown: 0,
++                missing: 0,
++                ready: 0,
++                review: 0
++            };
++            renderOldTestConverter();
++            setStatus('❌ لم أتمكن من قراءة أسئلة المرحلة الأولى. تحقق من صيغة QID والأعمدة.');
++            return null;
++        }
++
++        const enrichment = parseOldTestEnrichment(enrichRaw);
++        state.oldTestEnriched = enrichment.items;
++
++        const enrichMap = new Map(
++            enrichment.items.map(x => [x.qid, x])
++        );
++        const extractIds = new Set(
++            extraction.items.map(x => x.qid)
++        );
++        const unknown = enrichment.items.filter(x => !extractIds.has(x.qid)).length;
++        let missing = 0;
++
++        const merged = extraction.items.map(item => {
++            const extra = enrichMap.get(item.qid) || null;
++            if (!extra) missing++;
++
++            const correct =
++                (extra && extra.correct) ||
++                item.correct ||
++                '';
++            const skill = extra ? extra.skill : '';
++            const modelAnswer = extra ? extra.modelAnswer : '';
++
++            const mergedItem = {
++                ...item,
++                correct,
++                skill,
++                modelAnswer
++            };
++
++            const question = oldTestQuestionFromMerged(mergedItem);
++            const visualReview = !!(
++                item.note &&
++                /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(item.note)
++            );
++            const missingSkill = !clean(skill);
++            const missingCorrect =
++                item.type !== 'text' &&
++                !clean(correct);
++            // وجود مراجعة بصرية لا يمنع الإدخال إذا كانت الخيارات المؤقتة
++            // والإجابة والمهارة تجعل السؤال صالحًا. يبقى فقط بعلامة مراجعة بعد التنفيذ.
++            const ready = !!(
++                question &&
++                question.valid &&
++                !missingSkill &&
++                !missingCorrect
++            );
++
++            return {
++                ...mergedItem,
++                question,
++                ready,
++                visualReview,
++                missingSkill,
++                missingCorrect
++            };
++        });
++
++        state.oldTestMerged = merged;
++
++        const ready = merged.filter(x => x.ready).length;
++        const review = merged.length - ready;
++
++        state.oldTestStats = {
++            extraction,
++            enrichment,
++            unknown,
++            missing,
++            ready,
++            review
++        };
++
++        renderOldTestConverter();
++        saveWorkspace();
++
++        setStatus(
++            `✅ تم دمج ${merged.length} سؤالًا: ${ready} جاهز، ${review} يحتاج مراجعة` +
++            `${missing ? `، ${missing} بلا نتيجة مرحلة ثانية` : ''}` +
++            `${unknown ? `، ${unknown} QID غير معروف` : ''}.`
++        );
++
++        return merged;
++    }
++
++    function analyzeOldTestExtraction() {
++        const raw = $('.oldTestExtractResult')?.value || '';
++        const result = parseOldTestExtraction(raw);
++        state.oldTestExtracted = result.items;
++        state.oldTestEnriched = [];
++        state.oldTestMerged = [];
++        state.oldTestStats = {
++            extraction: result,
++            enrichment: null,
++            unknown: 0,
++            missing: 0,
++            ready: 0,
++            review: 0
++        };
++
++        renderOldTestConverter();
++        saveWorkspace();
++
++        if (!result.items.length) {
++            setStatus('❌ لم يتم استخراج أي سؤال. ألصق ناتج المرحلة الأولى بالصيغة المطلوبة.');
++            return;
++        }
++
++        setStatus(
++            `✅ تم فهم ${result.items.length} سؤالًا من المرحلة الأولى` +
++            `${result.duplicates ? `، مكرر ${result.duplicates}` : ''}` +
++            `${result.invalid ? `، أسطر غير مفهومة ${result.invalid}` : ''}` +
++            `${result.missingQids.length ? `، QID مفقودة ${result.missingQids.length}` : ''}.`
++        );
++    }
++
++    function loadOldTestIntoQuestionBank() {
++        if (!state.oldTestMerged.length) {
++            mergeOldTestData();
++        }
++
++        if (!state.oldTestMerged.length) {
++            return;
++        }
++
++        const questions = state.oldTestMerged
++            .map(item => oldTestQuestionFromMerged(item))
++            .filter(Boolean);
++
++        state.questions = questions;
++        state.results = questions.map(() => ({
++            status: 'pending',
++            error: ''
++        }));
++        state.selected = new Set();
++
++        questions.forEach((q, index) => {
++            const merged = state.oldTestMerged.find(
++                x => x.qid === q.sourceQid
++            );
++
++            if (merged?.ready) {
++                state.selected.add(index);
++            }
++        });
++
++        $('.source').value = questions
++            .map(questionToText)
++            .join('\n\n');
++
++        switchTab('preview');
++        render();
++
++        const review = questions.length - state.selected.size;
++        const visual = questions.filter(
++            q => q.visualReview
++        ).length;
++
++        setStatus(
++            `✅ تم نقل ${questions.length} سؤالًا إلى بنك الأسئلة. تم تحديد ${state.selected.size} سؤالًا جاهزًا` +
++            `${review ? `، وترك ${review} سؤالًا غير محدد للمراجعة` : ''}` +
++            `${visual ? `، ويوجد ${visual} سؤال/أسئلة ستُدخل بخيارات مؤقتة وتحتاج مراجعة بصرية بعد الإدخال` : ''}.`
++        );
++    }
++
++    function exportOldTestMergedExcel() {
++        if (!state.oldTestMerged.length) {
++            mergeOldTestData();
++        }
++
++        if (!state.oldTestMerged.length) {
++            return;
++        }
++
++        const questions = state.oldTestMerged
++            .map(item => oldTestQuestionFromMerged(item))
++            .filter(Boolean);
++
++        exportWorkbook(
++            questions,
++            'اختبار-قديم-محول-Microsoft-Forms.xlsx'
++        );
++    }
++
++    function renderOldTestConverter() {
++        const statsBox = $('.oldTestStats');
++        const previewBox = $('.oldTestPreview');
++
++        if (!statsBox || !previewBox) {
++            return;
++        }
++
++        const extraction = state.oldTestStats?.extraction || null;
++        const merged = state.oldTestMerged || [];
++
++        if (!extraction) {
++            statsBox.innerHTML = `
++                <div class="oldTestStat"><b>0</b><span>مستخرج</span></div>
++                <div class="oldTestStat"><b>0</b><span>جاهز</span></div>
++                <div class="oldTestStat"><b>0</b><span>مراجعة</span></div>
++                <div class="oldTestStat"><b>0</b><span>مرئي</span></div>
++            `;
++            previewBox.innerHTML = '<div class="legacyEmpty">ألصق ناتج استخراج الاختبار ثم اضغط «تحليل الاستخراج».</div>';
++            return;
++        }
++
++        const visual = merged.length
++            ? merged.filter(x => x.visualReview).length
++            : extraction.items.filter(x => /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(x.note || '')).length;
++        const ready = state.oldTestStats?.ready || 0;
++        const review = merged.length ? (state.oldTestStats?.review || 0) : 0;
++
++        statsBox.innerHTML = `
++            <div class="oldTestStat"><b>${extraction.items.length}</b><span>مستخرج</span></div>
++            <div class="oldTestStat good"><b>${ready}</b><span>جاهز</span></div>
++            <div class="oldTestStat warn"><b>${review}</b><span>مراجعة</span></div>
++            <div class="oldTestStat visual"><b>${visual}</b><span>مرئي</span></div>
++        `;
++
++        const rows = (merged.length ? merged : extraction.items).map(item => {
++            const status = merged.length
++                ? (
++                    item.ready
++                        ? (item.visualReview ? 'جاهز · بصري' : 'جاهز')
++                        : 'مراجعة'
++                )
++                : 'مستخرج';
++            const correct = clean(item.correct || '');
++            const skill = clean(item.skill || '');
++            const note = clean(item.note || '');
++
++            return `
++                <tr class="${merged.length && !item.ready ? 'needsReview' : ''}">
++                    <td>${html(item.qid)}</td>
++                    <td>${html(typeLabel(item.type))}</td>
++                    <td class="oldTestQuestionCell">${html(item.title)}</td>
++                    <td>${html(correct || '—')}</td>
++                    <td>${html(skill || '—')}</td>
++                    <td>${html(clean(item.modelAnswer || '') || '—')}</td>
++                    <td>${html(note || (merged.length && !item.ready ? 'تحقق من الإجابة/المهارة/الخيارات' : ''))}</td>
++                    <td><span class="oldTestStatus ${item.ready ? 'good' : ''}">${html(status)}</span></td>
++                </tr>
++            `;
++        }).join('');
++
++        previewBox.innerHTML = `
++            <table>
++                <thead>
++                    <tr>
++                        <th>QID</th>
++                        <th>النوع</th>
++                        <th>السؤال</th>
++                        <th>الصحيح</th>
++                        <th>المهارة</th>
++                        <th>الإجابة النموذجية</th>
++                        <th>ملاحظة</th>
++                        <th>الحالة</th>
++                    </tr>
++                </thead>
++                <tbody>${rows}</tbody>
++            </table>
++        `;
+     }
+ 
+     async function copyText(text, successMessage) {
+@@ -8947,16 +10185,29 @@
+                 state.questions
+                     .map(
+                         (
+-                            _,
++                            q,
+                             i
+                         ) =>
+-                            i
++                            q?.valid
++                                ? i
++                                : -1
++                    )
++                    .filter(
++                        i => i >= 0
+                     )
+             );
+ 
+         state.nextIndex =
+             0;
+ 
++        state.questions.forEach(
++            q => {
++                if (q) {
++                    delete q.importTargetPosition;
++                }
++            }
++        );
++
+         state.log =
+             [];
+ 
+@@ -9014,6 +10265,35 @@
+         render();
+     }
+ 
++    function getCompletedVisualReviews() {
++        return state.questions
++            .map((q, i) => ({
++                q,
++
