@@ -1,0 +1,41 @@
+name: Apply Question Bank v0.9.0
+
+on:
+  push:
+    branches:
+      - update-question-bank-v0.9.0
+    paths:
+      - .sync/qb.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  apply-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout update branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .sync/qb.patch.* > /tmp/qb-v090.patch
+          git apply --check /tmp/qb-v090.patch
+          git apply /tmp/qb-v090.patch
+          node --check scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js
+          echo "b76c89c15c6f5894a8b49166683fd274eba5d900b2dc5d0a41f26fb731befdfa  scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js" | sha256sum -c -
+
+      - name: Commit updated userscript
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js
+          git commit -m "Microsoft Forms Question Bank v0.9.0"
+          git push origin HEAD:${{ github.ref_name }}
