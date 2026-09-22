@@ -1,0 +1,565 @@
+--- a/scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js
++++ b/scripts/microsoft-forms-question-bank/microsoft-forms-question-bank.user.js
+@@ -1,8 +1,8 @@
+ // ==UserScript==
+ // @name         Microsoft Forms - بنك الأسئلة والإدخال الجماعي
+ // @namespace    https://greasyfork.org/users/1636459
+-// @version      0.7.0
+-// @description  بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات كعنوان فرعي، تصنيف مهارات الأسئلة القديمة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.
++// @version      0.9.0
++// @description  بنك أسئلة احترافي لـ Microsoft Forms: إدخال جماعي، مهارات، تحويل الاختبارات القديمة من Word/PDF/Excel عبر AI، دعم الأسئلة البصرية المؤقتة، بيانات الطالب، Excel/CSV/TXT، ومساعد AI.
+ // @author       Mohammed Almalki (M0HM3D85)
+ // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
+ // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
+@@ -34,8 +34,8 @@
+ (() => {
+     'use strict';
+ 
+-    const VERSION = '0.7.0';
+-    const HOST_ID = 'mfbi-v070-host';
++    const VERSION = '0.9.0';
++    const HOST_ID = 'mfbi-v090-host';
+ 
+     const DEVELOPER = Object.freeze({
+         name: 'Mohammed Almalki',
+@@ -87,7 +87,13 @@
+         legacySkillSkippedMetadata: 0,
+         legacySkillBusy: false,
+         legacySkillIgnoreMetadata: true,
+-        legacySkillReplaceExisting: false
++        legacySkillReplaceExisting: false,
++
++        // محول الاختبارات القديمة: استخراج حرفي ثم دمج الإجابات والمهارات بالـ QID.
++        oldTestExtracted: [],
++        oldTestEnriched: [],
++        oldTestMerged: [],
++        oldTestStats: null
+     };
+ 
+     const sleep = ms =>
+@@ -274,7 +280,7 @@
+         }
+ 
+         if (
+-            /^(صح خطا|صح وخطا|صح او خطا|true false|truefalse)$/
++            /^(صح خطا|صح\/خطا|صح وخطا|صح او خطا|true false|true\/false|truefalse)$/
+                 .test(v)
+         ) {
+             return 'truefalse';
+@@ -392,6 +398,20 @@
+                 textAnswer:
+                     '',
+ 
++                // إجابة نموذجية للأسئلة النصية. لا تُرسل إلى Forms تلقائيًا إلا باختيار المستخدم.
++                modelAnswer:
++                    '',
++
++                // بيانات داخلية لمسار تحويل الاختبارات القديمة.
++                sourceQid:
++                    '',
++
++                sourceNote:
++                    '',
++
++                visualReview:
++                    false,
++
+                 points:
+                     defaults.points,
+ 
+@@ -718,6 +738,64 @@
+ 
+             m =
+                 line.match(
++                    /^(?:qid|المعرف)\s*[:：\-–—]\s*(.+)$/i
++                );
++
++            if (m) {
++                if (q) {
++                    q.sourceQid =
++                        normalizeQid(
++                            m[1]
++                        );
++                }
++
++                continue;
++            }
++
++            m =
++                line.match(
++                    /^(?:مراجعة\s*بصرية|visual\s*review)\s*[:：\-–—]\s*(.+)$/i
++                );
++
++            if (m) {
++                if (q) {
++                    q.visualReview =
++                        parseBool(
++                            m[1],
++                            false
++                        );
++                }
++
++                continue;
++            }
++
++            m =
++                line.match(
++                    /^(?:ملاحظة|ملاحظه|note)\s*[:：\-–—]\s*(.+)$/i
++                );
++
++            if (m) {
++                if (q) {
++                    q.sourceNote =
++                        clean(
++                            m[1]
++                        );
++
++                    if (
++                        /مراجعة\s*بصرية|صورة|رمز|شكل/i.test(
++                            q.sourceNote
++                        )
++                    ) {
++                        q.visualReview =
++                            true;
++                    }
++                }
++
++                continue;
++            }
++
++            m =
++                line.match(
+                     /^(?:النوع|نوع السؤال|type)\s*[:：\-–—]\s*(.+)$/i
+                 );
+ 
+@@ -734,6 +812,22 @@
+ 
+             m =
+                 line.match(
++                    /^(?:الإجابة\s*النموذجية|الاجابة\s*النموذجية|model\s*answer)\s*[:：\-–—]\s*(.+)$/i
++                );
++
++            if (m) {
++                if (q) {
++                    q.modelAnswer =
++                        clean(
++                            m[1]
++                        );
++                }
++
++                continue;
++            }
++
++            m =
++                line.match(
+                     /^(?:الصحيح|الإجابة\s*الصحيحة|الاجابة\s*الصحيحة|الإجابة|الاجابة|الجواب|answer)\s*[:：\-–—]\s*(.+)$/i
+                 );
+ 
+@@ -1385,6 +1479,155 @@
+         );
+     }
+ 
++    function getCurrentMaxQuestionNumber() {
++        let max = 0;
++
++        const nodes = [
++            ...document.querySelectorAll(
++                '[data-automation-id="questionDesignerCard"],button[data-automation-id="questionWrapper"],[data-automation-id="questionTitle"]'
++            )
++        ];
++
++        for (const node of nodes) {
++            const value = westernDigits(
++                node.getAttribute?.('aria-label') ||
++                node.innerText ||
++                node.textContent ||
++                ''
++            );
++
++            const match = value.match(
++                /(?:السؤال|question)\s*(\d+)/i
++            );
++
++            if (match) {
++                max = Math.max(
++                    max,
++                    Number(match[1]) || 0
++                );
++            }
++        }
++
++        for (const card of getCards()) {
++            max = Math.max(
++                max,
++                cardNumber(card) || 0
++            );
++        }
++
++        return max;
++    }
++
++    function getDeleteQuestionButton(
++        number
++    ) {
++        const card =
++            getLiveCard(
++                number
++            );
++
++        if (!card) {
++            return null;
++        }
++
++        return [
++            ...card.querySelectorAll(
++                'button,[role="button"]'
++            )
++        ].find(
++            el =>
++                visible(el) &&
++                /حذف\s*السؤال|delete\s*question/i.test(
++                    labelOf(el)
++                )
++        ) || null;
++    }
++
++    async function removePartialQuestion(
++        number,
++        progress = () => {}
++    ) {
++        const card =
++            getLiveCard(
++                number
++            );
++
++        if (!card) {
++            return true;
++        }
++
++        const del =
++            getDeleteQuestionButton(
++                number
++            );
++
++        if (!del) {
++            return false;
++        }
++
++        progress(
++            'تنظيف بطاقة السؤال غير المكتملة...'
++        );
++
++        await clickElement(
++            del
++        );
++
++        await sleep(
++            350
++        );
++
++        if (card.isConnected) {
++            const dialog =
++                [
++                    ...document.querySelectorAll(
++                        '[role="dialog"]'
++                    )
++                ].find(
++                    visible
++                ) || null;
++
++            const confirmDelete =
++                dialog
++                    ? [
++                        ...dialog.querySelectorAll(
++                            'button,[role="button"]'
++                        )
++                    ].find(
++                        el =>
++                            visible(el) &&
++                            /^(?:حذف|Delete)$/i.test(
++                                clean(labelOf(el))
++                            )
++                    )
++                    : null;
++
++            if (confirmDelete) {
++                await clickElement(
++                    confirmDelete
++                );
++            }
++        }
++
++        try {
++            await waitFor(
++                () =>
++                    !card.isConnected ||
++                    !document.contains(card)
++                        ? true
++                        : null,
++                7000,
++                120,
++                'حذف بطاقة السؤال غير المكتملة'
++            );
++
++            return true;
++        }
++        catch (_) {
++            return false;
++        }
++    }
++
+     function getMoveUpButton(
+         number
+     ) {
+@@ -1427,7 +1670,7 @@
+                 );
+ 
+             progress(
+-                `نقل الحقل التعريفي إلى الموضع ${target}...`
++                `نقل السؤال إلى الموضع ${target}...`
+             );
+ 
+             await clickElement(
+@@ -2048,6 +2291,8 @@
+                 progress
+             );
+ 
++        try {
++
+         progress(
+             'كتابة عنوان السؤال...'
+         );
+@@ -2346,6 +2591,18 @@
+         }
+ 
+         return number;
++        }
++        catch (err) {
++            try {
++                err.createdQuestionNumber =
++                    number;
++                err.createdQuestionTitle =
++                    q.title;
++            }
++            catch (_) {}
++
++            throw err;
++        }
+     }
+ 
+     function textAnswerCandidates(
+@@ -2549,6 +2806,8 @@
+                 progress
+             );
+ 
++        try {
++
+         progress(
+             'كتابة عنوان السؤال...'
+         );
+@@ -2598,6 +2857,18 @@
+         );
+ 
+         return number;
++        }
++        catch (err) {
++            try {
++                err.createdQuestionNumber =
++                    number;
++                err.createdQuestionTitle =
++                    q.title;
++            }
++            catch (_) {}
++
++            throw err;
++        }
+     }
+ 
+     function existingTitleSet() {
+@@ -3154,6 +3425,24 @@
+             );
+         }
+ 
++        if (clean(q.sourceQid)) {
++            lines.push(
++                `QID: ${clean(q.sourceQid)}`
++            );
++        }
++
++        if (q.visualReview) {
++            lines.push(
++                'مراجعة بصرية: نعم'
++            );
++        }
++
++        if (clean(q.sourceNote)) {
++            lines.push(
++                `ملاحظة: ${clean(q.sourceNote)}`
++            );
++        }
++
+         if (q.type) {
+             lines.push(
+                 `النوع: ${
+@@ -3221,13 +3510,22 @@
+             );
+         }
+         else {
++            const textAnswer =
++                clean(
++                    q.textAnswer ||
++                    q.answerRaw
++                );
++
++            if (textAnswer) {
++                lines.push(
++                    `الإجابة: ${textAnswer}`
++                );
++            }
++        }
++
++        if (clean(q.modelAnswer)) {
+             lines.push(
+-                `الإجابة: ${
+-                    clean(
+-                        q.textAnswer ||
+-                        q.answerRaw
+-                    )
+-                }`
++                `الإجابة النموذجية: ${clean(q.modelAnswer)}`
+             );
+         }
+ 
+@@ -3272,7 +3570,12 @@
+             return q;
+         }
+ 
+-        return parsed;
++        return {
++            ...parsed,
++            sourceQid: q.sourceQid || '',
++            sourceNote: q.sourceNote || '',
++            modelAnswer: clean(parsed.modelAnswer || q.modelAnswer || '')
++        };
+     }
+ 
+     function rowsToText(rows) {
+@@ -3344,6 +3647,15 @@
+                     ''
+                 );
+ 
++            const modelAnswer =
++                clean(
++                    row['الإجابة النموذجية'] ??
++                    row['الاجابة النموذجية'] ??
++                    row['Model Answer'] ??
++                    row['model answer'] ??
++                    ''
++                );
++
+             const points =
+                 clean(
+                     row['الدرجة'] ??
+@@ -3453,6 +3765,12 @@
+                 );
+             }
+ 
++            if (modelAnswer) {
++                lines.push(
++                    `الإجابة النموذجية: ${modelAnswer}`
++                );
++            }
++
+             if (points) {
+                 lines.push(
+                     `الدرجة: ${points}`
+@@ -3540,6 +3858,14 @@
+                     options: $('.aiOptions')?.value || 4,
+                     points: $('.aiPoints')?.value || 1,
+                     filename: $('.aiFilename')?.value || 'اختبار-Microsoft-Forms.xlsx'
++                },
++
++                oldTest: {
++                    testName: $('.oldTestName')?.value || '',
++                    bookName: $('.oldTestBookName')?.value || '',
++                    extractResult: $('.oldTestExtractResult')?.value || '',
++                    enrichResult: $('.oldTestEnrichResult')?.value || '',
++                    useModelAnswer: $('.oldTestUseModelAnswer')?.checked || false
+                 }
+             };
+ 
+@@ -3636,6 +3962,13 @@
+             if ($('.aiPoints')) $('.aiPoints').value = ai.points ?? 1;
+             if ($('.aiFilename')) $('.aiFilename').value = ai.filename || 'اختبار-Microsoft-Forms.xlsx';
+ 
++            const oldTest = data.oldTest || {};
++            if ($('.oldTestName')) $('.oldTestName').value = oldTest.testName || '';
++            if ($('.oldTestBookName')) $('.oldTestBookName').value = oldTest.bookName || '';
++            if ($('.oldTestExtractResult')) $('.oldTestExtractResult').value = oldTest.extractResult || '';
++            if ($('.oldTestEnrichResult')) $('.oldTestEnrichResult').value = oldTest.enrichResult || '';
++            if ($('.oldTestUseModelAnswer')) $('.oldTestUseModelAnswer').checked = !!oldTest.useModelAnswer;
++
+             if (
+                 Array.isArray(
+                     data.questions
+@@ -3731,6 +4064,11 @@
+                 )
+             );
+ 
++        const includeModelAnswer =
++            questions.some(
++                q => clean(q.modelAnswer)
++            );
++
+         const exportHeaders =
+             [
+                 'السؤال',
+@@ -3743,6 +4081,7 @@
+                             `خيار ${letter}`
+                     ),
+                 'الصحيح',
++                ...(includeModelAnswer ? ['الإجابة النموذجية'] : []),
+                 'الدرجة',
+                 'مطلوب'
+             ];
+@@ -3776,6 +4115,13 @@
+                                         q
+                                     ),
+ 
++                            ...(includeModelAnswer
++                                ? {
++                                    'الإجابة النموذجية':
++                                        clean(q.modelAnswer)
++                                }
++                                : {}),
++
+                             'الدرجة':
+                                 q.points,
+ 
+@@ -6140,6 +6486,177 @@
+     }
+ }
+ 
++.oldTestTool {
++    margin-top: 16px;
++    padding: 12px;
++    border: 1px solid #cfe1e5;
++    border-radius: 12px;
++    background: linear-gradient(180deg, #fbfeff 0%, #f6fbfc 100%);
++}
++
++.oldTestTool h3 {
++    margin: 0 0 6px;
++    font-size: 14px;
++    color: #124c52;
++}
++
++.oldTestStep {
++    margin-top: 12px;
++    padding-top: 12px;
++    border-top: 1px dashed #d7e3e6;
++}
++
++.oldTestNames {
++    display: grid;
++    grid-template-columns: 1fr 1fr;
