@@ -1,3 +1,118 @@
++            const modelAnswer =
++                clean(
++                    row['الإجابة النموذجية'] ??
++                    row['الاجابة النموذجية'] ??
++                    row['Model Answer'] ??
++                    row['model answer'] ??
++                    ''
++                );
++
+             const points =
+                 clean(
+                     row['الدرجة'] ??
+@@ -3453,6 +3765,12 @@
+                 );
+             }
+ 
++            if (modelAnswer) {
++                lines.push(
++                    `الإجابة النموذجية: ${modelAnswer}`
++                );
++            }
++
+             if (points) {
+                 lines.push(
+                     `الدرجة: ${points}`
+@@ -3540,6 +3858,14 @@
+                     options: $('.aiOptions')?.value || 4,
+                     points: $('.aiPoints')?.value || 1,
+                     filename: $('.aiFilename')?.value || 'اختبار-Microsoft-Forms.xlsx'
++                },
++
++                oldTest: {
++                    testName: $('.oldTestName')?.value || '',
++                    bookName: $('.oldTestBookName')?.value || '',
++                    extractResult: $('.oldTestExtractResult')?.value || '',
++                    enrichResult: $('.oldTestEnrichResult')?.value || '',
++                    useModelAnswer: $('.oldTestUseModelAnswer')?.checked || false
+                 }
+             };
+ 
+@@ -3636,6 +3962,13 @@
+             if ($('.aiPoints')) $('.aiPoints').value = ai.points ?? 1;
+             if ($('.aiFilename')) $('.aiFilename').value = ai.filename || 'اختبار-Microsoft-Forms.xlsx';
+ 
++            const oldTest = data.oldTest || {};
++            if ($('.oldTestName')) $('.oldTestName').value = oldTest.testName || '';
++            if ($('.oldTestBookName')) $('.oldTestBookName').value = oldTest.bookName || '';
++            if ($('.oldTestExtractResult')) $('.oldTestExtractResult').value = oldTest.extractResult || '';
++            if ($('.oldTestEnrichResult')) $('.oldTestEnrichResult').value = oldTest.enrichResult || '';
++            if ($('.oldTestUseModelAnswer')) $('.oldTestUseModelAnswer').checked = !!oldTest.useModelAnswer;
++
+             if (
+                 Array.isArray(
+                     data.questions
+@@ -3731,6 +4064,11 @@
+                 )
+             );
+ 
++        const includeModelAnswer =
++            questions.some(
++                q => clean(q.modelAnswer)
++            );
++
+         const exportHeaders =
+             [
+                 'السؤال',
+@@ -3743,6 +4081,7 @@
+                             `خيار ${letter}`
+                     ),
+                 'الصحيح',
++                ...(includeModelAnswer ? ['الإجابة النموذجية'] : []),
+                 'الدرجة',
+                 'مطلوب'
+             ];
+@@ -3776,6 +4115,13 @@
+                                         q
+                                     ),
+ 
++                            ...(includeModelAnswer
++                                ? {
++                                    'الإجابة النموذجية':
++                                        clean(q.modelAnswer)
++                                }
++                                : {}),
++
+                             'الدرجة':
+                                 q.points,
+ 
+@@ -6140,6 +6486,177 @@
+     }
+ }
+ 
++.oldTestTool {
++    margin-top: 16px;
++    padding: 12px;
++    border: 1px solid #cfe1e5;
++    border-radius: 12px;
++    background: linear-gradient(180deg, #fbfeff 0%, #f6fbfc 100%);
++}
++
++.oldTestTool h3 {
++    margin: 0 0 6px;
++    font-size: 14px;
++    color: #124c52;
++}
++
++.oldTestStep {
++    margin-top: 12px;
++    padding-top: 12px;
++    border-top: 1px dashed #d7e3e6;
++}
++
++.oldTestNames {
++    display: grid;
++    grid-template-columns: 1fr 1fr;
 +    gap: 8px;
 +    margin-top: 9px;
 +}
@@ -333,158 +448,3 @@
 +            const type = normalizeType(rawType);
 +
 +            if (!title || !type) {
-+                invalid++;
-+                continue;
-+            }
-+
-+            let optionTexts = [
-+                columns[3] || '',
-+                columns[4] || '',
-+                columns[5] || '',
-+                columns[6] || ''
-+            ].map(v => clean(v));
-+
-+            if (type === 'truefalse') {
-+                if (!optionTexts[0]) optionTexts[0] = 'صح';
-+                if (!optionTexts[1]) optionTexts[1] = 'خطأ';
-+            }
-+
-+            const options = optionTexts
-+                .map((text, index) => ({
-+                    label: ['أ', 'ب', 'ج', 'د'][index],
-+                    text
-+                }))
-+                .filter(o => o.text);
-+
-+            const correct = oldTestCorrectValue(columns[7] || '');
-+            const points = parsePoints(columns[8] || 1, 1);
-+            const note = clean(columns.slice(9).join(' | '));
-+
-+            items.push({
-+                qid,
-+                title,
-+                type,
-+                rawType,
-+                options,
-+                correct,
-+                points,
-+                note
-+            });
-+
-+            seen.add(qid);
-+        }
-+
-+        items.sort(
-+            (a, b) =>
-+                Number(a.qid.slice(1)) -
-+                Number(b.qid.slice(1))
-+        );
-+
-+        const missingQids = [];
-+        const max = items.length
-+            ? Math.max(...items.map(x => Number(x.qid.slice(1))))
-+            : 0;
-+
-+        for (let i = 1; i <= max; i++) {
-+            const qid = `Q${String(i).padStart(3, '0')}`;
-+            if (!seen.has(qid)) missingQids.push(qid);
-+        }
-+
-+        return {
-+            items,
-+            duplicates,
-+            invalid,
-+            missingQids
-+        };
-+    }
-+
-+    function parseOldTestEnrichment(raw) {
-+        const lines = String(raw || '')
-+            .replace(/^\uFEFF/, '')
-+            .replace(/\r\n?/g, '\n')
-+            .split('\n');
-+
-+        const items = [];
-+        const seen = new Set();
-+        let duplicates = 0;
-+        let invalid = 0;
-+
-+        for (const originalLine of lines) {
-+            if (!clean(originalLine)) continue;
-+
-+            const columns = String(originalLine)
-+                .split('|')
-+                .map(v => clean(v));
-+
-+            if (
-+                canonical(columns[0] || '') === 'qid' ||
-+                /^(?:qid|المعرف)$/i.test(columns[0] || '')
-+            ) {
-+                continue;
-+            }
-+
-+            const qid = normalizeQid(columns[0] || '');
-+
-+            if (!qid || columns.length < 3) {
-+                invalid++;
-+                continue;
-+            }
-+
-+            if (seen.has(qid)) {
-+                duplicates++;
-+                continue;
-+            }
-+
-+            items.push({
-+                qid,
-+                correct: oldTestCorrectValue(columns[1] || ''),
-+                skill: oldTestSkillValue(columns[2] || ''),
-+                modelAnswer: clean(columns.slice(3).join(' | '))
-+            });
-+
-+            seen.add(qid);
-+        }
-+
-+        return {
-+            items,
-+            duplicates,
-+            invalid
-+        };
-+    }
-+
-+    function buildOldTestExtractionPrompt() {
-+        const testName = clean($('.oldTestName')?.value || '');
-+        const sourceLine = testName
-+            ? `اعتمد فقط على مصدر الاختبار المسمى «${testName}».`
-+            : 'اعتمد فقط على ملف الاختبار المرفق كمصدر.';
-+
-+        return `${sourceLine}
-+
-+أريد استخراج جميع أسئلة الاختبار وتحويلها إلى صيغة منظمة قابلة للاستيراد لاحقًا إلى Microsoft Forms.
-+
-+قواعد صارمة:
-+1) استخرج الأسئلة فقط. تجاهل اسم الطالب والفصل وبيانات المدرسة والتعليمات وعناوين الأقسام والتوقيع والعبارات الختامية.
-+2) انقل نص السؤال حرفيًا كما يظهر في الاختبار قدر الإمكان من القراءة، ولا تعِد صياغته ولا تصححه لغويًا ولا تختصره.
-+3) لا تغيّر ترتيب الكلمات أو العناصر أو القوائم أو الوحدات الموجودة داخل السؤال أو بين الأقواس، حتى إذا كان السؤال نفسه يطلب ترتيبها. لا تنفذ المطلوب داخل السؤال أثناء الاستخراج.
-+4) حافظ على ترتيب الأسئلة الأصلي، وأعط كل سؤال معرفًا متسلسلًا: Q001 ثم Q002 ثم Q003... دون فجوات.
-+5) صنف النوع إلى واحد فقط: صح/خطأ، اختيار، نصي.
-+6) صح/خطأ: خيار أ = صح، خيار ب = خطأ، وخيارا ج ود فارغان.
-+7) الاختيار: انقل الخيارات كما وردت وبالترتيب نفسه. إذا كان السؤال يحتوي 2 أو 3 خيارات فقط فلا تنشئ خيارات إضافية.
-+8) النصي/المقالي: اترك جميع خانات الخيارات فارغة.
-+9) لا تخمن الإجابة الصحيحة. إذا لم يكن مفتاح الإجابة مثبتًا بوضوح في ملف الاختبار فاترك «الصحيح» فارغًا.
-+10) استخرج الدرجة من توزيع درجات القسم إذا أمكن. مثال: 10 أسئلة لقسم درجته 10 = درجة كل سؤال 1. إذا تعذر تحديد الدرجة استخدم 1 واكتب في الملاحظة «الدرجة تحتاج مراجعة».
-+11) التعامل مع الصور والرموز والعناصر البصرية:
-+- لا تحذف السؤال ولا تحذف أي خيار بصري ولا تترك مكانه فارغًا.
-+- لا تخمن معنى الصورة أو الرمز إذا لم يكن واضحًا.
-+- إذا كانت الصورة داخل نص السؤال فاكتب في موضعها: [أضف صورة السؤال هنا].
-+- إذا كان الخيار أ صورة فاكتب: [أضف صورة الخيار أ هنا].
-+- إذا كان الخيار ب صورة فاكتب: [أضف صورة الخيار ب هنا].
-+- إذا كان الخيار ج صورة فاكتب: [أضف صورة الخيار ج هنا].
-+- إذا كان الخيار د صورة فاكتب: [أضف صورة الخيار د هنا].
-+- حافظ على العدد الحقيقي للخيارات وترتيبها كما يظهر في الاختبار.
-+- إذا أمكن نقل الرمز نفسه كنص Unicode بوضوح ومن دون تخمين، انقله كما هو بدل النص المؤقت.
-+- في خانة الملاحظة اكتب: يحتاج مراجعة بصرية.
-+12) إذا كان السؤال نفسه يحتوي نصًا وصورة معًا، احتفظ بالنص كاملًا وضع [أضف صورة السؤال هنا] في موضع الصورة.
-+13) لا تستبعد أي سؤال بسبب وجود صورة أو رمز.
-+14) لا تضف أي سؤال غير موجود في الاختبار ولا تحذف سؤالًا موجودًا.
-+15) راجع عدد الأسئ
