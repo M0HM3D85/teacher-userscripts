@@ -25,6 +25,17 @@ jobs:
           cd scripts/madrasati-schedule-designer
           test -f .build-source/part-001.txt
           cat .build-source/part-*.txt > madrasati-schedule-designer.user.js
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('madrasati-schedule-designer.user.js')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              ": subjectAccentMap.get(\ncanonical(\nsubject\n)\n}\n\"",
+              ": subjectAccentMap.get(\ncanonical(\nsubject\n)\n)\n}\n\"",
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
           node --check madrasati-schedule-designer.user.js
           rm -rf .build-source
 
