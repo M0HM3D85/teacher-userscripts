@@ -182,7 +182,7 @@
     {
       "id": "madrasati-schedule-designer",
       "name": "مدرستي - مصمم الجدول الدراسي الاحترافي",
-      "version": "1.4.1",
+      "version": "2.0.0",
       "status": "stable",
       "description": "مصمم احترافي لجدول المعلم أو الطالب في مدرستي مع تنظيف مسميات المواد والتخصيص والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.",
       "sourcePath": "scripts/madrasati-schedule-designer/madrasati-schedule-designer.user.js",
