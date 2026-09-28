@@ -198,16 +198,18 @@
     {
       "id": "zipgrade-smart-student-manager",
       "name": "ZipGrade Smart Student Manager",
-      "version": "0.7.0",
+      "version": "0.8.1",
       "status": "stable",
-      "description": "Bilingual smart Excel/CSV import plus fast in-page student editing for ZipGrade.",
+      "description": "استيراد وإدارة طلاب ZipGrade مع حذف من داخل المدير ومدقق اختبار مدمج للتكرار والحسابات والتظليل المتعدد والإجابات الفارغة والدرجات الجزئية قبل تصدير Full XLSX.",
       "sourcePath": "scripts/zipgrade-smart-student-manager/zipgrade-smart-student-manager.user.js",
       "additionalInfoPath": "scripts/zipgrade-smart-student-manager/README.md",
       "greasyFork": "https://greasyfork.org/scripts/593089",
       "legacyVersionFormat": false,
       "targets": [
         "https://www.zipgrade.com/students/*",
-        "https://www.zipgrade.com/importStudents*"
+        "https://www.zipgrade.com/importStudents*",
+        "https://www.zipgrade.com/quiz/*/all/*",
+        "https://www.zipgrade.com/quiz/*/paper/*/subject/all/*"
       ],
       "normalizedIdentity": true
     }
