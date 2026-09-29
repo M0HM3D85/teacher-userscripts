@@ -13,7 +13,7 @@
 // @match        https://forms.office.com/Pages/DesignPageV2.aspx*
 // @match        https://forms.microsoft.com/Pages/DesignPageV2.aspx*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/dc36723dbe9b1b46fd78aec254d628465fbf41c4/scripts/forms-smart-results-analyzer/forms-smart-results-analyzer.user.js
+// @require      https://cdn.jsdelivr.net/gh/M0HM3D85/teacher-userscripts@dc36723dbe9b1b46fd78aec254d628465fbf41c4/scripts/forms-smart-results-analyzer/forms-smart-results-analyzer.user.js
 // @grant        none
 // @downloadURL  https://update.greasyfork.org/scripts/593393/Forms%20Smart%20Results%20Analyzer%20%7C%20%D9%85%D8%AD%D9%84%D9%84%20%D9%86%D8%AA%D8%A7%D8%A6%D8%AC%20%D9%81%D9%88%D8%B1%D9%85%D8%B2%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A.user.js
 // @updateURL    https://update.greasyfork.org/scripts/593393/Forms%20Smart%20Results%20Analyzer%20%7C%20%D9%85%D8%AD%D9%84%D9%84%20%D9%86%D8%AA%D8%A7%D8%A6%D8%AC%20%D9%81%D9%88%D8%B1%D9%85%D8%B2%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A.meta.js

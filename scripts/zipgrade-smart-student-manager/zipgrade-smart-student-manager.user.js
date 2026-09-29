@@ -18,7 +18,7 @@
 // @match        https://www.zipgrade.com/quiz/*/paper/*/subject/all/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
-// @require      https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/7cd9b5a395ae64b5317160d8dca05dfe56f9eecf/scripts/zipgrade-smart-student-manager/zipgrade-smart-student-manager.user.js
+// @require      https://cdn.jsdelivr.net/gh/M0HM3D85/teacher-userscripts@7cd9b5a395ae64b5317160d8dca05dfe56f9eecf/scripts/zipgrade-smart-student-manager/zipgrade-smart-student-manager.user.js
 // @grant        none
 // ==/UserScript==
 
