@@ -8,7 +8,7 @@
 // @description:en Smart ZipGrade student import/management with in-manager student deletion plus an inline quiz auditor for duplicates, identity, multi-answer, blank, and partial-response review.
 // @description:ar استيراد وإدارة طلاب ZipGrade بذكاء، مع حذف الطالب من داخل المدير ومدقق اختبار مدمج لفحص التكرار والحسابات والتظليل المتعدد والإجابات الفارغة والدرجات الجزئية قبل التصدير.
 // @author       Mohammed Almalki (M0HM3D85)
-// @homepageURL  https://github.com/M0HM3D85/teacher-userscripts/tree/main/scripts/zipgrade-smart-student-manager
+// @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -25,6 +25,11 @@
 /*
 =========================================================================
  ZipGrade Smart Student Manager v0.8.1 — Final Release
+
+ تصميم وتطوير: Mohammed Almalki (M0HM3D85)
+ X / Twitter : https://x.com/M0HM3D85
+ Snapchat    : https://www.snapchat.com/add/M0HM3D85
+ GreasyFork  : https://greasyfork.org/en/users/1636459-m0hm3d85
 
  الإصدار النهائي لهذه المرحلة يجمع في سكربت Tampermonkey واحد:
  1) الاستيراد الذكي وإدارة الطلاب.

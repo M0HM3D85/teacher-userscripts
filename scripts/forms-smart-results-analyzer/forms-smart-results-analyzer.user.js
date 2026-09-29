@@ -23,6 +23,12 @@
 =========================================================================
  Forms Smart Results Analyzer + ZipGrade — v0.4.0
 
+ تصميم وتطوير: Mohammed Almalki (M0HM3D85)
+ X / Twitter : https://x.com/M0HM3D85
+ Snapchat    : https://www.snapchat.com/add/M0HM3D85
+ GreasyFork  : https://greasyfork.org/en/users/1636459-m0hm3d85
+ © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
+
  الإصدار المستقر الحالي لمسار Forms وZipGrade فقط.
  وضع Forms + ZipGrade مضمّن مع حسم تعارض المحاولات، ويستمر التحقق الميداني
  عند توفر اختبار يحتوي استجابات إلكترونية فعلية.
