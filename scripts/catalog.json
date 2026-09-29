@@ -21,9 +21,9 @@
     {
       "id": "forms-smart-results-analyzer",
       "name": "Forms Smart Results Analyzer | محلل نتائج فورمز الذكي",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "status": "stable",
-      "description": "منصة تحليل تربوي لنتائج Microsoft Forms: تقديرات، مهارات تلقائية من Subtitle، مصفوفة إتقان، تدخلات، فصول وشعب، جودة اختبار، مشتتات، مقارنات وتقارير متعددة.",
+      "description": "منصة تحليل تربوي لنتائج Microsoft Forms مع تكامل ZipGrade اختياري عبر Full Format CSV، بوابة سلامة ومطابقة أسئلة، إضافة إلى التقديرات والمهارات ومصفوفة الإتقان والتدخلات وجودة الاختبار والمشتتات والمقارنات والتقارير.",
       "sourcePath": "scripts/forms-smart-results-analyzer/forms-smart-results-analyzer.user.js",
       "additionalInfoPath": "scripts/forms-smart-results-analyzer/README.md",
       "greasyFork": "https://greasyfork.org/scripts/593393",
