@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms Smart Enhancer - محسن Microsoft Forms الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.2.0
-// @description  محسن شامل لـ Microsoft Forms: فهرسة تلقائية مخفية وصارمة، بحث مباشر، إخفاء القوالب، قوالب إعدادات، تدقيق وإدارة جماعية وإعادة ترتيب الأسئلة.
+// @version      1.3.6
+// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة الاستجابات الجديدة، قوالب إعدادات، تدقيق وإدارة جماعية سريعة للأسئلة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -32,11 +32,11 @@
 (() => {
   'use strict';
 
-  const FINAL_VERSION = '1.2.0';
+  const FINAL_VERSION = '1.3.6';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   /*
-   * Forms API session bridge — v1.2.0
+   * Forms API session bridge — v1.3.6
    *
    * Microsoft Forms يضيف لرابط PATCH الصحيح رؤوس جلسة لا يضيفها الطلب
    * الذي ننشئه نحن تلقائيًا، وأهمها RequestVerificationToken و UserSessionId.
@@ -49,7 +49,7 @@
    */
   const FORM_API_SESSION = (() => {
     const existing =
-      window.__M0HM3D85_FORM_API_SESSION_V120__;
+      window.__M0HM3D85_FORM_API_SESSION_V130__;
 
     if (existing) {
       return existing;
@@ -338,7 +338,7 @@
     if (
       NativeXHR?.prototype &&
       !NativeXHR.prototype
-        .__m0hm3d85FormsApiCaptureV120
+        .__m0hm3d85FormsApiCaptureV130
     ) {
       const originalOpen =
         NativeXHR.prototype.open;
@@ -421,7 +421,7 @@
 
       Object.defineProperty(
         NativeXHR.prototype,
-        '__m0hm3d85FormsApiCaptureV120',
+        '__m0hm3d85FormsApiCaptureV130',
         {
           value: true,
           configurable: false,
@@ -439,7 +439,7 @@
     if (
       nativeFetch &&
       !window
-        .__M0HM3D85_FETCH_CAPTURE_V120__
+        .__M0HM3D85_FETCH_CAPTURE_V130__
     ) {
       window.fetch =
         async function(input, init = {}) {
@@ -470,7 +470,7 @@
           );
         };
 
-      window.__M0HM3D85_FETCH_CAPTURE_V120__ =
+      window.__M0HM3D85_FETCH_CAPTURE_V130__ =
         true;
     }
 
@@ -493,7 +493,7 @@
       })
     };
 
-    window.__M0HM3D85_FORM_API_SESSION_V120__ =
+    window.__M0HM3D85_FORM_API_SESSION_V130__ =
       api;
 
     return api;
@@ -554,6 +554,2478 @@
     };
   }
 
+
+  /* ======================== NEW RESPONSES TRACKER ======================== */
+
+  const RESPONSE_TRACKER = (() => {
+    const STORAGE_KEY =
+      'M0HM3D85_FORMS_NEW_RESPONSES_TRACKER_V130';
+
+    const STYLE_ID =
+      'm0hm3d85-forms-new-responses-style';
+
+    const FOLDER_BAR_ID =
+      'm0hm3d85-forms-new-responses-folderbar';
+
+    const REVIEW_WRAP_ID =
+      'm0hm3d85-forms-reviewed-wrap';
+
+    /*
+     * v1.3.3 يعتمد على طلب GetRespCounts الذي يرسله Forms نفسه؛
+     * لا يوجد فحص دوري إضافي من المحسن. الطلب اليدوي فقط عند الضغط على «فحص الآن».
+     */
+    const POLL_MS =
+      180 * 1000;
+
+    const MIN_SILENT_CHECK_GAP =
+      120 * 1000;
+
+    const state = {
+      records: {},
+      counts: new Map(),
+      checking: false,
+      checkPromise: null,
+      lastCheckAt: 0,
+      status: '',
+      firstRun: false,
+      onlyNewInFolder: false,
+      started: false,
+      observer: null,
+      routeQueued: false,
+      activeReviewId: '',
+      reviewSessions: new Map(),
+      undoTimer: 0
+    };
+
+    function load() {
+      try {
+        const raw =
+          JSON.parse(
+            localStorage.getItem(
+              STORAGE_KEY
+            ) || '{}'
+          );
+
+        if (
+          raw &&
+          typeof raw === 'object' &&
+          raw.records &&
+          typeof raw.records === 'object'
+        ) {
+          state.records =
+            raw.records;
+        }
+      } catch {
+        state.records = {};
+      }
+    }
+
+    function save() {
+      try {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            version: 1,
+            updatedAt:
+              new Date().toISOString(),
+            records:
+              state.records
+          })
+        );
+      } catch {}
+    }
+
+    function currentFormId() {
+      try {
+        return (
+          new URL(
+            location.href
+          ).searchParams.get('id') ||
+          ''
+        );
+      } catch {
+        return '';
+      }
+    }
+
+    function isReviewPage() {
+      let u;
+
+      try {
+        u =
+          new URL(
+            location.href
+          );
+      } catch {
+        return false;
+      }
+
+      if (
+        !u.searchParams.has('id') ||
+        !u.searchParams.has('analysis')
+      ) {
+        return false;
+      }
+
+      if (
+        u.searchParams.has('topview') ||
+        u.searchParams.has('ridx') ||
+        u.searchParams.has('qid')
+      ) {
+        return true;
+      }
+
+      return [
+        ...document.querySelectorAll(
+          'button,[role="button"]'
+        )
+      ].some(
+        el =>
+          /^مراجعة التالي$|^Review next$/i.test(
+            clean(
+              el.innerText ||
+              el.textContent ||
+              ''
+            )
+          )
+      );
+    }
+
+    function isCollectionPage() {
+      try {
+        const u =
+          new URL(
+            location.href
+          );
+
+        return (
+          !u.searchParams.has('id') &&
+          u.searchParams.has(
+            'collectionid'
+          )
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    function isShellSurface() {
+      try {
+        const u =
+          new URL(
+            location.href
+          );
+
+        return !u.searchParams.has('id');
+      } catch {
+        return false;
+      }
+    }
+
+    function injectStyles() {
+      if (
+        document.getElementById(
+          STYLE_ID
+        )
+      ) {
+        return;
+      }
+
+      const style =
+        document.createElement(
+          'style'
+        );
+
+      style.id =
+        STYLE_ID;
+
+      style.textContent = `
+.m0hm3d85-new-response-badge,.m0hm3d85-new-folder-badge{display:inline-flex;align-items:center;gap:3px;padding:4px 8px;border-radius:999px;background:#fff;color:#007874;border:1px solid rgba(0,120,116,.28);box-shadow:0 2px 8px rgba(0,0,0,.12);font:800 10px/1.25 "Segoe UI",Tahoma,Arial,sans-serif;white-space:nowrap;pointer-events:none}
+.m0hm3d85-response-card-anchor{position:relative!important}
+.m0hm3d85-response-card-anchor>.m0hm3d85-new-response-badge,.m0hm3d85-response-card-anchor>.m0hm3d85-new-folder-badge{position:absolute;z-index:30;top:8px;left:8px}
+.m0hm3d85-response-card-anchor[data-m0hm3d85-has-new="true"]{box-shadow:inset 0 0 0 2px rgba(0,120,116,.24)!important}
+.m0hm3d85-response-card-anchor[data-m0hm3d85-folder-has-new="true"]{box-shadow:inset 0 0 0 2px rgba(0,163,158,.18)!important}
+#${FOLDER_BAR_ID}{--p:#007874;--b:#E5E7EB;--m:#6B7280;width:min(1180px,calc(100% - 32px));margin:12px auto;padding:10px 12px;border:1px solid var(--b);border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;direction:rtl;font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#1F2937}
+#${FOLDER_BAR_ID} .mnr-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#${FOLDER_BAR_ID} .mnr-dot{width:9px;height:9px;border-radius:50%;background:#00A39E}
+#${FOLDER_BAR_ID} .mnr-summary{font-size:12px;font-weight:700}
+#${FOLDER_BAR_ID} .mnr-status{font-size:10px;color:var(--m)}
+#${FOLDER_BAR_ID} .mnr-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#${FOLDER_BAR_ID} button{font:inherit;cursor:pointer;border:1px solid var(--p);border-radius:8px;background:#fff;color:var(--p);padding:6px 9px;font-size:11px}
+#${FOLDER_BAR_ID} button[data-active="true"]{background:#F2FBFA;font-weight:700}
+#${FOLDER_BAR_ID} button:disabled{opacity:.55;cursor:not-allowed}
+#${REVIEW_WRAP_ID}{width:100%;max-width:1090px;box-sizing:border-box;margin:0 auto 12px;padding:7px 10px;border:1px solid #D9E7E6;border-radius:9px;background:#F7FCFB;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;direction:rtl;font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#1F2937;position:static!important;z-index:auto!important;float:none!important;clear:both}
+#${REVIEW_WRAP_ID} .mnr-review-main{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
+#${REVIEW_WRAP_ID} .mnr-review-label{font:700 11px "Segoe UI",Tahoma,Arial,sans-serif;color:#1F2937}
+#${REVIEW_WRAP_ID} .mnr-reviewed-btn{border:1px solid #007874!important;border-radius:8px!important;background:#007874!important;color:#fff!important;padding:6px 10px!important;font:700 11px "Segoe UI",Tahoma,Arial,sans-serif!important;cursor:pointer;white-space:nowrap;position:static!important;z-index:auto!important}
+#${REVIEW_WRAP_ID} .mnr-reviewed-btn:disabled{opacity:.55;cursor:not-allowed}
+#${REVIEW_WRAP_ID} .mnr-review-note{display:inline;color:#6B7280;font:500 10px "Segoe UI",Tahoma,Arial,sans-serif;line-height:1.5}
+#${REVIEW_WRAP_ID} .mnr-undo{border:0!important;background:transparent!important;color:#007874!important;text-decoration:underline;font:600 10px "Segoe UI",Tahoma,Arial,sans-serif!important;cursor:pointer;padding:4px!important;position:static!important}
+      `;
+
+      document.head?.appendChild(
+        style
+      );
+    }
+
+    function parseCountsPayload(payload) {
+      const rows =
+        Array.isArray(payload?.value)
+          ? payload.value
+          : [];
+
+      const map =
+        new Map();
+
+      rows.forEach(
+        row => {
+          const id =
+            String(
+              row?.id || ''
+            );
+
+          const count =
+            Number(
+              row?.responseCount
+            );
+
+          if (
+            id &&
+            Number.isFinite(
+              count
+            ) &&
+            count >= 0
+          ) {
+            map.set(
+              id,
+              Math.floor(
+                count
+              )
+            );
+          }
+        }
+      );
+
+      return map;
+    }
+
+    function consumeObservedCounts(
+      counts,
+      source = 'native'
+    ) {
+      if (
+        !(counts instanceof Map) ||
+        !counts.size
+      ) {
+        return;
+      }
+
+      reconcile(
+        counts
+      );
+
+      updatePortalCounts();
+      applyCardBadges();
+      renderFolderBar();
+
+      if (
+        source === 'native'
+      ) {
+        state.status =
+          `تم تحديث الأعداد من طلب Forms الأصلي ${new Date().toLocaleTimeString('ar-SA', {
+            hour: '2-digit',
+            minute: '2-digit'
+          })}`;
+      }
+
+      window.dispatchEvent(
+        new CustomEvent(
+          'm0hm3d85:forms-responses-updated',
+          {
+            detail:
+              summary()
+          }
+        )
+      );
+    }
+
+    function installNativeCountTap() {
+      const proto =
+        window.XMLHttpRequest?.prototype;
+
+      if (
+        !proto ||
+        proto.__m0hm3d85RespCountTapV133
+      ) {
+        return;
+      }
+
+      const nativeOpen =
+        proto.open;
+
+      const nativeSend =
+        proto.send;
+
+      proto.open =
+        function(method, url) {
+          try {
+            this.__m0hm3d85CountTapUrl =
+              String(url || '');
+          } catch {}
+
+          return nativeOpen.apply(
+            this,
+            arguments
+          );
+        };
+
+      proto.send =
+        function(body) {
+          const url =
+            this.__m0hm3d85CountTapUrl ||
+            '';
+
+          if (
+            /\/formapi\/api\/light\/GetRespCounts\(\)/i.test(
+              url
+            ) &&
+            !this.__m0hm3d85OwnCountRequest
+          ) {
+            this.addEventListener(
+              'loadend',
+              () => {
+                try {
+                  if (
+                    this.status < 200 ||
+                    this.status >= 300
+                  ) {
+                    return;
+                  }
+
+                  const payload =
+                    JSON.parse(
+                      this.responseText ||
+                      '{}'
+                    );
+
+                  const counts =
+                    parseCountsPayload(
+                      payload
+                    );
+
+                  consumeObservedCounts(
+                    counts,
+                    'native'
+                  );
+                } catch {}
+              },
+              {
+                once: true
+              }
+            );
+          }
+
+          return nativeSend.apply(
+            this,
+            arguments
+          );
+        };
+
+      Object.defineProperty(
+        proto,
+        '__m0hm3d85RespCountTapV133',
+        {
+          value: true,
+          configurable: false,
+          enumerable: false
+        }
+      );
+    }
+
+    async function requestCounts() {
+      const ready =
+        await FORM_API_SESSION.waitReady(
+          8000
+        );
+
+      if (!ready) {
+        throw new Error(
+          `تعذر تهيئة جلسة Forms (${FORM_API_SESSION.missing().join(', ')}).`
+        );
+      }
+
+      const url =
+        new URL(
+          '/formapi/api/light/GetRespCounts()',
+          location.origin
+        ).href;
+
+      const headers =
+        FORM_API_SESSION.writeHeaders();
+
+      return await new Promise(
+        (resolve, reject) => {
+          const xhr =
+            new XMLHttpRequest();
+
+          xhr.open(
+            'GET',
+            url,
+            true
+          );
+
+          xhr.withCredentials =
+            true;
+
+          Object.entries(
+            headers
+          ).forEach(
+            ([name, value]) => {
+              try {
+                if (
+                  name === 'authorization' &&
+                  !value
+                ) {
+                  return;
+                }
+
+                xhr.setRequestHeader(
+                  name,
+                  value
+                );
+              } catch {}
+            }
+          );
+
+          xhr.timeout =
+            15000;
+
+          xhr.onload =
+            () => {
+              if (
+                xhr.status < 200 ||
+                xhr.status >= 300
+              ) {
+                reject(
+                  new Error(
+                    `تعذر قراءة أعداد الاستجابات (HTTP ${xhr.status}).`
+                  )
+                );
+                return;
+              }
+
+              let payload;
+
+              try {
+                payload =
+                  JSON.parse(
+                    xhr.responseText ||
+                    '{}'
+                  );
+              } catch {
+                reject(
+                  new Error(
+                    'استجابة غير متوقعة من خدمة أعداد الاستجابات.'
+                  )
+                );
+                return;
+              }
+
+              resolve(
+                parseCountsPayload(
+                  payload
+                )
+              );
+            };
+
+          xhr.onerror =
+            () =>
+              reject(
+                new Error(
+                  'تعذر الاتصال بخدمة أعداد الاستجابات.'
+                )
+              );
+
+          xhr.ontimeout =
+            () =>
+              reject(
+                new Error(
+                  'انتهت مهلة فحص الاستجابات.'
+                )
+              );
+
+          xhr.__m0hm3d85OwnCountRequest =
+            true;
+
+          xhr.send();
+        }
+      );
+    }
+
+    function reconcile(
+      counts
+    ) {
+      const now =
+        new Date().toISOString();
+
+      const hadAny =
+        Object.keys(
+          state.records
+        ).length > 0;
+
+      let created =
+        0;
+
+      let adjustedDown =
+        0;
+
+      counts.forEach(
+        (count, id) => {
+          let record =
+            state.records[id];
+
+          if (!record) {
+            record = {
+              reviewedCount:
+                count,
+              initializedAt:
+                now,
+              reviewedAt:
+                null,
+              lastSeenCount:
+                count,
+              lastSeenAt:
+                now
+            };
+
+            state.records[id] =
+              record;
+
+            created++;
+          } else {
+            const reviewed =
+              Number(
+                record.reviewedCount
+              );
+
+            if (
+              !Number.isFinite(
+                reviewed
+              )
+            ) {
+              record.reviewedCount =
+                count;
+            } else if (
+              count < reviewed
+            ) {
+              /*
+               * إذا حُذفت استجابات من Forms، ننزل خط الأساس إلى العدد
+               * الحالي حتى لا ينتظر التنبيه تجاوز رقم قديم لم يعد موجودًا.
+               */
+              record.reviewedCount =
+                count;
+
+              record.adjustedDownAt =
+                now;
+
+              adjustedDown++;
+            }
+
+            record.lastSeenCount =
+              count;
+
+            record.lastSeenAt =
+              now;
+          }
+        }
+      );
+
+      state.counts =
+        new Map(
+          counts
+        );
+
+      state.firstRun =
+        !hadAny &&
+        created > 0;
+
+      state.lastCheckAt =
+        Date.now();
+
+      save();
+
+      if (
+        state.firstRun
+      ) {
+        state.status =
+          'تم بدء التتبع من الآن؛ لن تُحسب الاستجابات السابقة كجديدة.';
+      } else if (
+        adjustedDown
+      ) {
+        state.status =
+          `تم الفحص وتعديل خط الأساس لـ ${adjustedDown} نموذج بعد انخفاض عدد الاستجابات.`;
+      } else {
+        state.status =
+          `آخر فحص ${new Date().toLocaleTimeString('ar-SA', {
+            hour: '2-digit',
+            minute: '2-digit'
+          })}`;
+      }
+    }
+
+    function newCount(
+      formId
+    ) {
+      if (!formId) return 0;
+
+      const record =
+        state.records[
+          formId
+        ];
+
+      const current =
+        state.counts.has(
+          formId
+        )
+          ? state.counts.get(
+              formId
+            )
+          : Number(
+              record?.lastSeenCount
+            );
+
+      const reviewed =
+        Number(
+          record?.reviewedCount
+        );
+
+      if (
+        !Number.isFinite(
+          current
+        ) ||
+        !Number.isFinite(
+          reviewed
+        )
+      ) {
+        return 0;
+      }
+
+      return Math.max(
+        0,
+        current - reviewed
+      );
+    }
+
+    function currentCount(
+      formId
+    ) {
+      if (!formId) {
+        return null;
+      }
+
+      if (
+        state.counts.has(
+          formId
+        )
+      ) {
+        return state.counts.get(
+          formId
+        );
+      }
+
+      const fallback =
+        Number(
+          state.records[
+            formId
+          ]?.lastSeenCount
+        );
+
+      return Number.isFinite(
+        fallback
+      )
+        ? fallback
+        : null;
+    }
+
+    function summary(
+      ids = null
+    ) {
+      const list =
+        ids
+          ? [
+              ...new Set(
+                ids.filter(
+                  Boolean
+                )
+              )
+            ]
+          : [
+              ...new Set([
+                ...state.counts.keys(),
+                ...Object.keys(
+                  state.records
+                )
+              ])
+            ];
+
+      let formsWithNew =
+        0;
+
+      let totalNew =
+        0;
+
+      list.forEach(
+        id => {
+          const n =
+            newCount(
+              id
+            );
+
+          if (
+            n > 0
+          ) {
+            formsWithNew++;
+            totalNew +=
+              n;
+          }
+        }
+      );
+
+      return {
+        formsWithNew,
+        totalNew,
+        tracked:
+          list.length,
+        lastCheckAt:
+          state.lastCheckAt,
+        checking:
+          state.checking,
+        status:
+          state.status
+      };
+    }
+
+    function formIdFromNode(node) {
+      if (!(node instanceof Element)) return '';
+
+      const idNode =
+        (String(node.id || '').startsWith('form-item-')
+          ? node
+          : node.closest?.('[id^="form-item-"]')) ||
+        node.querySelector?.('[id^="form-item-"]');
+
+      if (idNode) {
+        const raw =
+          String(idNode.id || '')
+            .slice('form-item-'.length);
+
+        if (raw) return raw;
+      }
+
+      const menu =
+        node.querySelector?.('[id^="menu-button-"]');
+
+      if (menu) {
+        const raw =
+          String(menu.id || '')
+            .slice('menu-button-'.length);
+
+        if (raw) return raw;
+      }
+
+      const link =
+        [...node.querySelectorAll?.('a[href]') || []]
+          .find(a => /DesignPageV2\.aspx/i.test(a.href) && /[?&]id=/i.test(a.href));
+
+      if (link) {
+        try {
+          return new URL(link.href, location.href).searchParams.get('id') || '';
+        } catch {}
+      }
+
+      return '';
+    }
+
+    function nativeFormCardEntries() {
+      const candidates = new Set([
+        ...document.querySelectorAll('[id^="form-item-"]'),
+        ...document.querySelectorAll('[data-automation-id="itemContainer"]')
+      ]);
+
+      const map = new Map();
+
+      candidates.forEach(node => {
+        if (!(node instanceof Element)) return;
+
+        const id =
+          formIdFromNode(node);
+
+        if (!id) return;
+
+        const idNode =
+          String(node.id || '').startsWith('form-item-')
+            ? node
+            : node.closest?.('[id^="form-item-"]') ||
+              node.querySelector?.('[id^="form-item-"]');
+
+        const card =
+          node.matches?.('[data-automation-id="itemContainer"]')
+            ? node
+            : idNode?.closest?.('[data-automation-id="itemContainer"]') ||
+              idNode ||
+              node;
+
+        if (
+          !card ||
+          card.closest?.('#m0hm3d85-forms-productivity')
+        ) {
+          return;
+        }
+
+        map.set(id, {
+          id,
+          card,
+          idNode: idNode || card
+        });
+      });
+
+      return [...map.values()];
+    }
+
+    function visibleCardIds() {
+      return nativeFormCardEntries()
+        .filter(entry => visible(entry.card))
+        .map(entry => entry.id);
+    }
+
+    function collectionIdFromNode(node) {
+      if (!(node instanceof Element)) return '';
+
+      const idNode =
+        (String(node.id || '').startsWith('collection-item-')
+          ? node
+          : node.closest?.('[id^="collection-item-"]')) ||
+        node.querySelector?.('[id^="collection-item-"]');
+
+      if (!idNode) return '';
+
+      return String(idNode.id || '')
+        .slice('collection-item-'.length);
+    }
+
+    function nativeCollectionCardEntries() {
+      const candidates = new Set([
+        ...document.querySelectorAll('[id^="collection-item-"]'),
+        ...document.querySelectorAll('[data-automation-id="itemContainer"]')
+      ]);
+
+      const map = new Map();
+
+      candidates.forEach(node => {
+        if (!(node instanceof Element)) return;
+
+        const id =
+          collectionIdFromNode(node);
+
+        if (!id) return;
+
+        const idNode =
+          String(node.id || '').startsWith('collection-item-')
+            ? node
+            : node.closest?.('[id^="collection-item-"]') ||
+              node.querySelector?.('[id^="collection-item-"]');
+
+        const card =
+          node.matches?.('[data-automation-id="itemContainer"]')
+            ? node
+            : idNode?.closest?.('[data-automation-id="itemContainer"]') ||
+              idNode ||
+              node;
+
+        if (
+          !card ||
+          card.closest?.('#m0hm3d85-forms-productivity')
+        ) {
+          return;
+        }
+
+        map.set(id, {
+          id,
+          card,
+          idNode: idNode || card
+        });
+      });
+
+      return [...map.values()];
+    }
+
+    function collectionNewSummary(
+      collectionId
+    ) {
+      const forms =
+        window.MAD_FORMS_PRODUCTIVITY
+          ?.forms?.() || [];
+
+      let formsWithNew =
+        0;
+
+      let totalNew =
+        0;
+
+      forms.forEach(form => {
+        if (
+          String(form?.collectionId || '') !==
+          String(collectionId || '')
+        ) {
+          return;
+        }
+
+        const n =
+          newCount(
+            form.formKey
+          );
+
+        if (n > 0) {
+          formsWithNew++;
+          totalNew += n;
+        }
+      });
+
+      return {
+        formsWithNew,
+        totalNew
+      };
+    }
+
+    function ensureOverlayBadge(
+      card,
+      className,
+      text
+    ) {
+      if (!(card instanceof Element)) {
+        return null;
+      }
+
+      card.classList.add(
+        'm0hm3d85-response-card-anchor'
+      );
+
+      let badge =
+        [...card.children]
+          .find(
+            child =>
+              child.classList?.contains(
+                className
+              )
+          ) || null;
+
+      if (!badge) {
+        badge =
+          document.createElement(
+            'span'
+          );
+
+        badge.className =
+          className;
+
+        badge.setAttribute(
+          'aria-hidden',
+          'true'
+        );
+
+        try {
+          card.appendChild(
+            badge
+          );
+        } catch {
+          return null;
+        }
+      }
+
+      badge.textContent =
+        text;
+
+      return badge;
+    }
+
+    function applyCardBadges() {
+      if (
+        !isShellSurface()
+      ) {
+        return;
+      }
+
+      injectStyles();
+
+      nativeFormCardEntries()
+        .forEach(
+          ({ id, card }) => {
+            const n =
+              newCount(
+                id
+              );
+
+            const oldBadge =
+              [...card.children]
+                .find(
+                  child =>
+                    child.classList?.contains(
+                      'm0hm3d85-new-response-badge'
+                    )
+                ) || null;
+
+            if (
+              n > 0
+            ) {
+              ensureOverlayBadge(
+                card,
+                'm0hm3d85-new-response-badge',
+                `+${n} جديدة`
+              );
+
+              card.dataset.m0hm3d85HasNew =
+                'true';
+            } else {
+              oldBadge?.remove();
+
+              delete card.dataset
+                .m0hm3d85HasNew;
+            }
+
+            if (
+              isCollectionPage() &&
+              state.onlyNewInFolder
+            ) {
+              if (
+                n > 0
+              ) {
+                if (
+                  card.dataset
+                    .m0hm3d85NewHidden ===
+                  'true'
+                ) {
+                  card.style.removeProperty(
+                    'display'
+                  );
+
+                  delete card.dataset
+                    .m0hm3d85NewHidden;
+                }
+              } else {
+                card.dataset
+                  .m0hm3d85NewHidden =
+                  'true';
+
+                card.style.setProperty(
+                  'display',
+                  'none',
+                  'important'
+                );
+              }
+            } else if (
+              card.dataset
+                .m0hm3d85NewHidden ===
+              'true'
+            ) {
+              card.style.removeProperty(
+                'display'
+              );
+
+              delete card.dataset
+                .m0hm3d85NewHidden;
+            }
+          }
+        );
+
+      nativeCollectionCardEntries()
+        .forEach(
+          ({ id, card }) => {
+            const s =
+              collectionNewSummary(
+                id
+              );
+
+            const oldBadge =
+              [...card.children]
+                .find(
+                  child =>
+                    child.classList?.contains(
+                      'm0hm3d85-new-folder-badge'
+                    )
+                ) || null;
+
+            if (
+              s.totalNew > 0
+            ) {
+              ensureOverlayBadge(
+                card,
+                'm0hm3d85-new-folder-badge',
+                s.formsWithNew > 1
+                  ? `+${s.totalNew} جديدة · ${s.formsWithNew} نماذج`
+                  : `+${s.totalNew} جديدة`
+              );
+
+              card.dataset.m0hm3d85FolderHasNew =
+                'true';
+            } else {
+              oldBadge?.remove();
+
+              delete card.dataset
+                .m0hm3d85FolderHasNew;
+            }
+          }
+        );
+    }
+
+    function folderSummaryText() {
+      const s =
+        summary(
+          visibleCardIds()
+        );
+
+      if (
+        !state.lastCheckAt
+      ) {
+        return 'جارٍ تجهيز متابعة الاستجابات الجديدة...';
+      }
+
+      if (
+        !s.totalNew
+      ) {
+        return 'لا توجد استجابات جديدة في هذا المجلد.';
+      }
+
+      return `${s.formsWithNew} نموذج لديها ${s.totalNew} استجابة جديدة`;
+    }
+
+    function renderFolderBar() {
+      if (
+        !isCollectionPage()
+      ) {
+        document
+          .getElementById(
+            FOLDER_BAR_ID
+          )
+          ?.remove();
+
+        return;
+      }
+
+      injectStyles();
+
+      let bar =
+        document.getElementById(
+          FOLDER_BAR_ID
+        );
+
+      if (!bar) {
+        bar =
+          document.createElement(
+            'section'
+          );
+
+        bar.id =
+          FOLDER_BAR_ID;
+
+        bar.innerHTML = `
+          <div class="mnr-main">
+            <span class="mnr-dot"></span>
+            <strong>متابعة الاستجابات الجديدة</strong>
+            <span class="mnr-summary"></span>
+            <span class="mnr-status"></span>
+          </div>
+          <div class="mnr-actions">
+            <button type="button" data-action="only-new">عرض التي لديها جديد</button>
+            <button type="button" data-action="check">فحص الآن</button>
+          </div>
+        `;
+
+        const anchor =
+          document.querySelector(
+            '#scroll-dnd'
+          ) ||
+          document.querySelector(
+            '[id^="form-item-"]'
+          )?.parentElement;
+
+        if (
+          anchor?.parentElement
+        ) {
+          anchor.parentElement
+            .insertBefore(
+              bar,
+              anchor
+            );
+        } else {
+          document.body
+            ?.prepend(
+              bar
+            );
+        }
+
+        bar
+          .querySelector(
+            '[data-action="only-new"]'
+          )
+          ?.addEventListener(
+            'click',
+            () => {
+              state.onlyNewInFolder =
+                !state.onlyNewInFolder;
+
+              applyCardBadges();
+              renderFolderBar();
+            }
+          );
+
+        bar
+          .querySelector(
+            '[data-action="check"]'
+          )
+          ?.addEventListener(
+            'click',
+            () =>
+              check({
+                silent: false
+              })
+          );
+      }
+
+      const s =
+        summary(
+          visibleCardIds()
+        );
+
+      const summaryEl =
+        bar.querySelector(
+          '.mnr-summary'
+        );
+
+      const statusEl =
+        bar.querySelector(
+          '.mnr-status'
+        );
+
+      const onlyBtn =
+        bar.querySelector(
+          '[data-action="only-new"]'
+        );
+
+      const checkBtn =
+        bar.querySelector(
+          '[data-action="check"]'
+        );
+
+      if (summaryEl) {
+        summaryEl.textContent =
+          folderSummaryText();
+      }
+
+      if (statusEl) {
+        statusEl.textContent =
+          state.status ||
+          '';
+      }
+
+      if (onlyBtn) {
+        onlyBtn.dataset.active =
+          state.onlyNewInFolder
+            ? 'true'
+            : 'false';
+
+        onlyBtn.textContent =
+          state.onlyNewInFolder
+            ? 'إظهار كل النماذج'
+            : 'عرض التي لديها جديد';
+      }
+
+      if (checkBtn) {
+        checkBtn.disabled =
+          state.checking;
+
+        checkBtn.textContent =
+          state.checking
+            ? 'جارٍ الفحص...'
+            : 'فحص الآن';
+      }
+
+      if (
+        state.onlyNewInFolder &&
+        !s.formsWithNew
+      ) {
+        statusEl &&
+          (statusEl.textContent =
+            'لا توجد بطاقات جديدة لعرضها في هذا المجلد.');
+      }
+    }
+
+    function updatePortalCounts() {
+      const api =
+        window.MAD_FORMS_PRODUCTIVITY;
+
+      if (
+        !api?.syncResponseCounts
+      ) {
+        return;
+      }
+
+      const object = {};
+
+      state.counts.forEach(
+        (count, id) => {
+          object[id] =
+            count;
+        }
+      );
+
+      api.syncResponseCounts(
+        object
+      );
+    }
+
+    async function check(
+      options = {}
+    ) {
+      /*
+       * routeBoot و visibilitychange قد يحدثان عدة مرات خلال ثوانٍ
+       * بسبب React. الفحص الصامت لا يعيد الاتصال إذا كانت لدينا
+       * نتيجة حديثة؛ زر «فحص الآن» يتجاوز هذا القيد.
+       */
+      if (
+        options.silent &&
+        state.lastCheckAt &&
+        Date.now() -
+          state.lastCheckAt <
+          MIN_SILENT_CHECK_GAP
+      ) {
+        return state.counts;
+      }
+
+      if (
+        state.checkPromise
+      ) {
+        return state.checkPromise;
+      }
+
+      state.checking =
+        true;
+
+      if (
+        !options.silent
+      ) {
+        state.status =
+          'جارٍ فحص أعداد الاستجابات...';
+      }
+
+      renderFolderBar();
+
+      state.checkPromise =
+        (async () => {
+          try {
+            const counts =
+              await requestCounts();
+
+            reconcile(
+              counts
+            );
+
+            updatePortalCounts();
+
+            applyCardBadges();
+            renderFolderBar();
+
+            window.dispatchEvent(
+              new CustomEvent(
+                'm0hm3d85:forms-responses-updated',
+                {
+                  detail:
+                    summary()
+                }
+              )
+            );
+
+            return counts;
+          } catch (error) {
+            state.status =
+              `تعذر فحص الاستجابات: ${String(
+                error?.message ||
+                error
+              )}`;
+
+            renderFolderBar();
+
+            return null;
+          } finally {
+            state.checking =
+              false;
+
+            state.checkPromise =
+              null;
+
+            renderFolderBar();
+          }
+        })();
+
+      return state.checkPromise;
+    }
+
+    function ensureRecord(
+      formId,
+      current
+    ) {
+      const now =
+        new Date().toISOString();
+
+      let record =
+        state.records[
+          formId
+        ];
+
+      if (!record) {
+        record = {
+          reviewedCount:
+            current,
+          initializedAt:
+            now,
+          reviewedAt:
+            null,
+          lastSeenCount:
+            current,
+          lastSeenAt:
+            now
+        };
+
+        state.records[
+          formId
+        ] =
+          record;
+      }
+
+      return record;
+    }
+
+    function reviewNote(
+      formId,
+      session
+    ) {
+      if (
+        !session ||
+        !Number.isFinite(
+          session.count
+        )
+      ) {
+        return 'جارٍ تحديد نقطة المراجعة...';
+      }
+
+      const current =
+        state.counts.get(
+          formId
+        );
+
+      const currentNew =
+        newCount(
+          formId
+        );
+
+      const record =
+        state.records[
+          formId
+        ];
+
+      const explicitlyReviewed =
+        Boolean(
+          record?.reviewedAt
+        ) &&
+        Number(
+          record?.reviewedCount
+        ) >= session.count;
+
+      if (
+        explicitlyReviewed &&
+        Number.isFinite(
+          current
+        ) &&
+        current >
+          session.count
+      ) {
+        return `تمت المراجعة حتى ${session.count}؛ وصلت ${current - session.count} استجابة بعد بدء الجلسة وستبقى جديدة.`;
+      }
+
+      if (
+        explicitlyReviewed
+      ) {
+        return `تم اعتماد ${session.count} استجابة كمراجَعة.`;
+      }
+
+      if (
+        Number.isFinite(
+          current
+        ) &&
+        current >
+          session.count
+      ) {
+        return `جلسة المراجعة بدأت عند ${session.count} استجابة؛ وصلت ${current - session.count} بعد ذلك ولن تُمسح من الجديد عند الاعتماد.`;
+      }
+
+      if (
+        currentNew > 0
+      ) {
+        return `${currentNew} استجابة ما زالت جديدة حتى تضغط «تمت المراجعة».`;
+      }
+
+      return `نقطة جلسة المراجعة الحالية: ${session.count} استجابة.`;
+    }
+
+    function visibleElement(el) {
+      if (!el) return false;
+
+      try {
+        const rect =
+          el.getBoundingClientRect();
+
+        const style =
+          getComputedStyle(el);
+
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          style.opacity !== '0'
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    function reviewPageVisibleCount() {
+      /*
+       * صفحة Review تعرض عادة aria-label مثل "95 من الردود".
+       * نقرأه من DOM فقط، بدون أي طلب شبكي.
+       */
+      const nodes = [
+        ...document.querySelectorAll(
+          '[aria-label],[role="group"],[role="status"]'
+        )
+      ];
+
+      for (const el of nodes) {
+        if (!visibleElement(el)) continue;
+
+        const text =
+          westernDigits(
+            clean(
+              `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
+            )
+          );
+
+        const match =
+          text.match(
+            /(?:^|\s)(\d+)\s*(?:من\s*)?(?:الردود|الاستجابات|responses?|replies?)(?:\s|$)/i
+          );
+
+        if (match) {
+          const count =
+            Number(match[1]);
+
+          if (
+            Number.isFinite(count) &&
+            count >= 0
+          ) {
+            return Math.floor(count);
+          }
+        }
+      }
+
+      return null;
+    }
+
+    function visibleReviewError() {
+      const nodes = [
+        ...document.querySelectorAll(
+          '[role="alert"],[aria-live="assertive"],[aria-live="polite"],div,span'
+        )
+      ];
+
+      for (const el of nodes) {
+        if (!visibleElement(el)) continue;
+
+        const text =
+          clean(
+            el.innerText ||
+            el.textContent ||
+            ''
+          );
+
+        if (
+          text.length > 0 &&
+          text.length < 600 &&
+          /يتم تنفيذ الكثير من الإجراءات|الكثير من الإجراءات|نواجه مشكلة في الحصول على المستندات|عذرًا، حدث خطأ ما|Too many actions|problem getting (?:the )?documents|something went wrong/i.test(
+            text
+          )
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    function findReviewNextButton() {
+      return [
+        ...document.querySelectorAll(
+          'button,[role="button"]'
+        )
+      ].find(
+        el =>
+          visibleElement(el) &&
+          /^مراجعة التالي$|^Review next$/i.test(
+            clean(
+              `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
+            )
+          )
+      ) || null;
+    }
+
+    function findReviewMountTarget() {
+      /*
+       * v1.3.5
+       * الفحص الفعلي للصفحة أظهر أن شريط «مراجعة التالي» داخل
+       * navigation ثابت (position: fixed / z-index مرتفع). لذلك لا
+       * نضيف أي عنصر إليه نهائيًا.
+       *
+       * الموضع الآمن: قبل بطاقة «المستجيب» نفسها داخل مسار الصفحة
+       * الطبيعي. إدراج العنصر هناك يدفع المحتوى لأسفل بدل أن يغطيه،
+       * وبالتالي لا يمكنه حجب عارض المرفقات أو أزرار Forms.
+       */
+
+      const responseOptions =
+        [
+          ...document.querySelectorAll(
+            'button,[role="button"]'
+          )
+        ].find(
+          el =>
+            visibleElement(el) &&
+            /خيارات إضافية للاستجابات|More response options/i.test(
+              clean(
+                `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
+              )
+            )
+        ) || null;
+
+      const respondentNav =
+        responseOptions ||
+        [
+          ...document.querySelectorAll(
+            'button,[role="button"]'
+          )
+        ].find(
+          el =>
+            visibleElement(el) &&
+            /الشخص السابق|الشخص التالي|Previous person|Next person/i.test(
+              clean(
+                `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
+              )
+            )
+        ) || null;
+
+      if (respondentNav) {
+        let node =
+          respondentNav.parentElement;
+
+        for (
+          let depth = 0;
+          node &&
+          depth < 6;
+          depth += 1,
+          node = node.parentElement
+        ) {
+          if (
+            !visibleElement(node)
+          ) {
+            continue;
+          }
+
+          const rect =
+            node.getBoundingClientRect();
+
+          const style =
+            getComputedStyle(node);
+
+          const isOverlay =
+            style.position === 'fixed' ||
+            style.position === 'absolute' ||
+            Number.parseInt(
+              style.zIndex,
+              10
+            ) >= 1000;
+
+          if (
+            !isOverlay &&
+            rect.top >= 120 &&
+            rect.width >= 700 &&
+            rect.height >= 70 &&
+            rect.height <= 260 &&
+            node.parentElement
+          ) {
+            return {
+              mode: 'before',
+              node,
+              reason:
+                'respondent-card'
+            };
+          }
+        }
+      }
+
+      /*
+       * fallback: قبل أول كتلة أسئلة في المسار الطبيعي، وليس داخل
+       * questionContent نفسه. نبحث عن أقرب سلف عريض غير ثابت.
+       */
+      const firstQuestion =
+        [
+          ...document.querySelectorAll(
+            '[data-automation-id="questionContent"]'
+          )
+        ].find(
+          visibleElement
+        ) || null;
+
+      if (firstQuestion) {
+        let node =
+          firstQuestion;
+
+        for (
+          let depth = 0;
+          node &&
+          depth < 7;
+          depth += 1,
+          node = node.parentElement
+        ) {
+          if (
+            !visibleElement(node)
+          ) {
+            continue;
+          }
+
+          const rect =
+            node.getBoundingClientRect();
+
+          const style =
+            getComputedStyle(node);
+
+          const isOverlay =
+            style.position === 'fixed' ||
+            style.position === 'absolute' ||
+            Number.parseInt(
+              style.zIndex,
+              10
+            ) >= 1000;
+
+          if (
+            !isOverlay &&
+            rect.width >= 950 &&
+            rect.height >= 80 &&
+            rect.height <= 500 &&
+            node.parentElement
+          ) {
+            return {
+              mode: 'before',
+              node,
+              reason:
+                'first-question-block'
+            };
+          }
+        }
+      }
+
+      /*
+       * لا نستخدم role=navigation أو formRoot كـ fallback، لأن ذلك
+       * قد يعيدنا إلى طبقة ثابتة فوق الصفحة. إذا لم نجد موضعًا آمناً
+       * ننتظر إعادة رسم DOM ثم نحاول من جديد.
+       */
+      return null;
+    }
+
+    async function ensureReviewSession(
+      formId
+    ) {
+      if (
+        state.reviewSessions.has(
+          formId
+        )
+      ) {
+        return state.reviewSessions.get(
+          formId
+        );
+      }
+
+      /*
+       * لا نرسل GetRespCounts عند دخول صفحة المراجعة.
+       * نستخدم آخر عدد رصده Forms نفسه أو العدد المحلي المحفوظ.
+       */
+      let count =
+        state.counts.get(
+          formId
+        );
+
+      if (
+        !Number.isFinite(
+          count
+        )
+      ) {
+        const visibleCount =
+          reviewPageVisibleCount();
+
+        if (
+          Number.isFinite(
+            visibleCount
+          )
+        ) {
+          count =
+            visibleCount;
+
+          state.counts.set(
+            formId,
+            visibleCount
+          );
+
+          ensureRecord(
+            formId,
+            visibleCount
+          );
+
+          save();
+        }
+      }
+
+      if (
+        !Number.isFinite(
+          count
+        )
+      ) {
+        const stored =
+          Number(
+            state.records[
+              formId
+            ]?.lastSeenCount
+          );
+
+        count =
+          Number.isFinite(
+            stored
+          )
+            ? stored
+            : null;
+      }
+
+      const session = {
+        count:
+          Number.isFinite(
+            count
+          )
+            ? count
+            : null,
+        startedAt:
+          Date.now()
+      };
+
+      state.reviewSessions.set(
+        formId,
+        session
+      );
+
+      return session;
+    }
+
+    function clearUndo() {
+      clearTimeout(
+        state.undoTimer
+      );
+
+      state.undoTimer =
+        0;
+
+      document
+        .querySelector(
+          `#${REVIEW_WRAP_ID} .mnr-undo`
+        )
+        ?.remove();
+    }
+
+    async function markReviewed(
+      formId
+    ) {
+      const session =
+        await ensureReviewSession(
+          formId
+        );
+
+      if (
+        !session ||
+        !Number.isFinite(
+          session.count
+        )
+      ) {
+        state.status =
+          'تعذر تحديد عدد الاستجابات عند بدء جلسة المراجعة.';
+
+        renderReviewButton();
+
+        return;
+      }
+
+      const current =
+        state.counts.get(
+          formId
+        );
+
+      const target =
+        Number.isFinite(
+          current
+        )
+          ? Math.min(
+              session.count,
+              current
+            )
+          : session.count;
+
+      const record =
+        ensureRecord(
+          formId,
+          target
+        );
+
+      const previous = {
+        reviewedCount:
+          Number(
+            record.reviewedCount
+          ),
+        reviewedAt:
+          record.reviewedAt ||
+          null
+      };
+
+      record.reviewedCount =
+        target;
+
+      record.reviewedAt =
+        new Date().toISOString();
+
+      record.lastSeenCount =
+        Number.isFinite(
+          current
+        )
+          ? current
+          : target;
+
+      record.lastSeenAt =
+        new Date().toISOString();
+
+      save();
+
+      applyCardBadges();
+
+      updatePortalCounts();
+
+      clearUndo();
+
+      const wrap =
+        document.getElementById(
+          REVIEW_WRAP_ID
+        );
+
+      if (wrap) {
+        const undo =
+          document.createElement(
+            'button'
+          );
+
+        undo.type =
+          'button';
+
+        undo.className =
+          'mnr-undo';
+
+        undo.textContent =
+          'تراجع';
+
+        undo.addEventListener(
+          'click',
+          () => {
+            const rec =
+              state.records[
+                formId
+              ];
+
+            if (rec) {
+              rec.reviewedCount =
+                previous.reviewedCount;
+
+              rec.reviewedAt =
+                previous.reviewedAt;
+
+              save();
+
+              clearUndo();
+              renderReviewButton();
+            }
+          }
+        );
+
+        wrap.appendChild(
+          undo
+        );
+
+        state.undoTimer =
+          setTimeout(
+            clearUndo,
+            12000
+          );
+      }
+
+      renderReviewButton();
+
+      window.dispatchEvent(
+        new CustomEvent(
+          'm0hm3d85:forms-responses-updated',
+          {
+            detail:
+              summary()
+          }
+        )
+      );
+    }
+
+    async function renderReviewButton() {
+      if (
+        !isReviewPage()
+      ) {
+        document
+          .getElementById(
+            REVIEW_WRAP_ID
+          )
+          ?.remove();
+
+        if (
+          state.activeReviewId
+        ) {
+          state.reviewSessions.delete(
+            state.activeReviewId
+          );
+
+          state.activeReviewId =
+            '';
+        }
+
+        return;
+      }
+
+      injectStyles();
+
+      const formId =
+        currentFormId();
+
+      if (!formId) return;
+
+      if (
+        state.activeReviewId &&
+        state.activeReviewId !==
+          formId
+      ) {
+        state.reviewSessions.delete(
+          state.activeReviewId
+        );
+      }
+
+      state.activeReviewId =
+        formId;
+
+      const session =
+        await ensureReviewSession(
+          formId
+        );
+
+      let wrap =
+        document.getElementById(
+          REVIEW_WRAP_ID
+        );
+
+      if (!wrap) {
+        if (
+          visibleReviewError()
+        ) {
+          return;
+        }
+
+        const mount =
+          findReviewMountTarget();
+
+        if (!mount?.node) {
+          return;
+        }
+
+        wrap =
+          document.createElement(
+            'div'
+          );
+
+        wrap.id =
+          REVIEW_WRAP_ID;
+
+        wrap.setAttribute(
+          'data-m0hm3d85-review-bar',
+          'true'
+        );
+
+        wrap.innerHTML = `
+          <div class="mnr-review-main">
+            <span class="mnr-review-label">متابعة الاستجابات الجديدة</span>
+            <button type="button" class="mnr-reviewed-btn">✓ تمت مراجعة الاستجابات</button>
+            <span class="mnr-review-note"></span>
+          </div>
+        `;
+
+        if (
+          mount.mode ===
+            'before' &&
+          mount.node.parentElement
+        ) {
+          const parentStyle =
+            getComputedStyle(
+              mount.node.parentElement
+            );
+
+          /*
+           * حماية إضافية: لا نثبت الشريط أبدًا داخل طبقة fixed.
+           */
+          if (
+            parentStyle.position ===
+              'fixed'
+          ) {
+            return;
+          }
+
+          mount.node.parentElement.insertBefore(
+            wrap,
+            mount.node
+          );
+        } else {
+          return;
+        }
+
+        wrap
+          .querySelector(
+            '.mnr-reviewed-btn'
+          )
+          ?.addEventListener(
+            'click',
+            () =>
+              markReviewed(
+                formId
+              )
+          );
+      }
+
+      const button =
+        wrap.querySelector(
+          '.mnr-reviewed-btn'
+        );
+
+      const note =
+        wrap.querySelector(
+          '.mnr-review-note'
+        );
+
+      if (button) {
+        const record =
+          state.records[
+            formId
+          ];
+
+        const explicitlyReviewed =
+          Boolean(
+            record?.reviewedAt
+          ) &&
+          Number(
+            record?.reviewedCount
+          ) >=
+            Number(
+              session?.count
+            );
+
+        const nextDisabled =
+          !Number.isFinite(
+            session?.count
+          ) ||
+          explicitlyReviewed;
+
+        const nextText =
+          explicitlyReviewed
+            ? `✓ تمت المراجعة حتى ${session?.count ?? '—'}`
+            : '✓ تمت مراجعة الاستجابات';
+
+        if (
+          button.disabled !==
+          nextDisabled
+        ) {
+          button.disabled =
+            nextDisabled;
+        }
+
+        if (
+          button.textContent !==
+          nextText
+        ) {
+          button.textContent =
+            nextText;
+        }
+      }
+
+      if (note) {
+        const nextNote =
+          reviewNote(
+            formId,
+            session
+          );
+
+        if (
+          note.textContent !==
+          nextNote
+        ) {
+          note.textContent =
+            nextNote;
+        }
+      }
+    }
+
+    function routeBoot() {
+      if (
+        state.routeQueued
+      ) {
+        return;
+      }
+
+      state.routeQueued =
+        true;
+
+      setTimeout(
+        async () => {
+          state.routeQueued =
+            false;
+
+          injectStyles();
+
+          if (
+            isShellSurface()
+          ) {
+            /*
+             * لا نرسل فحصًا تلقائيًا. ننتظر GetRespCounts الذي يرسله
+             * Forms نفسه ونستهلك نتيجته عبر الـ passive tap.
+             */
+            applyCardBadges();
+            renderFolderBar();
+          } else {
+            document
+              .getElementById(
+                FOLDER_BAR_ID
+              )
+              ?.remove();
+          }
+
+          if (
+            isReviewPage()
+          ) {
+            if (
+              !document.getElementById(
+                REVIEW_WRAP_ID
+              )
+            ) {
+              await renderReviewButton();
+            }
+          } else {
+            await renderReviewButton();
+          }
+        },
+        80
+      );
+    }
+
+    function start() {
+      if (
+        state.started
+      ) {
+        return;
+      }
+
+      state.started =
+        true;
+
+      load();
+      injectStyles();
+      installNativeCountTap();
+
+      document.addEventListener(
+        'visibilitychange',
+        () => {
+          if (
+            !document.hidden &&
+            isShellSurface()
+          ) {
+            applyCardBadges();
+            renderFolderBar();
+          }
+        }
+      );
+
+      /*
+       * لا يوجد Polling شبكي دوري.
+       * توجد فقط إعادة محاولة DOM خفيفة إذا اختفى شريط المراجعة.
+       *
+       * v1.3.6: لا نعيد كتابة محتوى الشريط على كل Mutation.
+       * كان ذلك يولّد سلسلة Mutations متتابعة، ويمنع سكربتات أخرى
+       * ذات debounce أطول (مثل عارض المرفقات) من تثبيت أزرارها.
+       */
+      setInterval(
+        () => {
+          if (
+            isReviewPage() &&
+            !document.getElementById(
+              REVIEW_WRAP_ID
+            )
+          ) {
+            renderReviewButton();
+          }
+        },
+        1500
+      );
+
+      const attachObserver =
+        () => {
+          if (
+            state.observer ||
+            !document.body
+          ) {
+            return;
+          }
+
+          state.observer =
+            new MutationObserver(
+              debounce(
+                mutations => {
+                  const meaningful =
+                    mutations.some(
+                      mutation => {
+                        const element =
+                          mutation.target instanceof Element
+                            ? mutation.target
+                            : mutation.target?.parentElement;
+
+                        if (!element) {
+                          return true;
+                        }
+
+                        return !element.closest?.(
+                          `#${REVIEW_WRAP_ID},#${FOLDER_BAR_ID}`
+                        );
+                      }
+                    );
+
+                  if (!meaningful) {
+                    return;
+                  }
+
+                  if (
+                    isShellSurface()
+                  ) {
+                    applyCardBadges();
+                    renderFolderBar();
+                  }
+
+                  if (
+                    isReviewPage() &&
+                    !document.getElementById(
+                      REVIEW_WRAP_ID
+                    )
+                  ) {
+                    renderReviewButton();
+                  }
+                },
+                180
+              )
+            );
+
+          state.observer.observe(
+            document.body,
+            {
+              childList: true,
+              subtree: true
+            }
+          );
+        };
+
+      if (
+        document.body
+      ) {
+        attachObserver();
+      } else {
+        document.addEventListener(
+          'DOMContentLoaded',
+          attachObserver,
+          {
+            once: true
+          }
+        );
+      }
+
+      routeBoot();
+
+      window.MAD_FORMS_RESPONSE_TRACKER = {
+        version:
+          FINAL_VERSION,
+        check,
+        newCount,
+        summary,
+        markReviewed:
+          () => {
+            const id =
+              currentFormId();
+
+            if (id) {
+              return markReviewed(
+                id
+              );
+            }
+          },
+        status:
+          () => ({
+            checking:
+              state.checking,
+            lastCheckAt:
+              state.lastCheckAt,
+            tracked:
+              Object.keys(
+                state.records
+              ).length,
+            summary:
+              summary()
+          })
+      };
+    }
+
+    return {
+      start,
+      routeBoot,
+      check,
+      newCount,
+      currentCount,
+      summary,
+      applyCardBadges,
+      renderFolderBar
+    };
+  })();
+
   /* ============================== PORTAL ============================== */
 
   const PORTAL = (() => {
@@ -567,6 +3039,22 @@
       'M0HM3D85_FORMS_PRODUCTIVITY_INDEX',
       'M0HM3D85_FORMS_INDEX'
     ];
+
+    /*
+     * v1.3.2:
+     * الفهرسة الكاملة عبر iframe تفتح الصفحة الرئيسية ثم كل مجموعة.
+     * تكرارها تلقائيًا عند كل دخول قد يسبب ضغطًا على Forms ويؤدي إلى
+     * رسالة «يتم تنفيذ الكثير من الإجراءات». لذلك نحفظ الفهرس الناجح
+     * محليًا ونحدّثه فقط عند طلب المستخدم «إعادة الفهرسة».
+     */
+    const CACHE_KEY =
+      'M0HM3D85_FORMS_PRODUCTIVITY_CACHE_V132';
+
+    const CACHE_MAX_AGE_MS =
+      7 * 24 * 60 * 60 * 1000;
+
+    const INDEX_FOLDER_DELAY_MS =
+      1800;
 
     const state = {
       mounted: false,
@@ -584,6 +3072,76 @@
       status: ''
     };
 
+    function saveIndexCache() {
+      try {
+        localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({
+            version: 1,
+            savedAt: Date.now(),
+            indexedAt:
+              state.indexedAt
+                ? state.indexedAt.getTime()
+                : Date.now(),
+            forms: state.forms,
+            collections: state.collections
+          })
+        );
+      } catch {}
+    }
+
+    function loadIndexCache() {
+      try {
+        const raw =
+          JSON.parse(
+            localStorage.getItem(
+              CACHE_KEY
+            ) || 'null'
+          );
+
+        if (
+          !raw ||
+          !Array.isArray(raw.forms) ||
+          !Array.isArray(raw.collections)
+        ) {
+          return false;
+        }
+
+        /*
+         * حتى لو كان أقدم من 7 أيام نعرضه كخريطة مساعدة للشارات
+         * والمجلدات، لكن نوضح أنه قديم ونقترح تحديثه يدويًا.
+         */
+        state.forms =
+          raw.forms;
+
+        state.collections =
+          raw.collections;
+
+        state.indexedAt =
+          new Date(
+            Number(raw.indexedAt) ||
+            Number(raw.savedAt) ||
+            Date.now()
+          );
+
+        const age =
+          Date.now() -
+          Number(
+            raw.savedAt || 0
+          );
+
+        state.status =
+          age >
+            CACHE_MAX_AGE_MS
+            ? `تم تحميل فهرس محفوظ قديم (${state.forms.length} نموذجًا). اضغط «إعادة الفهرسة» عند الحاجة لتحديث خريطة المجلدات.`
+            : `تم تحميل الفهرس المحفوظ: ${state.forms.length} نموذجًا. لن تُعاد الفهرسة تلقائيًا.`;
+
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     const canon = value =>
       canonical(value).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
@@ -597,11 +3155,23 @@
       );
     }
 
-    function purgeIndex() {
+    function purgeIndex(options = {}) {
+      const clearCache =
+        options.clearCache === true;
+
       for (const key of LEGACY_KEYS) {
         try { localStorage.removeItem(key); } catch {}
         try { sessionStorage.removeItem(key); } catch {}
       }
+
+      if (clearCache) {
+        try {
+          localStorage.removeItem(
+            CACHE_KEY
+          );
+        } catch {}
+      }
+
       state.forms = [];
       state.collections = [];
       state.indexedAt = null;
@@ -948,8 +3518,38 @@
       return false;
     }
 
+    function formsBusyErrorText() {
+      const body =
+        clean(
+          document.body?.innerText ||
+          ''
+        );
+
+      if (
+        /يتم تنفيذ الكثير من الإجراءات|الكثير من الإجراءات|نواجه مشكلة في الحصول على المستندات|عذرًا، حدث خطأ ما|Too many actions|problem getting (?:the )?documents|something went wrong/i.test(
+          body
+        )
+      ) {
+        return body.slice(0, 500);
+      }
+
+      return '';
+    }
+
+    function throwIfFormsBusy() {
+      const message =
+        formsBusyErrorText();
+
+      if (message) {
+        throw new Error(
+          'أوقف المحسن الفهرسة لأن Microsoft Forms أظهر رسالة ضغط/خطأ. تم الاحتفاظ بالفهرس السابق؛ حاول التحديث لاحقًا.'
+        );
+      }
+    }
+
     async function scanHomeWorker() {
       await waitForPortal();
+      throwIfFormsBusy();
 
       const collectionMap = new Map();
 
@@ -965,6 +3565,7 @@
       }
 
       await expandAndSettle();
+      throwIfFormsBusy();
 
       parseCollections().forEach(c =>
         collectionMap.set(c.id, c)
@@ -978,7 +3579,10 @@
 
     async function scanCollectionWorker(folder) {
       await waitForPortal();
+      throwIfFormsBusy();
+
       await expandAndSettle();
+      throwIfFormsBusy();
 
       const heading = clean(
         document.querySelector('h1,h2,[role="heading"]')?.textContent || ''
@@ -1205,11 +3809,22 @@
     async function rebuildIndexStrict() {
       if (state.indexing) return;
 
-      purgeIndex();
+      const previous = {
+        forms: [...state.forms],
+        collections:
+          [...state.collections],
+        indexedAt:
+          state.indexedAt,
+        status:
+          state.status
+      };
+
       state.indexing = true;
+      state.warnings = [];
+      state.skippedDuplicates = 0;
 
       setStatus(
-        'جارٍ مسح الفهرس السابق وبدء فهرسة جديدة صارمة...',
+        'جارٍ تحديث الفهرس بهدوء. سيُحتفظ بالفهرس السابق حتى ينجح التحديث...',
         'running'
       );
 
@@ -1264,6 +3879,16 @@
 
           renderHeaderOnly();
 
+          /*
+           * مهلة مقصودة بين المجلدات لتجنب إرسال موجة متتابعة من
+           * طلبات Forms عند فتح صفحات المجموعات داخل العامل المخفي.
+           */
+          if (done > 0) {
+            await sleep(
+              INDEX_FOLDER_DELAY_MS
+            );
+          }
+
           await navigateWorker(worker, folder.url);
 
           const scanned =
@@ -1288,7 +3913,26 @@
         }
 
         state.forms = strictDedupe(all);
+
+        state.forms.forEach(form => {
+          const liveCount =
+            RESPONSE_TRACKER.currentCount(
+              form.formKey
+            );
+
+          if (
+            Number.isFinite(
+              liveCount
+            )
+          ) {
+            form.responses =
+              liveCount;
+          }
+        });
+
         state.indexedAt = new Date();
+
+        saveIndexCache();
 
         const warn =
           state.warnings.length
@@ -1305,10 +3949,19 @@
           'ok'
         );
       } catch (error) {
-        purgeIndex();
+        state.forms =
+          previous.forms;
+
+        state.collections =
+          previous.collections;
+
+        state.indexedAt =
+          previous.indexedAt;
 
         setStatus(
-          `فشلت الفهرسة المخفية وتم إبقاء الفهرس فارغًا: ${String(error?.message || error)}`,
+          previous.forms.length
+            ? `تعذر تحديث الفهرس وتم الاحتفاظ بالفهرس السابق: ${String(error?.message || error)}`
+            : `تعذر إنشاء الفهرس: ${String(error?.message || error)}`,
           'error'
         );
       } finally {
@@ -1326,6 +3979,12 @@
         if (state.filter === 'outside' && form.collectionId) return false;
         if (state.filter === 'responses' && form.responses <= 0) return false;
         if (state.filter === 'zero' && form.responses !== 0) return false;
+        if (
+          state.filter === 'new' &&
+          RESPONSE_TRACKER.newCount(form.formKey) <= 0
+        ) {
+          return false;
+        }
 
         if (
           q &&
@@ -1386,8 +4045,14 @@
 #${HOST_ID} .mfs-collapse{width:34px;height:34px;border:1px solid var(--p);border-radius:8px;background:#fff;color:var(--p)}
 #${HOST_ID}.mfs-collapsed .mfs-body{display:none}
 #${HOST_ID} .mfs-count{font-size:10px;color:var(--p);background:#F2FBFA;padding:4px 8px;border-radius:999px;font-weight:700}
+#${HOST_ID} .mfs-new-count{font-size:10px;color:#007874;background:#E7F7F5;padding:4px 8px;border-radius:999px;font-weight:800}
 #${HOST_ID} .mfs-body{border-top:1px solid var(--b);padding:12px 14px}
 #${HOST_ID} .mfs-status{font-size:11px;color:var(--m);margin-bottom:9px;padding:7px 9px;background:#FAFBFB;border-radius:8px}
+#${HOST_ID} .mfs-new-bar{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap;margin-bottom:9px;padding:8px 10px;border:1px solid #CFE9E6;background:#F7FCFB;border-radius:9px}
+#${HOST_ID} .mfs-new-bar strong{font-size:11px;color:#007874}
+#${HOST_ID} .mfs-new-bar small{display:block;margin-top:2px;color:var(--m);font-size:9px}
+#${HOST_ID} .mfs-new-check{border:1px solid var(--p);border-radius:8px;background:#fff;color:var(--p);padding:6px 9px;font-weight:700;font-size:10px}
+#${HOST_ID} .mfs-new-check:disabled{opacity:.55;cursor:not-allowed}
 #${HOST_ID} .mfs-controls{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:9px}
 #${HOST_ID} .mfs-search{flex:1 1 300px;min-width:220px;height:38px;border:1px solid #D1D5DB;border-radius:8px;padding:0 10px}
 #${HOST_ID} select{height:38px;border:1px solid #D1D5DB;border-radius:8px;background:#fff;padding:0 8px;color:var(--t)}
@@ -1399,7 +4064,7 @@
 #${HOST_ID} .mfs-title{min-width:0}
 #${HOST_ID} .mfs-title strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 #${HOST_ID} .mfs-title small{display:block;color:var(--m);font-size:10px;margin-top:3px}
-#${HOST_ID} .mfs-responses{font-size:10px;color:var(--m);white-space:nowrap}
+#${HOST_ID} .mfs-responses{font-size:10px;color:var(--m);white-space:nowrap}#${HOST_ID} .mfs-new-inline{display:inline-flex;margin-inline-start:6px;padding:2px 6px;border-radius:999px;background:#E7F7F5;color:#007874;font-size:9px;font-weight:800}
 #${HOST_ID} .mfs-open{font-size:10px;color:var(--p);font-weight:700;white-space:nowrap}
 #${HOST_ID} .mfs-empty{padding:28px 16px;text-align:center;color:var(--m);font-size:11px}
 @media(max-width:700px){#${HOST_ID}{width:calc(100% - 16px);margin-inline:8px}#${HOST_ID} .mfs-result{grid-template-columns:minmax(0,1fr) auto}#${HOST_ID} .mfs-open{display:none!important}}
@@ -1414,6 +4079,21 @@
 
       host.querySelector('.mfs-count').textContent =
         `${state.forms.length} مفهرس`;
+
+      const trackedSummary =
+        RESPONSE_TRACKER.summary(
+          state.forms.map(form => form.formKey)
+        );
+
+      const newCountEl =
+        host.querySelector('.mfs-new-count');
+
+      if (newCountEl) {
+        newCountEl.textContent =
+          trackedSummary.totalNew
+            ? `جديد: ${trackedSummary.totalNew} / ${trackedSummary.formsWithNew} نموذج`
+            : 'لا جديد';
+      }
 
       const btn = host.querySelector('[data-action="index"]');
       btn.disabled = state.indexing;
@@ -1434,6 +4114,11 @@
 
       const results = filtered();
 
+      const trackedSummary =
+        RESPONSE_TRACKER.summary(
+          state.forms.map(form => form.formKey)
+        );
+
       host.classList.toggle('mfs-collapsed', state.collapsed);
 
       host.querySelector('[data-action="collapse"]').textContent =
@@ -1441,6 +4126,48 @@
 
       host.querySelector('.mfs-count').textContent =
         `${state.forms.length} مفهرس`;
+
+      const newCountEl =
+        host.querySelector('.mfs-new-count');
+
+      if (newCountEl) {
+        newCountEl.textContent =
+          trackedSummary.totalNew
+            ? `جديد: ${trackedSummary.totalNew} / ${trackedSummary.formsWithNew} نموذج`
+            : 'لا جديد';
+      }
+
+      const newSummary =
+        host.querySelector('.mfs-new-summary');
+
+      const newStatus =
+        host.querySelector('.mfs-new-status');
+
+      const newCheckButton =
+        host.querySelector('[data-action="check-responses"]');
+
+      if (newSummary) {
+        newSummary.textContent =
+          trackedSummary.totalNew
+            ? `${trackedSummary.formsWithNew} نموذج لديها ${trackedSummary.totalNew} استجابة جديدة`
+            : 'لا توجد استجابات جديدة منذ آخر مراجعة.';
+      }
+
+      if (newStatus) {
+        newStatus.textContent =
+          trackedSummary.status ||
+          'يبدأ التتبع من العدد الحالي ولا يعتبر الردود القديمة جديدة.';
+      }
+
+      if (newCheckButton) {
+        newCheckButton.disabled =
+          trackedSummary.checking;
+
+        newCheckButton.textContent =
+          trackedSummary.checking
+            ? 'جارٍ الفحص...'
+            : 'فحص الآن';
+      }
 
       const indexButton = host.querySelector('[data-action="index"]');
       indexButton.disabled = state.indexing;
@@ -1471,7 +4198,14 @@
               <strong>${escapeHtml(form.title)}</strong>
               <small>${escapeHtml(form.collectionName || 'خارج المجموعات')}</small>
             </span>
-            <span class="mfs-responses">${form.responses} رد</span>
+            <span class="mfs-responses">
+              ${form.responses} رد
+              ${
+                RESPONSE_TRACKER.newCount(form.formKey) > 0
+                  ? `<b class="mfs-new-inline">+${RESPONSE_TRACKER.newCount(form.formKey)} جديدة</b>`
+                  : ''
+              }
+            </span>
             <span class="mfs-open">فتح النموذج ↗</span>
           </button>
         `).join('');
@@ -1496,7 +4230,18 @@
 
       host.querySelector('.mfs-status').textContent =
         state.status ||
-        'الفهرسة تلقائية ومخفية وصارمة؛ يُمسح الفهرس السابق أولًا عند كل دخول.';
+        'الشارات تُفحص بخفة؛ الفهرسة الكاملة محفوظة وتُحدّث يدويًا فقط لتجنب ضغط Microsoft Forms.';
+
+      /*
+       * كل إعادة رسم للفهرس قد تتزامن مع إعادة رسم بطاقات Forms الأصلية.
+       * نعيد إسقاط الشارات بعد اكتمال هذا الدور لضمان ظهورها في «الأخيرة»،
+       * «نماذجي»، وبطاقات المجموعات بدون الاعتماد على توقيت React.
+       */
+      setTimeout(
+        () =>
+          RESPONSE_TRACKER.applyCardBadges(),
+        0
+      );
     }
 
     function mount(options = {}) {
@@ -1512,15 +4257,35 @@
         state.mounted = false;
         state.collapsed = true;
         state.autoIndexStarted = false;
+
+        /*
+         * لا نمسح الفهرس الناجح عند كل دخول. هذا هو التغيير الأساسي
+         * لمنع تكرار الفهرسة الكاملة وضغط Forms.
+         */
         purgeIndex();
+        loadIndexCache();
+
+        state.forms.forEach(form => {
+          const liveCount =
+            RESPONSE_TRACKER.currentCount(
+              form.formKey
+            );
+
+          if (
+            Number.isFinite(
+              liveCount
+            )
+          ) {
+            form.responses =
+              liveCount;
+          }
+        });
       }
 
       if (document.getElementById(HOST_ID)) {
         state.mounted = true;
         return;
       }
-
-      if (!freshEntry) purgeIndex();
 
       injectStyles();
 
@@ -1534,11 +4299,12 @@
             <span class="mfs-logo">F</span>
             <div>
               <strong>محسن Microsoft Forms</strong>
-              <small>فهرسة تلقائية مخفية · بحث مباشر في النماذج</small>
+              <small>فهرسة محفوظة آمنة · بحث مباشر · متابعة الاستجابات</small>
             </div>
           </div>
           <div class="mfs-head-actions">
             <span class="mfs-count">0 مفهرس</span>
+            <span class="mfs-new-count">لا جديد</span>
             <button class="mfs-primary" data-action="index" type="button">إعادة الفهرسة</button>
             <button class="mfs-collapse" data-action="collapse" type="button">⌄</button>
           </div>
@@ -1546,7 +4312,15 @@
 
         <div class="mfs-body">
           <div class="mfs-status">
-            تم مسح الفهرس السابق. ستبدأ الفهرسة في الخلفية بدون نافذة منبثقة.
+            الشارات تعمل مباشرة. الفهرسة الكاملة لا تعمل تلقائيًا لحماية Forms من كثرة الطلبات.
+          </div>
+
+          <div class="mfs-new-bar">
+            <div>
+              <strong class="mfs-new-summary">جارٍ تجهيز متابعة الاستجابات الجديدة...</strong>
+              <small class="mfs-new-status">يبدأ التتبع من العدد الحالي ولا يعتبر الردود القديمة جديدة.</small>
+            </div>
+            <button class="mfs-new-check" data-action="check-responses" type="button">فحص الآن</button>
           </div>
 
           <div class="mfs-controls">
@@ -1556,6 +4330,7 @@
               <option value="folders">داخل المجموعات</option>
               <option value="outside">خارج المجموعات</option>
               <option value="responses">لها ردود</option>
+              <option value="new">لديها استجابات جديدة</option>
               <option value="zero">بدون ردود</option>
             </select>
             <select class="mfs-sort">
@@ -1595,6 +4370,15 @@
 
       host.querySelector('[data-action="index"]')
         .addEventListener('click', rebuildIndexStrict);
+
+      host.querySelector('[data-action="check-responses"]')
+        .addEventListener(
+          'click',
+          () =>
+            RESPONSE_TRACKER.check({
+              silent: false
+            })
+        );
 
       host.querySelector('[data-action="collapse"]')
         .addEventListener('click', () => {
@@ -1637,7 +4421,39 @@
         forms: () => [...state.forms],
         collections: () => [...state.collections],
         clear: () => {
-          purgeIndex();
+          purgeIndex({
+            clearCache: true
+          });
+          render();
+        },
+        syncResponseCounts: counts => {
+          if (
+            !counts ||
+            typeof counts !== 'object'
+          ) {
+            return;
+          }
+
+          let changed = false;
+
+          state.forms.forEach(form => {
+            const next =
+              Number(
+                counts[form.formKey]
+              );
+
+            if (
+              Number.isFinite(next) &&
+              next >= 0 &&
+              form.responses !== next
+            ) {
+              form.responses =
+                next;
+              changed =
+                true;
+            }
+          });
+
           render();
         },
         hideTemplates: hideTemplateDiscovery
@@ -1646,18 +4462,26 @@
       if (autoIndex && !state.autoIndexStarted) {
         state.autoIndexStarted = true;
 
-        setStatus(
-          'تم مسح الفهرس السابق. جارٍ بدء الفهرسة المخفية في الخلفية...',
-          'running'
-        );
+        /*
+         * v1.3.2: لا نبدأ مسح كل المجلدات تلقائيًا.
+         * الشارات الفردية تعتمد على GetRespCounts() مباشرة، أما خريطة
+         * المجلدات فتستخدم الفهرس المحفوظ. تحديث الخريطة يتم فقط بزر
+         * «إعادة الفهرسة» وبمهلة بين المجلدات.
+         */
+        if (state.forms.length) {
+          setStatus(
+            state.status ||
+            `تم تحميل الفهرس المحفوظ: ${state.forms.length} نموذجًا.`,
+            'ok'
+          );
+        } else {
+          setStatus(
+            'لم يُنشأ فهرس محفوظ بعد. الشارات الفردية تعمل الآن؛ اضغط «إعادة الفهرسة» مرة واحدة لتفعيل البحث وشارات المجلدات، ولن يعاد المسح تلقائيًا بعد ذلك.',
+            'ok'
+          );
+        }
 
         renderHeaderOnly();
-
-        setTimeout(() => {
-          if (isPortal() && !state.indexing) {
-            rebuildIndexStrict();
-          }
-        }, 700);
       }
     }
 
@@ -8937,7 +11761,7 @@
     );
 
     console.log(
-      '✅ المحسن جاهز: النقاط ومطلوب والتكرار والحذف وإعادة الترتيب تعمل مباشرة عبر Forms API + تحديث واحد للواجهة.'
+      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + Review معزول عن محرر الأسئلة وبدون Mutation loop + أدوات Forms API السريعة.'
     );
   }
 
@@ -8949,14 +11773,41 @@
     return;
   }
 
+  RESPONSE_TRACKER.start();
+
   let editorStarted =
     false;
 
   let portalWasActive =
     false;
 
+  const isReviewAnswersRoute =
+    () => {
+      try {
+        const url =
+          new URL(
+            location.href
+          );
+
+        return (
+          url.searchParams.get(
+            'analysis'
+          ) === 'true' &&
+          /Grading_ReviewAnswers/i.test(
+            url.searchParams.get(
+              'topview'
+            ) || ''
+          )
+        );
+      } catch {
+        return false;
+      }
+    };
+
   const routeBoot =
     () => {
+      RESPONSE_TRACKER.routeBoot();
+
       const portalActive =
         PORTAL.isPortal();
 
@@ -8977,7 +11828,25 @@
       portalWasActive =
         portalActive;
 
+      const reviewAnswers =
+        isReviewAnswersRoute();
+
       if (
+        reviewAnswers &&
+        editorStarted
+      ) {
+        try {
+          window
+            .MAD_FORMS_EDITOR_ENHANCER
+            ?.destroy?.();
+        } catch {}
+
+        editorStarted =
+          false;
+      }
+
+      if (
+        !reviewAnswers &&
         !editorStarted &&
         document.querySelector(
           '[data-automation-id="questionWrapper"],[data-automation-id="questionDesignerCard"]'
