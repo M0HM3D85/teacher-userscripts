@@ -1,4 +1,4 @@
-name: Temporary Smart Enhancer Sync
+name: Temporary Smart Enhancer Catalog Sync
 
 on:
   push:
@@ -16,21 +16,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Write Smart Enhancer v1.3.6
+      - name: Update Smart Enhancer catalog entry to v1.3.6
         shell: bash
         run: |
-          sha256sum .github/tmp-smart-enhancer-v136/chunk-*.txt
-          wc -c .github/tmp-smart-enhancer-v136/chunk-*.txt
-          cat .github/tmp-smart-enhancer-v136/chunk-*.txt > /tmp/smart-enhancer-v136.b64
-          sha256sum /tmp/smart-enhancer-v136.b64
-          test "$(sha256sum /tmp/smart-enhancer-v136.b64 | cut -d' ' -f1)" = "becff4d39485c1d57f01eaccd30b590247f8cca86b475b0dfb86b22b65ffaa04"
-          python -c "import pathlib,base64,bz2; pathlib.Path('scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js').write_bytes(bz2.decompress(base64.b64decode(pathlib.Path('/tmp/smart-enhancer-v136.b64').read_text())))"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('scripts/catalog.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          for item in data['scripts']:
+              if item.get('id') == 'microsoft-forms-smart-enhancer':
+                  item['version'] = '1.3.6'
+                  item['description'] = 'محسن شامل لـ Microsoft Forms: فهرسة وبحث ومتابعة الاستجابات الجديدة وقوالب إعدادات وتدقيق، مع إدارة جماعية سريعة للأسئلة عبر Forms API وتوافق محسّن مع صفحة المراجعة.'
+                  break
+          else:
+              raise SystemExit('Smart Enhancer catalog entry not found')
+
+          path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+          grep -Fq '"version": "1.3.6"' scripts/catalog.json
           node --check scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js
-          grep -Fq '// @version      1.3.6' scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js
           git config user.name 'M0HM3D85'
           git config user.email '66501068+M0HM3D85@users.noreply.github.com'
-          git add scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js
+          git add scripts/catalog.json
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'feat(forms-smart-enhancer): release v1.3.6'
+          git commit -m 'chore(catalog): sync Smart Enhancer v1.3.6'
           git push origin HEAD:main
-# trigger after chunk repair
