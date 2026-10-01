@@ -328,15 +328,3 @@
 +        return false;
 +      }
 +
-+      const source =
-+        value.trim();
-+
-+      if (
-+        !source ||
-+        !/^[\[{]/.test(
-+          source
-+        )
-+      ) {
-+        return false;
-+      }
-+
