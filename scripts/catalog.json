@@ -134,9 +134,9 @@
     {
       "id": "microsoft-forms-smart-enhancer",
       "name": "Microsoft Forms Smart Enhancer - محسن Microsoft Forms الذكي",
-      "version": "1.3.6",
+      "version": "1.3.9",
       "status": "stable",
-      "description": "محسن شامل لـ Microsoft Forms: فهرسة وبحث ومتابعة الاستجابات الجديدة وقوالب إعدادات وتدقيق، مع إدارة جماعية سريعة للأسئلة عبر Forms API وتوافق محسّن مع صفحة المراجعة.",
+      "description": "محسن شامل لـ Microsoft Forms: فهرسة وبحث ومتابعة الاستجابات الجديدة، بحث مباشر عن المستجيبين بالاسم المكتوب أو المؤسسي والبريد مع قفز مباشر للاستجابة، طي القوالب تلقائيًا، قوالب إعدادات وتدقيق وإدارة جماعية سريعة للأسئلة عبر Forms API.",
       "sourcePath": "scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js",
       "additionalInfoPath": "scripts/microsoft-forms-smart-enhancer/README.md",
       "greasyFork": "https://greasyfork.org/scripts/596242",

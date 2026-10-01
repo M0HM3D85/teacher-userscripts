@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms Smart Enhancer - محسن Microsoft Forms الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.6
-// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة الاستجابات الجديدة، قوالب إعدادات، تدقيق وإدارة جماعية سريعة للأسئلة.
+// @version      1.3.9
+// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة الاستجابات الجديدة، بحث مباشر بالاسم المكتوب والمؤسسي، قوالب إعدادات، وتدقيق وإدارة جماعية سريعة للأسئلة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -32,11 +32,11 @@
 (() => {
   'use strict';
 
-  const FINAL_VERSION = '1.3.6';
+  const FINAL_VERSION = '1.3.9';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   /*
-   * Forms API session bridge — v1.3.6
+   * Forms API session bridge — v1.3.9
    *
    * Microsoft Forms يضيف لرابط PATCH الصحيح رؤوس جلسة لا يضيفها الطلب
    * الذي ننشئه نحن تلقائيًا، وأهمها RequestVerificationToken و UserSessionId.
@@ -571,7 +571,7 @@
       'm0hm3d85-forms-reviewed-wrap';
 
     /*
-     * v1.3.3 يعتمد على طلب GetRespCounts الذي يرسله Forms نفسه؛
+     * يعتمد على طلب GetRespCounts الذي يرسله Forms نفسه؛
      * لا يوجد فحص دوري إضافي من المحسن. الطلب اليدوي فقط عند الضغط على «فحص الآن».
      */
     const POLL_MS =
@@ -594,7 +594,27 @@
       routeQueued: false,
       activeReviewId: '',
       reviewSessions: new Map(),
-      undoTimer: 0
+      undoTimer: 0,
+
+      /*
+       * فهرس المستجيبين يبقى في الذاكرة فقط.
+       * لا نحفظ أسماء الطلاب أو البريد في localStorage/sessionStorage.
+       */
+      respondentFormId: '',
+      respondents: [],
+      respondentsReady: false,
+      respondentsCapturedAt: 0,
+
+      /*
+       * v1.3.9:
+       * اسم الطالب المكتوب داخل سؤال الاسم يُستخرج من answers
+       * الموجودة أصلًا في نفس طلب /responses.
+       * لا نحفظ الاسم أو البريد خارج الذاكرة.
+       */
+      manualNameQuestionId: '',
+      manualNameQuestionScore: 0,
+      manualNameQuestionConfidence: '',
+      manualNameDetectedAt: 0
     };
 
     function load() {
@@ -761,6 +781,23 @@
 #${REVIEW_WRAP_ID} .mnr-reviewed-btn:disabled{opacity:.55;cursor:not-allowed}
 #${REVIEW_WRAP_ID} .mnr-review-note{display:inline;color:#6B7280;font:500 10px "Segoe UI",Tahoma,Arial,sans-serif;line-height:1.5}
 #${REVIEW_WRAP_ID} .mnr-undo{border:0!important;background:transparent!important;color:#007874!important;text-decoration:underline;font:600 10px "Segoe UI",Tahoma,Arial,sans-serif!important;cursor:pointer;padding:4px!important;position:static!important}
+#${REVIEW_WRAP_ID} .mnr-respondent-search{flex:1 1 420px;min-width:min(100%,320px);display:flex;flex-direction:column;gap:5px}
+#${REVIEW_WRAP_ID} .mnr-search-box{display:flex;align-items:center;gap:6px;width:100%}
+#${REVIEW_WRAP_ID} .mnr-search-input{flex:1 1 auto;min-width:0;height:32px;box-sizing:border-box;border:1px solid #C9D8D7;border-radius:8px;background:#fff;color:#1F2937;padding:0 10px;font:500 11px "Segoe UI",Tahoma,Arial,sans-serif;outline:none;direction:rtl}
+#${REVIEW_WRAP_ID} .mnr-search-input:focus{border-color:#007874;box-shadow:0 0 0 2px rgba(0,120,116,.10)}
+#${REVIEW_WRAP_ID} .mnr-search-input:disabled{background:#F3F4F6;color:#9CA3AF;cursor:not-allowed}
+#${REVIEW_WRAP_ID} .mnr-search-clear{border:1px solid #C9D8D7!important;border-radius:8px!important;background:#fff!important;color:#4B5563!important;padding:6px 8px!important;font:700 11px "Segoe UI",Tahoma,Arial,sans-serif!important;cursor:pointer;position:static!important;white-space:nowrap}
+#${REVIEW_WRAP_ID} .mnr-search-clear:disabled{opacity:.45;cursor:not-allowed}
+#${REVIEW_WRAP_ID} .mnr-search-meta{font:500 9.5px/1.45 "Segoe UI",Tahoma,Arial,sans-serif;color:#6B7280;min-height:14px}
+#${REVIEW_WRAP_ID} .mnr-search-results{display:none;width:100%;box-sizing:border-box;border-top:1px solid #E2ECEB;padding-top:5px;gap:4px}
+#${REVIEW_WRAP_ID} .mnr-search-results[data-open="true"]{display:grid}
+#${REVIEW_WRAP_ID} .mnr-search-result{width:100%;box-sizing:border-box;border:1px solid #D9E7E6!important;border-radius:8px!important;background:#fff!important;color:#1F2937!important;padding:6px 8px!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;text-align:right!important;cursor:pointer!important;position:static!important;font-family:"Segoe UI",Tahoma,Arial,sans-serif!important}
+#${REVIEW_WRAP_ID} .mnr-search-result:hover,#${REVIEW_WRAP_ID} .mnr-search-result:focus{border-color:#007874!important;background:#F4FBFA!important}
+#${REVIEW_WRAP_ID} .mnr-search-result[data-current="true"]{border-color:#007874!important;background:#EEF9F8!important}
+#${REVIEW_WRAP_ID} .mnr-search-result-main{display:flex;flex-direction:column;gap:2px;min-width:0;overflow:hidden}
+#${REVIEW_WRAP_ID} .mnr-search-result-name{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#${REVIEW_WRAP_ID} .mnr-search-result-sub{font-size:9.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:right;unicode-bidi:plaintext}
+#${REVIEW_WRAP_ID} .mnr-search-result-id{font-size:10px;font-weight:700;color:#007874;white-space:nowrap}
       `;
 
       document.head?.appendChild(
@@ -849,6 +886,1469 @@
       );
     }
 
+    function normalizeRespondentSearch(
+      value
+    ) {
+      return westernDigits(
+        String(value || '')
+      )
+        .normalize('NFKC')
+        .toLowerCase()
+        .replace(
+          /[\u064B-\u065F\u0670\u06D6-\u06ED]/g,
+          ''
+        )
+        .replace(
+          /\u0640/g,
+          ''
+        )
+        .replace(
+          /[أإآٱ]/g,
+          'ا'
+        )
+        .replace(
+          /ى/g,
+          'ي'
+        )
+        .replace(
+          /ة/g,
+          'ه'
+        )
+        .replace(
+          /[^\p{L}\p{N}@._+\-#\s]/gu,
+          ' '
+        )
+        .replace(
+          /\s+/g,
+          ' '
+        )
+        .trim();
+    }
+
+    function responseListOffset(
+      rawUrl
+    ) {
+      try {
+        const url =
+          new URL(
+            String(rawUrl || ''),
+            location.href
+          );
+
+        const value =
+          Number(
+            url.searchParams.get(
+              '$skip'
+            ) || 0
+          );
+
+        return Number.isFinite(
+          value
+        )
+          ? Math.max(
+              0,
+              Math.floor(
+                value
+              )
+            )
+          : 0;
+      } catch {
+        return 0;
+      }
+    }
+
+    function isResponsesListUrl(
+      rawUrl
+    ) {
+      return (
+        /\/formapi\/api\//i.test(
+          String(rawUrl || '')
+        ) &&
+        /\/responses(?:\?|$)/i.test(
+          String(rawUrl || '')
+        )
+      );
+    }
+
+    function parseResponseAnswers(
+      rawAnswers
+    ) {
+      if (
+        Array.isArray(
+          rawAnswers
+        )
+      ) {
+        return rawAnswers;
+      }
+
+      if (
+        typeof rawAnswers !==
+        'string'
+      ) {
+        return [];
+      }
+
+      const source =
+        rawAnswers.trim();
+
+      if (!source) {
+        return [];
+      }
+
+      try {
+        const parsed =
+          JSON.parse(
+            source
+          );
+
+        if (
+          Array.isArray(
+            parsed
+          )
+        ) {
+          return parsed;
+        }
+
+        if (
+          parsed &&
+          typeof parsed ===
+            'object'
+        ) {
+          for (
+            const key of
+            [
+              'answers',
+              'Answers',
+              'responses',
+              'Responses',
+              'value',
+              'Value'
+            ]
+          ) {
+            if (
+              Array.isArray(
+                parsed[key]
+              )
+            ) {
+              return parsed[key];
+            }
+          }
+        }
+      } catch {}
+
+      return [];
+    }
+
+    function answerQuestionId(
+      answer
+    ) {
+      if (
+        !answer ||
+        typeof answer !==
+          'object'
+      ) {
+        return '';
+      }
+
+      return clean(
+        answer.questionId ??
+        answer.QuestionId ??
+        answer.questionID ??
+        answer.QuestionID ??
+        answer.qid ??
+        answer.Qid ??
+        answer.id ??
+        ''
+      );
+    }
+
+    function answerTextValue(
+      answer
+    ) {
+      if (
+        !answer ||
+        typeof answer !==
+          'object'
+      ) {
+        return '';
+      }
+
+      for (
+        const key of
+        [
+          'answer1',
+          'Answer1',
+          'answer',
+          'Answer',
+          'value',
+          'Value',
+          'text',
+          'Text',
+          'response',
+          'Response'
+        ]
+      ) {
+        const value =
+          answer[key];
+
+        if (
+          typeof value ===
+            'string'
+        ) {
+          return clean(
+            value
+          );
+        }
+
+        if (
+          typeof value ===
+            'number'
+        ) {
+          return String(
+            value
+          );
+        }
+      }
+
+      return '';
+    }
+
+    function looksStructuredAnswer(
+      value
+    ) {
+      if (
+        typeof value !==
+          'string'
+      ) {
+        return false;
+      }
+
+      const source =
+        value.trim();
+
+      if (
+        !source ||
+        !/^[\[{]/.test(
+          source
+        )
+      ) {
+        return false;
+      }
+
+      try {
+        const parsed =
+          JSON.parse(
+            source
+          );
+
+        return Boolean(
+          parsed &&
+          typeof parsed ===
+            'object'
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    function manualNameTitleExistsInReview() {
+      if (
+        !isReviewPage()
+      ) {
+        return false;
+      }
+
+      return [
+        ...document.querySelectorAll(
+          '[data-automation-id="questionTitle"]'
+        )
+      ].some(
+        el => {
+          const title =
+            clean(
+              el.innerText ||
+              el.textContent ||
+              ''
+            );
+
+          return /(?:اسمك|اكتب\s+اسمك|كتابة\s+اسمك|قم\s+بكتابة\s+اسمك|الاسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|الإسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|اسم\s*(?:الطالب|الطالبة|المتدرب|المتدربة|المستجيب|المستفيد|المستفيدة)|student\s*name|full\s*name|respondent\s*name|your\s*name)/i.test(
+            title
+          );
+        }
+      );
+    }
+
+    function normalizedUniqueKey(
+      value
+    ) {
+      return normalizeRespondentSearch(
+        value
+      );
+    }
+
+    function inferManualNameQuestion(
+      rows
+    ) {
+      if (
+        !Array.isArray(
+          rows
+        ) ||
+        rows.length < 2
+      ) {
+        return {
+          id: '',
+          score: 0,
+          confidence: ''
+        };
+      }
+
+      const groups =
+        new Map();
+
+      rows.forEach(
+        row => {
+          const answers =
+            Array.isArray(
+              row.answers
+            )
+              ? row.answers
+              : [];
+
+          answers.forEach(
+            (answer, position) => {
+              const id =
+                answerQuestionId(
+                  answer
+                );
+
+              const value =
+                answerTextValue(
+                  answer
+                );
+
+              if (
+                !id ||
+                !value
+              ) {
+                return;
+              }
+
+              if (
+                !groups.has(
+                  id
+                )
+              ) {
+                groups.set(
+                  id,
+                  {
+                    id,
+                    values: [],
+                    positions: []
+                  }
+                );
+              }
+
+              const group =
+                groups.get(
+                  id
+                );
+
+              group.values.push(
+                value
+              );
+
+              group.positions.push(
+                position
+              );
+            }
+          );
+        }
+      );
+
+      const totalRows =
+        rows.length;
+
+      const hasNameTitle =
+        manualNameTitleExistsInReview();
+
+      const candidates =
+        [];
+
+      groups.forEach(
+        group => {
+          const values =
+            group.values;
+
+          if (
+            !values.length
+          ) {
+            return;
+          }
+
+          const usable =
+            values.filter(
+              value =>
+                !looksStructuredAnswer(
+                  value
+                ) &&
+                value.length >=
+                  3 &&
+                value.length <=
+                  80
+            );
+
+          if (
+            !usable.length
+          ) {
+            return;
+          }
+
+          const coverage =
+            values.length /
+            totalRows;
+
+          const usableRatio =
+            usable.length /
+            values.length;
+
+          const unique =
+            new Set(
+              usable
+                .map(
+                  normalizedUniqueKey
+                )
+                .filter(
+                  Boolean
+                )
+            );
+
+          const uniqueRatio =
+            unique.size /
+            usable.length;
+
+          const nameShapeCount =
+            usable.filter(
+              value => {
+                const normalized =
+                  normalizeRespondentSearch(
+                    value
+                  );
+
+                const tokens =
+                  normalized
+                    .split(/\s+/)
+                    .filter(
+                      Boolean
+                    );
+
+                return (
+                  tokens.length >=
+                    2 &&
+                  tokens.length <=
+                    6 &&
+                  /[\p{L}]/u.test(
+                    value
+                  ) &&
+                  !/@/.test(
+                    value
+                  ) &&
+                  !/https?:\/\//i.test(
+                    value
+                  )
+                );
+              }
+            ).length;
+
+          const nameShapeRatio =
+            nameShapeCount /
+            usable.length;
+
+          const averageLength =
+            usable.reduce(
+              (sum, value) =>
+                sum +
+                value.length,
+              0
+            ) /
+            usable.length;
+
+          const averageTokens =
+            usable.reduce(
+              (sum, value) =>
+                sum +
+                normalizeRespondentSearch(
+                  value
+                )
+                  .split(/\s+/)
+                  .filter(
+                    Boolean
+                  ).length,
+              0
+            ) /
+            usable.length;
+
+          /*
+           * اسم الطالب اليدوي عادة:
+           * - موجود في معظم الاستجابات.
+           * - قيمة نصية قصيرة من 2 إلى 6 كلمات.
+           * - شديد التنوع بين الطلاب.
+           * - ليس JSON/مرفقًا ولا بريدًا.
+           *
+           * وجود سؤال عنوانه «اسمك/اسم الطالب» في Review يرفع الثقة
+           * لكنه لا يربط qid بشكل تخميني؛ الاختيار يبقى من خصائص العمود.
+           */
+          let score =
+            coverage * 2.0 +
+            usableRatio * 1.5 +
+            uniqueRatio * 3.0 +
+            nameShapeRatio * 3.5;
+
+          if (
+            averageLength >= 8 &&
+            averageLength <= 45
+          ) {
+            score += 0.8;
+          }
+
+          if (
+            averageTokens >= 2 &&
+            averageTokens <= 5
+          ) {
+            score += 0.8;
+          }
+
+          if (
+            uniqueRatio < 0.45
+          ) {
+            score -= 2.5;
+          }
+
+          if (
+            nameShapeRatio < 0.65
+          ) {
+            score -= 2.0;
+          }
+
+          if (
+            hasNameTitle
+          ) {
+            score += 0.5;
+          }
+
+          candidates.push({
+            ...group,
+            coverage,
+            usableRatio,
+            uniqueRatio,
+            nameShapeRatio,
+            averageLength,
+            averageTokens,
+            score
+          });
+        }
+      );
+
+      candidates.sort(
+        (a, b) =>
+          b.score -
+          a.score
+      );
+
+      const best =
+        candidates[0];
+
+      const second =
+        candidates[1];
+
+      if (
+        !best ||
+        best.score < 7.1 ||
+        best.coverage < 0.55 ||
+        best.uniqueRatio < 0.55 ||
+        best.nameShapeRatio < 0.70
+      ) {
+        return {
+          id: '',
+          score:
+            best?.score ||
+            0,
+          confidence: ''
+        };
+      }
+
+      const margin =
+        best.score -
+        (
+          second?.score ||
+          0
+        );
+
+      const confidence =
+        best.uniqueRatio >=
+          0.85 &&
+        best.nameShapeRatio >=
+          0.85 &&
+        margin >= 0.5
+          ? 'high'
+          : margin >= 0.25
+            ? 'medium'
+            : 'low';
+
+      if (
+        confidence === 'low'
+      ) {
+        return {
+          id: '',
+          score:
+            best.score,
+          confidence
+        };
+      }
+
+      return {
+        id:
+          best.id,
+        score:
+          best.score,
+        confidence
+      };
+    }
+
+    function answerForQuestion(
+      answers,
+      questionId
+    ) {
+      if (
+        !questionId ||
+        !Array.isArray(
+          answers
+        )
+      ) {
+        return '';
+      }
+
+      const match =
+        answers.find(
+          answer =>
+            answerQuestionId(
+              answer
+            ) ===
+            questionId
+        );
+
+      if (!match) {
+        return '';
+      }
+
+      const value =
+        answerTextValue(
+          match
+        );
+
+      if (
+        !value ||
+        looksStructuredAnswer(
+          value
+        )
+      ) {
+        return '';
+      }
+
+      return value;
+    }
+
+    function institutionalNameIsUsername(
+      row
+    ) {
+      const name =
+        clean(
+          row?.responderName ||
+          ''
+        );
+
+      const email =
+        clean(
+          row?.responder ||
+          ''
+        );
+
+      if (
+        !name ||
+        !email.includes('@')
+      ) {
+        return false;
+      }
+
+      const local =
+        email
+          .split('@')[0]
+          .trim();
+
+      if (!local) {
+        return false;
+      }
+
+      const compact =
+        value =>
+          normalizeRespondentSearch(
+            value
+          )
+            .replace(
+              /\s+/g,
+              ''
+            );
+
+      return (
+        compact(name) ===
+        compact(local)
+      );
+    }
+
+    function usableInstitutionalName(
+      row
+    ) {
+      const name =
+        clean(
+          row?.responderName ||
+          ''
+        );
+
+      if (!name) {
+        return '';
+      }
+
+      if (
+        institutionalNameIsUsername(
+          row
+        )
+      ) {
+        return '';
+      }
+
+      return name;
+    }
+
+    function respondentDisplayName(
+      row
+    ) {
+      return (
+        clean(
+          row?.manualName ||
+          ''
+        ) ||
+        usableInstitutionalName(
+          row
+        ) ||
+        clean(
+          row?.responderName ||
+          ''
+        ) ||
+        clean(
+          row?.responder ||
+          ''
+        ) ||
+        `استجابة #${row?.id || (row?.index ?? 0) + 1}`
+      );
+    }
+
+    function parseRespondentRows(
+      payload
+    ) {
+      const rows =
+        Array.isArray(
+          payload?.value
+        )
+          ? payload.value
+          : Array.isArray(
+              payload
+            )
+            ? payload
+            : [];
+
+      const parsedRows =
+        rows
+          .filter(
+            row =>
+              row &&
+              typeof row ===
+                'object' &&
+              (
+                row.id !==
+                  undefined ||
+                row.responderName !==
+                  undefined ||
+                row.responder !==
+                  undefined
+              )
+          )
+          .map(
+            row => ({
+              id:
+                row.id ??
+                row.responseId ??
+                '',
+              responderName:
+                clean(
+                  row.responderName ||
+                  ''
+                ),
+              responder:
+                clean(
+                  row.responder ||
+                  ''
+                ),
+              submitDate:
+                clean(
+                  row.submitDate ||
+                  ''
+                ),
+              answers:
+                parseResponseAnswers(
+                  row.answers
+                )
+            })
+          );
+
+      const inferred =
+        inferManualNameQuestion(
+          parsedRows
+        );
+
+      if (
+        inferred.id
+      ) {
+        state.manualNameQuestionId =
+          inferred.id;
+
+        state.manualNameQuestionScore =
+          inferred.score;
+
+        state.manualNameQuestionConfidence =
+          inferred.confidence;
+
+        state.manualNameDetectedAt =
+          Date.now();
+      } else if (
+        !state.manualNameQuestionId
+      ) {
+        state.manualNameQuestionScore =
+          inferred.score ||
+          0;
+
+        state.manualNameQuestionConfidence =
+          inferred.confidence ||
+          '';
+      }
+
+      return parsedRows.map(
+        row => ({
+          ...row,
+          manualName:
+            answerForQuestion(
+              row.answers,
+              state.manualNameQuestionId
+            )
+        })
+      );
+    }
+
+    function consumeObservedRespondents(
+      payload,
+      rawUrl
+    ) {
+      const rows =
+        parseRespondentRows(
+          payload
+        );
+
+      if (!rows.length) {
+        return;
+      }
+
+      const formId =
+        currentFormId();
+
+      if (!formId) {
+        return;
+      }
+
+      const offset =
+        responseListOffset(
+          rawUrl
+        );
+
+      if (
+        state.respondentFormId !==
+          formId ||
+        offset === 0
+      ) {
+        state.respondentFormId =
+          formId;
+
+        state.respondents =
+          [];
+      }
+
+      rows.forEach(
+        (row, localIndex) => {
+          const index =
+            offset +
+            localIndex;
+
+          state.respondents[
+            index
+          ] = {
+            ...row,
+            index
+          };
+        }
+      );
+
+      state.respondents =
+        state.respondents.filter(
+          Boolean
+        );
+
+      state.respondentsReady =
+        state.respondents.length >
+        0;
+
+      state.respondentsCapturedAt =
+        Date.now();
+
+      refreshRespondentSearchUI();
+    }
+
+    function currentReviewIndex() {
+      try {
+        const value =
+          Number(
+            new URL(
+              location.href
+            ).searchParams.get(
+              'ridx'
+            )
+          );
+
+        return Number.isFinite(
+          value
+        )
+          ? Math.max(
+              0,
+              Math.floor(
+                value
+              )
+            )
+          : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function respondentSearchRows(
+      query
+    ) {
+      const normalized =
+        normalizeRespondentSearch(
+          query
+        );
+
+      if (!normalized) {
+        return [];
+      }
+
+      const terms =
+        normalized
+          .split(/\s+/)
+          .filter(
+            Boolean
+          );
+
+      return state.respondents
+        .map(
+          row => {
+            const manual =
+              normalizeRespondentSearch(
+                row.manualName
+              );
+
+            const institutional =
+              normalizeRespondentSearch(
+                row.responderName
+              );
+
+            const email =
+              normalizeRespondentSearch(
+                row.responder
+              );
+
+            const id =
+              normalizeRespondentSearch(
+                row.id
+              );
+
+            const indexNumber =
+              normalizeRespondentSearch(
+                row.index + 1
+              );
+
+            const haystack =
+              `${manual} ${institutional} ${email} ${id} ${indexNumber}`;
+
+            const matches =
+              terms.every(
+                term =>
+                  haystack.includes(
+                    term
+                  )
+              );
+
+            if (!matches) {
+              return null;
+            }
+
+            let score = 0;
+
+            if (
+              id === normalized ||
+              indexNumber ===
+                normalized ||
+              `#${id}` ===
+                normalized
+            ) {
+              score += 500;
+            }
+
+            /*
+             * الاسم الذي كتبه الطالب بنفسه هو المصدر الأعلى أولوية.
+             */
+            if (
+              manual === normalized
+            ) {
+              score += 520;
+            } else if (
+              manual &&
+              manual.startsWith(
+                normalized
+              )
+            ) {
+              score += 430;
+            } else if (
+              manual &&
+              manual.includes(
+                normalized
+              )
+            ) {
+              score += 350;
+            }
+
+            if (
+              institutional ===
+              normalized
+            ) {
+              score += 300;
+            } else if (
+              institutional.startsWith(
+                normalized
+              )
+            ) {
+              score += 240;
+            } else if (
+              institutional.includes(
+                normalized
+              )
+            ) {
+              score += 180;
+            }
+
+            if (
+              email.startsWith(
+                normalized
+              )
+            ) {
+              score += 150;
+            } else if (
+              email.includes(
+                normalized
+              )
+            ) {
+              score += 110;
+            }
+
+            score +=
+              Math.max(
+                0,
+                30 -
+                row.index
+              ) /
+              1000;
+
+            return {
+              ...row,
+              score
+            };
+          }
+        )
+        .filter(
+          Boolean
+        )
+        .sort(
+          (a, b) =>
+            b.score -
+              a.score ||
+            a.index -
+              b.index
+        );
+    }
+
+    function goToRespondent(
+      row
+    ) {
+      if (
+        !row ||
+        !Number.isInteger(
+          row.index
+        ) ||
+        row.index < 0
+      ) {
+        return;
+      }
+
+      let url;
+
+      try {
+        url =
+          new URL(
+            location.href
+          );
+      } catch {
+        return;
+      }
+
+      const current =
+        currentReviewIndex();
+
+      if (
+        current ===
+        row.index
+      ) {
+        return;
+      }
+
+      /*
+       * الاختبار الميداني أثبت أن ridx يساوي index داخل قائمة responses.
+       * نستخدم انتقال URL مباشرًا لضمان أن React/Forms يحمّل الاستجابة
+       * الصحيحة بدون محاكاة ضغط «الشخص التالي» عدة مرات.
+       */
+      url.searchParams.set(
+        'analysis',
+        'true'
+      );
+
+      url.searchParams.set(
+        'topview',
+        'Grading_ReviewAnswers'
+      );
+
+      url.searchParams.set(
+        'ridx',
+        String(
+          row.index
+        )
+      );
+
+      location.assign(
+        url.href
+      );
+    }
+
+    function refreshRespondentSearchUI() {
+      const wrap =
+        document.getElementById(
+          REVIEW_WRAP_ID
+        );
+
+      if (!wrap) {
+        return;
+      }
+
+      const input =
+        wrap.querySelector(
+          '.mnr-search-input'
+        );
+
+      const clear =
+        wrap.querySelector(
+          '.mnr-search-clear'
+        );
+
+      const meta =
+        wrap.querySelector(
+          '.mnr-search-meta'
+        );
+
+      const results =
+        wrap.querySelector(
+          '.mnr-search-results'
+        );
+
+      if (
+        !input ||
+        !clear ||
+        !meta ||
+        !results
+      ) {
+        return;
+      }
+
+      const sameForm =
+        state.respondentFormId ===
+        currentFormId();
+
+      const ready =
+        sameForm &&
+        state.respondentsReady &&
+        state.respondents.length >
+          0;
+
+      input.disabled =
+        !ready;
+
+      clear.disabled =
+        !ready ||
+        !input.value;
+
+      if (!ready) {
+        meta.textContent =
+          'بانتظار قائمة المستجيبين من Forms… لا يرسل المحسن طلبًا إضافيًا.';
+
+        results.dataset.open =
+          'false';
+
+        results.replaceChildren();
+
+        return;
+      }
+
+      const manualCount =
+        state.respondents.filter(
+          row =>
+            clean(
+              row.manualName
+            )
+        ).length;
+
+      const institutionalCount =
+        state.respondents.filter(
+          row =>
+            usableInstitutionalName(
+              row
+            )
+        ).length;
+
+      const usernameOnlyCount =
+        state.respondents.filter(
+          row =>
+            institutionalNameIsUsername(
+              row
+            )
+        ).length;
+
+      if (!input.value.trim()) {
+        if (manualCount) {
+          const extra =
+            usernameOnlyCount
+              ? ` وتم تجاوز ${usernameOnlyCount} اسم مؤسسي كان مجرد اسم مستخدم.`
+              : '';
+
+          meta.textContent =
+            `${state.respondents.length} استجابة — البحث يعتمد أولًا على الاسم المكتوب في سؤال الاسم (${manualCount})، ثم الاسم المؤسسي والبريد.${extra}`;
+        } else if (
+          institutionalCount
+        ) {
+          meta.textContent =
+            `${state.respondents.length} استجابة متاحة للبحث بالاسم المؤسسي أو البريد أو الرقم.`;
+        } else {
+          meta.textContent =
+            `${state.respondents.length} استجابة متاحة. ابحث بالبريد أو رقم الاستجابة.`;
+        }
+
+        results.dataset.open =
+          'false';
+
+        results.replaceChildren();
+
+        return;
+      }
+
+      const matched =
+        respondentSearchRows(
+          input.value
+        );
+
+      const shown =
+        matched.slice(
+          0,
+          8
+        );
+
+      meta.textContent =
+        matched.length
+          ? `وجد ${matched.length} مطابق${matched.length === 1 ? '' : 'ات'}${matched.length > shown.length ? ` — عرض أول ${shown.length}` : ''}.`
+          : 'لا توجد استجابة مطابقة.';
+
+      results.replaceChildren();
+
+      const current =
+        currentReviewIndex();
+
+      shown.forEach(
+        row => {
+          const button =
+            document.createElement(
+              'button'
+            );
+
+          button.type =
+            'button';
+
+          button.className =
+            'mnr-search-result';
+
+          button.dataset.current =
+            current ===
+              row.index
+              ? 'true'
+              : 'false';
+
+          const main =
+            document.createElement(
+              'span'
+            );
+
+          main.className =
+            'mnr-search-result-main';
+
+          const name =
+            document.createElement(
+              'span'
+            );
+
+          name.className =
+            'mnr-search-result-name';
+
+          name.textContent =
+            respondentDisplayName(
+              row
+            );
+
+          const sub =
+            document.createElement(
+              'span'
+            );
+
+          sub.className =
+            'mnr-search-result-sub';
+
+          const institutional =
+            usableInstitutionalName(
+              row
+            );
+
+          const manual =
+            clean(
+              row.manualName
+            );
+
+          const parts =
+            [];
+
+          if (
+            manual &&
+            institutional &&
+            normalizeRespondentSearch(
+              manual
+            ) !==
+              normalizeRespondentSearch(
+                institutional
+              )
+          ) {
+            parts.push(
+              `اسم Microsoft: ${institutional}`
+            );
+          }
+
+          if (
+            row.responder
+          ) {
+            parts.push(
+              row.responder
+            );
+          } else if (
+            row.submitDate
+          ) {
+            parts.push(
+              row.submitDate
+            );
+          }
+
+          if (
+            !parts.length
+          ) {
+            parts.push(
+              'بدون بيانات إضافية'
+            );
+          }
+
+          sub.textContent =
+            parts.join(
+              ' — '
+            );
+
+          const id =
+            document.createElement(
+              'span'
+            );
+
+          id.className =
+            'mnr-search-result-id';
+
+          id.textContent =
+            current ===
+              row.index
+              ? `الحالي · #${row.id || row.index + 1}`
+              : `#${row.id || row.index + 1}`;
+
+          main.append(
+            name,
+            sub
+          );
+
+          button.append(
+            main,
+            id
+          );
+
+          button.addEventListener(
+            'click',
+            () =>
+              goToRespondent(
+                row
+              )
+          );
+
+          results.appendChild(
+            button
+          );
+        }
+      );
+
+      results.dataset.open =
+        shown.length
+          ? 'true'
+          : 'false';
+    }
+
     function installNativeCountTap() {
       const proto =
         window.XMLHttpRequest?.prototype;
@@ -885,11 +2385,20 @@
             this.__m0hm3d85CountTapUrl ||
             '';
 
-          if (
+          const observeCounts =
             /\/formapi\/api\/light\/GetRespCounts\(\)/i.test(
               url
             ) &&
-            !this.__m0hm3d85OwnCountRequest
+            !this.__m0hm3d85OwnCountRequest;
+
+          const observeRespondents =
+            isResponsesListUrl(
+              url
+            );
+
+          if (
+            observeCounts ||
+            observeRespondents
           ) {
             this.addEventListener(
               'loadend',
@@ -908,15 +2417,28 @@
                       '{}'
                     );
 
-                  const counts =
-                    parseCountsPayload(
-                      payload
-                    );
+                  if (
+                    observeCounts
+                  ) {
+                    const counts =
+                      parseCountsPayload(
+                        payload
+                      );
 
-                  consumeObservedCounts(
-                    counts,
-                    'native'
-                  );
+                    consumeObservedCounts(
+                      counts,
+                      'native'
+                    );
+                  }
+
+                  if (
+                    observeRespondents
+                  ) {
+                    consumeObservedRespondents(
+                      payload,
+                      url
+                    );
+                  }
                 } catch {}
               },
               {
@@ -2619,6 +4141,30 @@
             '';
         }
 
+        state.respondentFormId =
+          '';
+
+        state.respondents =
+          [];
+
+        state.respondentsReady =
+          false;
+
+        state.respondentsCapturedAt =
+          0;
+
+        state.manualNameQuestionId =
+          '';
+
+        state.manualNameQuestionScore =
+          0;
+
+        state.manualNameQuestionConfidence =
+          '';
+
+        state.manualNameDetectedAt =
+          0;
+
         return;
       }
 
@@ -2637,6 +4183,30 @@
         state.reviewSessions.delete(
           state.activeReviewId
         );
+
+        state.respondentFormId =
+          '';
+
+        state.respondents =
+          [];
+
+        state.respondentsReady =
+          false;
+
+        state.respondentsCapturedAt =
+          0;
+
+        state.manualNameQuestionId =
+          '';
+
+        state.manualNameQuestionScore =
+          0;
+
+        state.manualNameQuestionConfidence =
+          '';
+
+        state.manualNameDetectedAt =
+          0;
       }
 
       state.activeReviewId =
@@ -2685,6 +4255,22 @@
             <button type="button" class="mnr-reviewed-btn">✓ تمت مراجعة الاستجابات</button>
             <span class="mnr-review-note"></span>
           </div>
+
+          <div class="mnr-respondent-search">
+            <div class="mnr-search-box">
+              <input
+                type="search"
+                class="mnr-search-input"
+                placeholder="🔎 ابحث بالاسم المكتوب أو المؤسسي أو البريد أو الرقم…"
+                autocomplete="off"
+                spellcheck="false"
+                disabled
+              >
+              <button type="button" class="mnr-search-clear" disabled>مسح</button>
+            </div>
+            <div class="mnr-search-meta">بانتظار قائمة المستجيبين من Forms…</div>
+            <div class="mnr-search-results" data-open="false"></div>
+          </div>
         `;
 
         if (
@@ -2726,6 +4312,72 @@
                 formId
               )
           );
+
+        const searchInput =
+          wrap.querySelector(
+            '.mnr-search-input'
+          );
+
+        const searchClear =
+          wrap.querySelector(
+            '.mnr-search-clear'
+          );
+
+        searchInput?.addEventListener(
+          'input',
+          () =>
+            refreshRespondentSearchUI()
+        );
+
+        searchInput?.addEventListener(
+          'keydown',
+          event => {
+            if (
+              event.key ===
+              'Enter'
+            ) {
+              const first =
+                respondentSearchRows(
+                  searchInput.value
+                )[0];
+
+              if (first) {
+                event.preventDefault();
+                goToRespondent(
+                  first
+                );
+              }
+            }
+
+            if (
+              event.key ===
+              'Escape'
+            ) {
+              searchInput.value =
+                '';
+
+              refreshRespondentSearchUI();
+            }
+          }
+        );
+
+        searchClear?.addEventListener(
+          'click',
+          () => {
+            if (!searchInput) {
+              return;
+            }
+
+            searchInput.value =
+              '';
+
+            searchInput.focus();
+
+            refreshRespondentSearchUI();
+          }
+        );
+
+        refreshRespondentSearchUI();
       }
 
       const button =
@@ -2798,6 +4450,8 @@
             nextNote;
         }
       }
+
+      refreshRespondentSearchUI();
     }
 
     function routeBoot() {
@@ -3008,6 +4662,26 @@
               Object.keys(
                 state.records
               ).length,
+            respondentsReady:
+              state.respondentsReady,
+            respondentCount:
+              state.respondents.length,
+            respondentFormMatches:
+              state.respondentFormId ===
+              currentFormId(),
+            manualNameCount:
+              state.respondents.filter(
+                row =>
+                  clean(
+                    row.manualName
+                  )
+              ).length,
+            manualNameQuestionDetected:
+              Boolean(
+                state.manualNameQuestionId
+              ),
+            manualNameConfidence:
+              state.manualNameQuestionConfidence,
             summary:
               summary()
           })
@@ -3069,6 +4743,7 @@
       skippedDuplicates: 0,
       warnings: [],
       autoIndexStarted: false,
+      templatesCollapsedForEntry: false,
       status: ''
     };
 
@@ -3213,6 +4888,107 @@
       ].reduce((n, re) => n + (re.test(text) ? 1 : 0), 0);
     }
 
+    function nativeTemplateToggleState() {
+      const candidates = [
+        ...document.querySelectorAll(
+          'button,[role="button"]'
+        )
+      ];
+
+      for (const el of candidates) {
+        if (el.closest?.(`#${HOST_ID}`)) {
+          continue;
+        }
+
+        const text =
+          clean(
+            `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
+          );
+
+        if (
+          /(?:^|\s)(?:إخفاء القوالب|Hide templates)(?:\s|$)/i.test(
+            text
+          )
+        ) {
+          return {
+            button: el,
+            expanded: true,
+            text
+          };
+        }
+
+        if (
+          /(?:^|\s)(?:إظهار القوالب|عرض القوالب|Show templates)(?:\s|$)/i.test(
+            text
+          )
+        ) {
+          return {
+            button: el,
+            expanded: false,
+            text
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function ensureTemplatesCollapsedForEntry() {
+      const toggle =
+        nativeTemplateToggleState();
+
+      if (!toggle) {
+        return {
+          found: false,
+          collapsed: false,
+          clicked: false
+        };
+      }
+
+      if (
+        !toggle.expanded
+      ) {
+        state.templatesCollapsedForEntry =
+          true;
+
+        return {
+          found: true,
+          collapsed: true,
+          clicked: false
+        };
+      }
+
+      /*
+       * نطوي القوالب تلقائيًا مرة واحدة عند كل دخول لصفحة
+       * forms.cloud.microsoft/Pages/DesignPageV2.aspx?origin=shell
+       *
+       * بعد ذلك يبقى زر Forms الأصلي متاحًا للمستخدم إذا أراد
+       * فتح القوالب يدويًا أثناء نفس الجلسة.
+       */
+      if (
+        !state.templatesCollapsedForEntry
+      ) {
+        state.templatesCollapsedForEntry =
+          true;
+
+        try {
+          toggle.button.click();
+
+          return {
+            found: true,
+            collapsed: true,
+            clicked: true
+          };
+        } catch {}
+      }
+
+      return {
+        found: true,
+        collapsed: false,
+        clicked: false
+      };
+    }
+
     function restoreTemplateHides() {
       document
         .querySelectorAll('[data-m0hm3d85-template-discovery-hidden]')
@@ -3258,6 +5034,21 @@
 
     function hideTemplateDiscovery() {
       restoreTemplateHides();
+
+      const nativeCollapse =
+        ensureTemplatesCollapsedForEntry();
+
+      /*
+       * إذا وجدنا زر Forms الأصلي نستخدمه بدل إخفاء العناصر يدويًا.
+       * هذا يحافظ على تخطيط الصفحة وسلوك React الأصلي.
+       */
+      if (
+        nativeCollapse.found
+      ) {
+        return nativeCollapse.clicked
+          ? 1
+          : 0;
+      }
 
       const headings = [
         ...document.querySelectorAll(
@@ -4257,6 +6048,7 @@
         state.mounted = false;
         state.collapsed = true;
         state.autoIndexStarted = false;
+        state.templatesCollapsedForEntry = false;
 
         /*
          * لا نمسح الفهرس الناجح عند كل دخول. هذا هو التغيير الأساسي
@@ -4456,7 +6248,11 @@
 
           render();
         },
-        hideTemplates: hideTemplateDiscovery
+        hideTemplates: hideTemplateDiscovery,
+        collapseTemplates: () => {
+          state.templatesCollapsedForEntry = false;
+          return hideTemplateDiscovery();
+        }
       };
 
       if (autoIndex && !state.autoIndexStarted) {
@@ -11761,7 +13557,7 @@
     );
 
     console.log(
-      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + Review معزول عن محرر الأسئلة وبدون Mutation loop + أدوات Forms API السريعة.'
+      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
     );
   }
 
