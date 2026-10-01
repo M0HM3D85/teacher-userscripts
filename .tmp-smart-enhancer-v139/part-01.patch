@@ -1,0 +1,330 @@
++      const source =
++        value.trim();
++
++      if (
++        !source ||
++        !/^[\[{]/.test(
++          source
++        )
++      ) {
++        return false;
++      }
++
++      try {
++        const parsed =
++          JSON.parse(
++            source
++          );
++
++        return Boolean(
++          parsed &&
++          typeof parsed ===
++            'object'
++        );
++      } catch {
++        return false;
++      }
++    }
++
++    function manualNameTitleExistsInReview() {
++      if (
++        !isReviewPage()
++      ) {
++        return false;
++      }
++
++      return [
++        ...document.querySelectorAll(
++          '[data-automation-id="questionTitle"]'
++        )
++      ].some(
++        el => {
++          const title =
++            clean(
++              el.innerText ||
++              el.textContent ||
++              ''
++            );
++
++          return /(?:اسمك|اكتب\s+اسمك|كتابة\s+اسمك|قم\s+بكتابة\s+اسمك|الاسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|الإسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|اسم\s*(?:الطالب|الطالبة|المتدرب|المتدربة|المستجيب|المستفيد|المستفيدة)|student\s*name|full\s*name|respondent\s*name|your\s*name)/i.test(
++            title
++          );
++        }
++      );
++    }
++
++    function normalizedUniqueKey(
++      value
++    ) {
++      return normalizeRespondentSearch(
++        value
++      );
++    }
++
++    function inferManualNameQuestion(
++      rows
++    ) {
++      if (
++        !Array.isArray(
++          rows
++        ) ||
++        rows.length < 2
++      ) {
++        return {
++          id: '',
++          score: 0,
++          confidence: ''
++        };
++      }
++
++      const groups =
++        new Map();
++
++      rows.forEach(
++        row => {
++          const answers =
++            Array.isArray(
++              row.answers
++            )
++              ? row.answers
++              : [];
++
++          answers.forEach(
++            (answer, position) => {
++              const id =
++                answerQuestionId(
++                  answer
++                );
++
++              const value =
++                answerTextValue(
++                  answer
++                );
++
++              if (
++                !id ||
++                !value
++              ) {
++                return;
++              }
++
++              if (
++                !groups.has(
++                  id
++                )
++              ) {
++                groups.set(
++                  id,
++                  {
++                    id,
++                    values: [],
++                    positions: []
++                  }
++                );
++              }
++
++              const group =
++                groups.get(
++                  id
++                );
++
++              group.values.push(
++                value
++              );
++
++              group.positions.push(
++                position
++              );
++            }
++          );
++        }
++      );
++
++      const totalRows =
++        rows.length;
++
++      const hasNameTitle =
++        manualNameTitleExistsInReview();
++
++      const candidates =
++        [];
++
++      groups.forEach(
++        group => {
++          const values =
++            group.values;
++
++          if (
++            !values.length
++          ) {
++            return;
++          }
++
++          const usable =
++            values.filter(
++              value =>
++                !looksStructuredAnswer(
++                  value
++                ) &&
++                value.length >=
++                  3 &&
++                value.length <=
++                  80
++            );
++
++          if (
++            !usable.length
++          ) {
++            return;
++          }
++
++          const coverage =
++            values.length /
++            totalRows;
++
++          const usableRatio =
++            usable.length /
++            values.length;
++
++          const unique =
++            new Set(
++              usable
++                .map(
++                  normalizedUniqueKey
++                )
++                .filter(
++                  Boolean
++                )
++            );
++
++          const uniqueRatio =
++            unique.size /
++            usable.length;
++
++          const nameShapeCount =
++            usable.filter(
++              value => {
++                const normalized =
++                  normalizeRespondentSearch(
++                    value
++                  );
++
++                const tokens =
++                  normalized
++                    .split(/\s+/)
++                    .filter(
++                      Boolean
++                    );
++
++                return (
++                  tokens.length >=
++                    2 &&
++                  tokens.length <=
++                    6 &&
++                  /[\p{L}]/u.test(
++                    value
++                  ) &&
++                  !/@/.test(
++                    value
++                  ) &&
++                  !/https?:\/\//i.test(
++                    value
++                  )
++                );
++              }
++            ).length;
++
++          const nameShapeRatio =
++            nameShapeCount /
++            usable.length;
++
++          const averageLength =
++            usable.reduce(
++              (sum, value) =>
++                sum +
++                value.length,
++              0
++            ) /
++            usable.length;
++
++          const averageTokens =
++            usable.reduce(
++              (sum, value) =>
++                sum +
++                normalizeRespondentSearch(
++                  value
++                )
++                  .split(/\s+/)
++                  .filter(
++                    Boolean
++                  ).length,
++              0
++            ) /
++            usable.length;
++
++          /*
++           * اسم الطالب اليدوي عادة:
++           * - موجود في معظم الاستجابات.
++           * - قيمة نصية قصيرة من 2 إلى 6 كلمات.
++           * - شديد التنوع بين الطلاب.
++           * - ليس JSON/مرفقًا ولا بريدًا.
++           *
++           * وجود سؤال عنوانه «اسمك/اسم الطالب» في Review يرفع الثقة
++           * لكنه لا يربط qid بشكل تخميني؛ الاختيار يبقى من خصائص العمود.
++           */
++          let score =
++            coverage * 2.0 +
++            usableRatio * 1.5 +
++            uniqueRatio * 3.0 +
++            nameShapeRatio * 3.5;
++
++          if (
++            averageLength >= 8 &&
++            averageLength <= 45
++          ) {
++            score += 0.8;
++          }
++
++          if (
++            averageTokens >= 2 &&
++            averageTokens <= 5
++          ) {
++            score += 0.8;
++          }
++
++          if (
++            uniqueRatio < 0.45
++          ) {
++            score -= 2.5;
++          }
++
++          if (
++            nameShapeRatio < 0.65
++          ) {
++            score -= 2.0;
++          }
++
++          if (
++            hasNameTitle
++          ) {
++            score += 0.5;
++          }
++
++          candidates.push({
++            ...group,
++            coverage,
++            usableRatio,
++            uniqueRatio,
++            nameShapeRatio,
++            averageLength,
++            averageTokens,
++            score
++          });
++        }
++      );
++
++      candidates.sort(
++        (a, b) =>
++          b.score -
++          a.score
++      );
