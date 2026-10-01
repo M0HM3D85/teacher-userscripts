@@ -1,0 +1,330 @@
+         state.reviewSessions.delete(
+           state.activeReviewId
+         );
++
++        state.respondentFormId =
++          '';
++
++        state.respondents =
++          [];
++
++        state.respondentsReady =
++          false;
++
++        state.respondentsCapturedAt =
++          0;
++
++        state.manualNameQuestionId =
++          '';
++
++        state.manualNameQuestionScore =
++          0;
++
++        state.manualNameQuestionConfidence =
++          '';
++
++        state.manualNameDetectedAt =
++          0;
+       }
+ 
+       state.activeReviewId =
+@@ -2685,6 +4255,22 @@
+             <button type="button" class="mnr-reviewed-btn">✓ تمت مراجعة الاستجابات</button>
+             <span class="mnr-review-note"></span>
+           </div>
++
++          <div class="mnr-respondent-search">
++            <div class="mnr-search-box">
++              <input
++                type="search"
++                class="mnr-search-input"
++                placeholder="🔎 ابحث بالاسم المكتوب أو المؤسسي أو البريد أو الرقم…"
++                autocomplete="off"
++                spellcheck="false"
++                disabled
++              >
++              <button type="button" class="mnr-search-clear" disabled>مسح</button>
++            </div>
++            <div class="mnr-search-meta">بانتظار قائمة المستجيبين من Forms…</div>
++            <div class="mnr-search-results" data-open="false"></div>
++          </div>
+         `;
+ 
+         if (
+@@ -2726,6 +4312,72 @@
+                 formId
+               )
+           );
++
++        const searchInput =
++          wrap.querySelector(
++            '.mnr-search-input'
++          );
++
++        const searchClear =
++          wrap.querySelector(
++            '.mnr-search-clear'
++          );
++
++        searchInput?.addEventListener(
++          'input',
++          () =>
++            refreshRespondentSearchUI()
++        );
++
++        searchInput?.addEventListener(
++          'keydown',
++          event => {
++            if (
++              event.key ===
++              'Enter'
++            ) {
++              const first =
++                respondentSearchRows(
++                  searchInput.value
++                )[0];
++
++              if (first) {
++                event.preventDefault();
++                goToRespondent(
++                  first
++                );
++              }
++            }
++
++            if (
++              event.key ===
++              'Escape'
++            ) {
++              searchInput.value =
++                '';
++
++              refreshRespondentSearchUI();
++            }
++          }
++        );
++
++        searchClear?.addEventListener(
++          'click',
++          () => {
++            if (!searchInput) {
++              return;
++            }
++
++            searchInput.value =
++              '';
++
++            searchInput.focus();
++
++            refreshRespondentSearchUI();
++          }
++        );
++
++        refreshRespondentSearchUI();
+       }
+ 
+       const button =
+@@ -2798,6 +4450,8 @@
+             nextNote;
+         }
+       }
++
++      refreshRespondentSearchUI();
+     }
+ 
+     function routeBoot() {
+@@ -3008,6 +4662,26 @@
+               Object.keys(
+                 state.records
+               ).length,
++            respondentsReady:
++              state.respondentsReady,
++            respondentCount:
++              state.respondents.length,
++            respondentFormMatches:
++              state.respondentFormId ===
++              currentFormId(),
++            manualNameCount:
++              state.respondents.filter(
++                row =>
++                  clean(
++                    row.manualName
++                  )
++              ).length,
++            manualNameQuestionDetected:
++              Boolean(
++                state.manualNameQuestionId
++              ),
++            manualNameConfidence:
++              state.manualNameQuestionConfidence,
+             summary:
+               summary()
+           })
+@@ -3069,6 +4743,7 @@
+       skippedDuplicates: 0,
+       warnings: [],
+       autoIndexStarted: false,
++      templatesCollapsedForEntry: false,
+       status: ''
+     };
+ 
+@@ -3213,6 +4888,107 @@
+       ].reduce((n, re) => n + (re.test(text) ? 1 : 0), 0);
+     }
+ 
++    function nativeTemplateToggleState() {
++      const candidates = [
++        ...document.querySelectorAll(
++          'button,[role="button"]'
++        )
++      ];
++
++      for (const el of candidates) {
++        if (el.closest?.(`#${HOST_ID}`)) {
++          continue;
++        }
++
++        const text =
++          clean(
++            `${el.getAttribute?.('aria-label') || ''} ${el.innerText || el.textContent || ''}`
++          );
++
++        if (
++          /(?:^|\s)(?:إخفاء القوالب|Hide templates)(?:\s|$)/i.test(
++            text
++          )
++        ) {
++          return {
++            button: el,
++            expanded: true,
++            text
++          };
++        }
++
++        if (
++          /(?:^|\s)(?:إظهار القوالب|عرض القوالب|Show templates)(?:\s|$)/i.test(
++            text
++          )
++        ) {
++          return {
++            button: el,
++            expanded: false,
++            text
++          };
++        }
++      }
++
++      return null;
++    }
++
++    function ensureTemplatesCollapsedForEntry() {
++      const toggle =
++        nativeTemplateToggleState();
++
++      if (!toggle) {
++        return {
++          found: false,
++          collapsed: false,
++          clicked: false
++        };
++      }
++
++      if (
++        !toggle.expanded
++      ) {
++        state.templatesCollapsedForEntry =
++          true;
++
++        return {
++          found: true,
++          collapsed: true,
++          clicked: false
++        };
++      }
++
++      /*
++       * نطوي القوالب تلقائيًا مرة واحدة عند كل دخول لصفحة
++       * forms.cloud.microsoft/Pages/DesignPageV2.aspx?origin=shell
++       *
++       * بعد ذلك يبقى زر Forms الأصلي متاحًا للمستخدم إذا أراد
++       * فتح القوالب يدويًا أثناء نفس الجلسة.
++       */
++      if (
++        !state.templatesCollapsedForEntry
++      ) {
++        state.templatesCollapsedForEntry =
++          true;
++
++        try {
++          toggle.button.click();
++
++          return {
++            found: true,
++            collapsed: true,
++            clicked: true
++          };
++        } catch {}
++      }
++
++      return {
++        found: true,
++        collapsed: false,
++        clicked: false
++      };
++    }
++
+     function restoreTemplateHides() {
+       document
+         .querySelectorAll('[data-m0hm3d85-template-discovery-hidden]')
+@@ -3259,6 +5035,21 @@
+     function hideTemplateDiscovery() {
+       restoreTemplateHides();
+ 
++      const nativeCollapse =
++        ensureTemplatesCollapsedForEntry();
++
++      /*
++       * إذا وجدنا زر Forms الأصلي نستخدمه بدل إخفاء العناصر يدويًا.
++       * هذا يحافظ على تخطيط الصفحة وسلوك React الأصلي.
++       */
++      if (
++        nativeCollapse.found
++      ) {
++        return nativeCollapse.clicked
++          ? 1
++          : 0;
++      }
++
+       const headings = [
+         ...document.querySelectorAll(
+           'h1,h2,h3,h4,h5,h6,[role="heading"],div,span'
+@@ -4257,6 +6048,7 @@
+         state.mounted = false;
+         state.collapsed = true;
+         state.autoIndexStarted = false;
++        state.templatesCollapsedForEntry = false;
+ 
+         /*
+          * لا نمسح الفهرس الناجح عند كل دخول. هذا هو التغيير الأساسي
+@@ -4456,7 +6248,11 @@
+ 
+           render();
+         },
+-        hideTemplates: hideTemplateDiscovery
++        hideTemplates: hideTemplateDiscovery,
++        collapseTemplates: () => {
++          state.templatesCollapsedForEntry = false;
++          return hideTemplateDiscovery();
++        }
+       };
+ 
+       if (autoIndex && !state.autoIndexStarted) {
+@@ -11761,7 +13557,7 @@
+     );
+ 
+     console.log(
+-      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + Review معزول عن محرر الأسئلة وبدون Mutation loop + أدوات Forms API السريعة.'
++      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
+     );
+   }
+ 
