@@ -328,4 +328,3 @@
 +        offset === 0
 +      ) {
 +        state.respondentFormId =
-+          formId;
