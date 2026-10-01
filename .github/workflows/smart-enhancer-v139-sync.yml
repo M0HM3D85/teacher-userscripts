@@ -21,7 +21,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .tmp-smart-enhancer-v139/part-*.patch > /tmp/smart-enhancer-v139.patch
+          python - <<'PY'
+          from pathlib import Path
+          target = Path('/tmp/smart-enhancer-v139.patch')
+          parts = sorted(Path('.tmp-smart-enhancer-v139').glob('part-*.patch'))
+          if len(parts) != 6:
+              raise SystemExit(f'Expected 6 patch parts, found {len(parts)}')
+          with target.open('wb') as out:
+              for part in parts:
+                  data = part.read_bytes()
+                  out.write(data)
+                  if not data.endswith(b'\n'):
+                      out.write(b'\n')
+          PY
+          echo "503dba9c393274880a0584f7e0aadfedc0a7565c732ca87d30eec56cabc518a6  /tmp/smart-enhancer-v139.patch" | sha256sum -c -
           git apply --check /tmp/smart-enhancer-v139.patch
           git apply /tmp/smart-enhancer-v139.patch
           python .tmp-smart-enhancer-v139/sync_docs.py
