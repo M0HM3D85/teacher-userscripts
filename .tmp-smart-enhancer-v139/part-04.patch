@@ -1,0 +1,330 @@
++
++      clear.disabled =
++        !ready ||
++        !input.value;
++
++      if (!ready) {
++        meta.textContent =
++          'بانتظار قائمة المستجيبين من Forms… لا يرسل المحسن طلبًا إضافيًا.';
++
++        results.dataset.open =
++          'false';
++
++        results.replaceChildren();
++
++        return;
++      }
++
++      const manualCount =
++        state.respondents.filter(
++          row =>
++            clean(
++              row.manualName
++            )
++        ).length;
++
++      const institutionalCount =
++        state.respondents.filter(
++          row =>
++            usableInstitutionalName(
++              row
++            )
++        ).length;
++
++      const usernameOnlyCount =
++        state.respondents.filter(
++          row =>
++            institutionalNameIsUsername(
++              row
++            )
++        ).length;
++
++      if (!input.value.trim()) {
++        if (manualCount) {
++          const extra =
++            usernameOnlyCount
++              ? ` وتم تجاوز ${usernameOnlyCount} اسم مؤسسي كان مجرد اسم مستخدم.`
++              : '';
++
++          meta.textContent =
++            `${state.respondents.length} استجابة — البحث يعتمد أولًا على الاسم المكتوب في سؤال الاسم (${manualCount})، ثم الاسم المؤسسي والبريد.${extra}`;
++        } else if (
++          institutionalCount
++        ) {
++          meta.textContent =
++            `${state.respondents.length} استجابة متاحة للبحث بالاسم المؤسسي أو البريد أو الرقم.`;
++        } else {
++          meta.textContent =
++            `${state.respondents.length} استجابة متاحة. ابحث بالبريد أو رقم الاستجابة.`;
++        }
++
++        results.dataset.open =
++          'false';
++
++        results.replaceChildren();
++
++        return;
++      }
++
++      const matched =
++        respondentSearchRows(
++          input.value
++        );
++
++      const shown =
++        matched.slice(
++          0,
++          8
++        );
++
++      meta.textContent =
++        matched.length
++          ? `وجد ${matched.length} مطابق${matched.length === 1 ? '' : 'ات'}${matched.length > shown.length ? ` — عرض أول ${shown.length}` : ''}.`
++          : 'لا توجد استجابة مطابقة.';
++
++      results.replaceChildren();
++
++      const current =
++        currentReviewIndex();
++
++      shown.forEach(
++        row => {
++          const button =
++            document.createElement(
++              'button'
++            );
++
++          button.type =
++            'button';
++
++          button.className =
++            'mnr-search-result';
++
++          button.dataset.current =
++            current ===
++              row.index
++              ? 'true'
++              : 'false';
++
++          const main =
++            document.createElement(
++              'span'
++            );
++
++          main.className =
++            'mnr-search-result-main';
++
++          const name =
++            document.createElement(
++              'span'
++            );
++
++          name.className =
++            'mnr-search-result-name';
++
++          name.textContent =
++            respondentDisplayName(
++              row
++            );
++
++          const sub =
++            document.createElement(
++              'span'
++            );
++
++          sub.className =
++            'mnr-search-result-sub';
++
++          const institutional =
++            usableInstitutionalName(
++              row
++            );
++
++          const manual =
++            clean(
++              row.manualName
++            );
++
++          const parts =
++            [];
++
++          if (
++            manual &&
++            institutional &&
++            normalizeRespondentSearch(
++              manual
++            ) !==
++              normalizeRespondentSearch(
++                institutional
++              )
++          ) {
++            parts.push(
++              `اسم Microsoft: ${institutional}`
++            );
++          }
++
++          if (
++            row.responder
++          ) {
++            parts.push(
++              row.responder
++            );
++          } else if (
++            row.submitDate
++          ) {
++            parts.push(
++              row.submitDate
++            );
++          }
++
++          if (
++            !parts.length
++          ) {
++            parts.push(
++              'بدون بيانات إضافية'
++            );
++          }
++
++          sub.textContent =
++            parts.join(
++              ' — '
++            );
++
++          const id =
++            document.createElement(
++              'span'
++            );
++
++          id.className =
++            'mnr-search-result-id';
++
++          id.textContent =
++            current ===
++              row.index
++              ? `الحالي · #${row.id || row.index + 1}`
++              : `#${row.id || row.index + 1}`;
++
++          main.append(
++            name,
++            sub
++          );
++
++          button.append(
++            main,
++            id
++          );
++
++          button.addEventListener(
++            'click',
++            () =>
++              goToRespondent(
++                row
++              )
++          );
++
++          results.appendChild(
++            button
++          );
++        }
++      );
++
++      results.dataset.open =
++        shown.length
++          ? 'true'
++          : 'false';
++    }
++
+     function installNativeCountTap() {
+       const proto =
+         window.XMLHttpRequest?.prototype;
+@@ -885,11 +2385,20 @@
+             this.__m0hm3d85CountTapUrl ||
+             '';
+ 
+-          if (
++          const observeCounts =
+             /\/formapi\/api\/light\/GetRespCounts\(\)/i.test(
+               url
+             ) &&
+-            !this.__m0hm3d85OwnCountRequest
++            !this.__m0hm3d85OwnCountRequest;
++
++          const observeRespondents =
++            isResponsesListUrl(
++              url
++            );
++
++          if (
++            observeCounts ||
++            observeRespondents
+           ) {
+             this.addEventListener(
+               'loadend',
+@@ -908,15 +2417,28 @@
+                       '{}'
+                     );
+ 
+-                  const counts =
+-                    parseCountsPayload(
+-                      payload
++                  if (
++                    observeCounts
++                  ) {
++                    const counts =
++                      parseCountsPayload(
++                        payload
++                      );
++
++                    consumeObservedCounts(
++                      counts,
++                      'native'
+                     );
++                  }
+ 
+-                  consumeObservedCounts(
+-                    counts,
+-                    'native'
+-                  );
++                  if (
++                    observeRespondents
++                  ) {
++                    consumeObservedRespondents(
++                      payload,
++                      url
++                    );
++                  }
+                 } catch {}
+               },
+               {
+@@ -2619,6 +4141,30 @@
+             '';
+         }
+ 
++        state.respondentFormId =
++          '';
++
++        state.respondents =
++          [];
++
++        state.respondentsReady =
++          false;
++
++        state.respondentsCapturedAt =
++          0;
++
++        state.manualNameQuestionId =
++          '';
++
++        state.manualNameQuestionScore =
++          0;
++
++        state.manualNameQuestionConfidence =
++          '';
++
++        state.manualNameDetectedAt =
++          0;
++
+         return;
+       }
+ 
+@@ -2637,6 +4183,30 @@
