@@ -1,0 +1,331 @@
++
++      const best =
++        candidates[0];
++
++      const second =
++        candidates[1];
++
++      if (
++        !best ||
++        best.score < 7.1 ||
++        best.coverage < 0.55 ||
++        best.uniqueRatio < 0.55 ||
++        best.nameShapeRatio < 0.70
++      ) {
++        return {
++          id: '',
++          score:
++            best?.score ||
++            0,
++          confidence: ''
++        };
++      }
++
++      const margin =
++        best.score -
++        (
++          second?.score ||
++          0
++        );
++
++      const confidence =
++        best.uniqueRatio >=
++          0.85 &&
++        best.nameShapeRatio >=
++          0.85 &&
++        margin >= 0.5
++          ? 'high'
++          : margin >= 0.25
++            ? 'medium'
++            : 'low';
++
++      if (
++        confidence === 'low'
++      ) {
++        return {
++          id: '',
++          score:
++            best.score,
++          confidence
++        };
++      }
++
++      return {
++        id:
++          best.id,
++        score:
++          best.score,
++        confidence
++      };
++    }
++
++    function answerForQuestion(
++      answers,
++      questionId
++    ) {
++      if (
++        !questionId ||
++        !Array.isArray(
++          answers
++        )
++      ) {
++        return '';
++      }
++
++      const match =
++        answers.find(
++          answer =>
++            answerQuestionId(
++              answer
++            ) ===
++            questionId
++        );
++
++      if (!match) {
++        return '';
++      }
++
++      const value =
++        answerTextValue(
++          match
++        );
++
++      if (
++        !value ||
++        looksStructuredAnswer(
++          value
++        )
++      ) {
++        return '';
++      }
++
++      return value;
++    }
++
++    function institutionalNameIsUsername(
++      row
++    ) {
++      const name =
++        clean(
++          row?.responderName ||
++          ''
++        );
++
++      const email =
++        clean(
++          row?.responder ||
++          ''
++        );
++
++      if (
++        !name ||
++        !email.includes('@')
++      ) {
++        return false;
++      }
++
++      const local =
++        email
++          .split('@')[0]
++          .trim();
++
++      if (!local) {
++        return false;
++      }
++
++      const compact =
++        value =>
++          normalizeRespondentSearch(
++            value
++          )
++            .replace(
++              /\s+/g,
++              ''
++            );
++
++      return (
++        compact(name) ===
++        compact(local)
++      );
++    }
++
++    function usableInstitutionalName(
++      row
++    ) {
++      const name =
++        clean(
++          row?.responderName ||
++          ''
++        );
++
++      if (!name) {
++        return '';
++      }
++
++      if (
++        institutionalNameIsUsername(
++          row
++        )
++      ) {
++        return '';
++      }
++
++      return name;
++    }
++
++    function respondentDisplayName(
++      row
++    ) {
++      return (
++        clean(
++          row?.manualName ||
++          ''
++        ) ||
++        usableInstitutionalName(
++          row
++        ) ||
++        clean(
++          row?.responderName ||
++          ''
++        ) ||
++        clean(
++          row?.responder ||
++          ''
++        ) ||
++        `استجابة #${row?.id || (row?.index ?? 0) + 1}`
++      );
++    }
++
++    function parseRespondentRows(
++      payload
++    ) {
++      const rows =
++        Array.isArray(
++          payload?.value
++        )
++          ? payload.value
++          : Array.isArray(
++              payload
++            )
++            ? payload
++            : [];
++
++      const parsedRows =
++        rows
++          .filter(
++            row =>
++              row &&
++              typeof row ===
++                'object' &&
++              (
++                row.id !==
++                  undefined ||
++                row.responderName !==
++                  undefined ||
++                row.responder !==
++                  undefined
++              )
++          )
++          .map(
++            row => ({
++              id:
++                row.id ??
++                row.responseId ??
++                '',
++              responderName:
++                clean(
++                  row.responderName ||
++                  ''
++                ),
++              responder:
++                clean(
++                  row.responder ||
++                  ''
++                ),
++              submitDate:
++                clean(
++                  row.submitDate ||
++                  ''
++                ),
++              answers:
++                parseResponseAnswers(
++                  row.answers
++                )
++            })
++          );
++
++      const inferred =
++        inferManualNameQuestion(
++          parsedRows
++        );
++
++      if (
++        inferred.id
++      ) {
++        state.manualNameQuestionId =
++          inferred.id;
++
++        state.manualNameQuestionScore =
++          inferred.score;
++
++        state.manualNameQuestionConfidence =
++          inferred.confidence;
++
++        state.manualNameDetectedAt =
++          Date.now();
++      } else if (
++        !state.manualNameQuestionId
++      ) {
++        state.manualNameQuestionScore =
++          inferred.score ||
++          0;
++
++        state.manualNameQuestionConfidence =
++          inferred.confidence ||
++          '';
++      }
++
++      return parsedRows.map(
++        row => ({
++          ...row,
++          manualName:
++            answerForQuestion(
++              row.answers,
++              state.manualNameQuestionId
++            )
++        })
++      );
++    }
++
++    function consumeObservedRespondents(
++      payload,
++      rawUrl
++    ) {
++      const rows =
++        parseRespondentRows(
++          payload
++        );
++
++      if (!rows.length) {
++        return;
++      }
++
++      const formId =
++        currentFormId();
++
++      if (!formId) {
++        return;
++      }
++
++      const offset =
++        responseListOffset(
++          rawUrl
++        );
++
++      if (
++        state.respondentFormId !==
++          formId ||
++        offset === 0
++      ) {
++        state.respondentFormId =
++          formId;
