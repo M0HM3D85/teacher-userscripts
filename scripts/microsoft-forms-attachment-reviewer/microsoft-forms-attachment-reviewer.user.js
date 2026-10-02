@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - عارض المرفقات والتصحيح السريع
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.3
-// @description  بيئة تصحيح مرفقات Microsoft Forms مع مرجع قابل لتغيير الحجم، تصحيح تراكمي سريع، اختصارات تعمل مع العربية والإنجليزية، تنقل سريع بين ملفات الطالب، تجاوز المصححين، عداد غير المصححين، التكبير والسحب والتدوير.
+// @version      1.3.4
+// @description  بيئة تصحيح مرفقات Microsoft Forms مع إظهار اسم الطالب المكتوب في سؤال الاسم، مرجع قابل لتغيير الحجم، تصحيح تراكمي سريع، تنقل واختصارات، عداد غير المصححين، والتكبير والسحب والتدوير.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -36,7 +36,7 @@
 
     /* =========================================================
        Microsoft Forms - Attachment Reviewer
-       Version 1.3.3
+       Version 1.3.4
 
        Developer:
        Mohammed Almalki (M0HM3D85)
@@ -45,7 +45,7 @@
        جميع الحقوق محفوظة
        ========================================================= */
 
-    const VERSION = '1.3.3';
+    const VERSION = '1.3.4';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -99,6 +99,14 @@
         imageToken: 0,
         navigatingStudent: false,
         open: false,
+
+        /* هوية المستجيب: الاسم المكتوب في سؤال الاسم أولًا */
+        respondents: [],
+        respondentFormId: '',
+        manualNameQuestionId: '',
+        manualNameQuestionScore: 0,
+        manualNameQuestionConfidence: '',
+        respondentsCapturedAt: 0,
 
         /* التصحيح التراكمي السريع */
         gradeHistoryContext: '',
@@ -463,10 +471,730 @@
     }
 
     /* =========================================================
+       هوية الطالب من استجابات Forms
+       ========================================================= */
+
+    const NAME_QUESTION_PATTERN =
+        /(?:اسمك|اكتب\s+اسمك|كتابة\s+اسمك|قم\s+بكتابة\s+اسمك|الاسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|الإسم(?:\s+(?:الكامل|الثلاثي|الرباعي))?|اسم\s*(?:الطالب|الطالبة|المتدرب|المتدربة|المستجيب|المستفيد|المستفيدة)|student\s*name|full\s*name|respondent\s*name|your\s*name)/i;
+
+    function normalizeRespondentSearch(value = '') {
+        return normalizeDigits(String(value || ''))
+            .normalize('NFKC')
+            .toLowerCase()
+            .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+            .replace(/\u0640/g, '')
+            .replace(/[أإآٱ]/g, 'ا')
+            .replace(/ى/g, 'ي')
+            .replace(/ة/g, 'ه')
+            .replace(/[^\p{L}\p{N}@._+\-#\s]/gu, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function currentFormId() {
+        try {
+            return new URL(location.href).searchParams.get('id') || '';
+        }
+        catch (_) {
+            return '';
+        }
+    }
+
+    function currentReviewIndex() {
+        try {
+            const value = Number(
+                new URL(location.href).searchParams.get('ridx')
+            );
+
+            return Number.isFinite(value)
+                ? Math.max(0, Math.floor(value))
+                : null;
+        }
+        catch (_) {
+            return null;
+        }
+    }
+
+    function responseListOffset(rawUrl) {
+        try {
+            const url = new URL(String(rawUrl || ''), location.href);
+            const value = Number(url.searchParams.get('$skip') || 0);
+
+            return Number.isFinite(value)
+                ? Math.max(0, Math.floor(value))
+                : 0;
+        }
+        catch (_) {
+            return 0;
+        }
+    }
+
+    function isResponsesListUrl(rawUrl) {
+        const url = String(rawUrl || '');
+
+        return (
+            /\/formapi\/api\//i.test(url) &&
+            /\/responses(?:\?|$)/i.test(url)
+        );
+    }
+
+    function parseResponseAnswers(rawAnswers) {
+        if (Array.isArray(rawAnswers)) {
+            return rawAnswers;
+        }
+
+        if (typeof rawAnswers !== 'string') {
+            return [];
+        }
+
+        const source = rawAnswers.trim();
+
+        if (!source) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(source);
+
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+
+            if (parsed && typeof parsed === 'object') {
+                for (const key of [
+                    'answers',
+                    'Answers',
+                    'responses',
+                    'Responses',
+                    'value',
+                    'Value'
+                ]) {
+                    if (Array.isArray(parsed[key])) {
+                        return parsed[key];
+                    }
+                }
+            }
+        }
+        catch (_) {}
+
+        return [];
+    }
+
+    function answerQuestionId(answer) {
+        if (!answer || typeof answer !== 'object') {
+            return '';
+        }
+
+        return clean(
+            answer.questionId ??
+            answer.QuestionId ??
+            answer.questionID ??
+            answer.QuestionID ??
+            answer.qid ??
+            answer.Qid ??
+            answer.id ??
+            ''
+        );
+    }
+
+    function answerTextValue(answer) {
+        if (!answer || typeof answer !== 'object') {
+            return '';
+        }
+
+        for (const key of [
+            'answer1',
+            'Answer1',
+            'answer',
+            'Answer',
+            'value',
+            'Value',
+            'text',
+            'Text',
+            'response',
+            'Response'
+        ]) {
+            const value = answer[key];
+
+            if (typeof value === 'string') {
+                return clean(value);
+            }
+
+            if (typeof value === 'number') {
+                return String(value);
+            }
+        }
+
+        return '';
+    }
+
+    function looksStructuredAnswer(value) {
+        if (typeof value !== 'string') {
+            return false;
+        }
+
+        const source = value.trim();
+
+        if (!source || !/^[\[{]/.test(source)) {
+            return false;
+        }
+
+        try {
+            const parsed = JSON.parse(source);
+
+            return !!(
+                parsed &&
+                typeof parsed === 'object'
+            );
+        }
+        catch (_) {
+            return false;
+        }
+    }
+
+    function manualNameTitleExistsInReview() {
+        return [
+            ...document.querySelectorAll(
+                '[data-automation-id="questionTitle"]'
+            )
+        ].some(element => {
+            const title = clean(
+                element.innerText ||
+                element.textContent ||
+                ''
+            );
+
+            return NAME_QUESTION_PATTERN.test(title);
+        });
+    }
+
+    function inferManualNameQuestion(rows) {
+        if (!Array.isArray(rows) || rows.length < 2) {
+            return {
+                id: '',
+                score: 0,
+                confidence: ''
+            };
+        }
+
+        const groups = new Map();
+
+        rows.forEach(row => {
+            const answers = Array.isArray(row.answers)
+                ? row.answers
+                : [];
+
+            answers.forEach((answer, position) => {
+                const id = answerQuestionId(answer);
+                const value = answerTextValue(answer);
+
+                if (!id || !value) {
+                    return;
+                }
+
+                if (!groups.has(id)) {
+                    groups.set(id, {
+                        id,
+                        values: [],
+                        positions: []
+                    });
+                }
+
+                const group = groups.get(id);
+
+                group.values.push(value);
+                group.positions.push(position);
+            });
+        });
+
+        const totalRows = rows.length;
+        const hasNameTitle = manualNameTitleExistsInReview();
+        const candidates = [];
+
+        groups.forEach(group => {
+            const values = group.values;
+
+            if (!values.length) {
+                return;
+            }
+
+            const usable = values.filter(value =>
+                !looksStructuredAnswer(value) &&
+                value.length >= 3 &&
+                value.length <= 80
+            );
+
+            if (!usable.length) {
+                return;
+            }
+
+            const coverage = values.length / totalRows;
+            const usableRatio = usable.length / values.length;
+
+            const unique = new Set(
+                usable
+                    .map(normalizeRespondentSearch)
+                    .filter(Boolean)
+            );
+
+            const uniqueRatio = unique.size / usable.length;
+
+            const nameShapeCount = usable.filter(value => {
+                const normalized = normalizeRespondentSearch(value);
+
+                const tokens = normalized
+                    .split(/\s+/)
+                    .filter(Boolean);
+
+                return (
+                    tokens.length >= 2 &&
+                    tokens.length <= 6 &&
+                    /[\p{L}]/u.test(value) &&
+                    !/@/.test(value) &&
+                    !/https?:\/\//i.test(value)
+                );
+            }).length;
+
+            const nameShapeRatio = nameShapeCount / usable.length;
+
+            const averageLength =
+                usable.reduce((sum, value) => sum + value.length, 0) /
+                usable.length;
+
+            const averageTokens =
+                usable.reduce(
+                    (sum, value) =>
+                        sum +
+                        normalizeRespondentSearch(value)
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .length,
+                    0
+                ) / usable.length;
+
+            let score =
+                coverage * 2.0 +
+                usableRatio * 1.5 +
+                uniqueRatio * 3.0 +
+                nameShapeRatio * 3.5;
+
+            if (
+                averageLength >= 8 &&
+                averageLength <= 45
+            ) {
+                score += 0.8;
+            }
+
+            if (
+                averageTokens >= 2 &&
+                averageTokens <= 5
+            ) {
+                score += 0.8;
+            }
+
+            if (uniqueRatio < 0.45) {
+                score -= 2.5;
+            }
+
+            if (nameShapeRatio < 0.65) {
+                score -= 2.0;
+            }
+
+            if (hasNameTitle) {
+                score += 0.5;
+            }
+
+            candidates.push({
+                ...group,
+                coverage,
+                usableRatio,
+                uniqueRatio,
+                nameShapeRatio,
+                averageLength,
+                averageTokens,
+                score
+            });
+        });
+
+        candidates.sort(
+            (a, b) => b.score - a.score
+        );
+
+        const best = candidates[0];
+        const second = candidates[1];
+
+        if (
+            !best ||
+            best.score < 7.1 ||
+            best.coverage < 0.55 ||
+            best.uniqueRatio < 0.55 ||
+            best.nameShapeRatio < 0.70
+        ) {
+            return {
+                id: '',
+                score: best?.score || 0,
+                confidence: ''
+            };
+        }
+
+        const margin =
+            best.score -
+            (second?.score || 0);
+
+        const confidence =
+            best.uniqueRatio >= 0.85 &&
+            best.nameShapeRatio >= 0.85 &&
+            margin >= 0.5
+                ? 'high'
+                : margin >= 0.25
+                    ? 'medium'
+                    : 'low';
+
+        if (confidence === 'low') {
+            return {
+                id: '',
+                score: best.score,
+                confidence
+            };
+        }
+
+        return {
+            id: best.id,
+            score: best.score,
+            confidence
+        };
+    }
+
+    function answerForQuestion(answers, questionId) {
+        if (!questionId || !Array.isArray(answers)) {
+            return '';
+        }
+
+        const match = answers.find(
+            answer =>
+                answerQuestionId(answer) ===
+                questionId
+        );
+
+        if (!match) {
+            return '';
+        }
+
+        const value = answerTextValue(match);
+
+        if (
+            !value ||
+            looksStructuredAnswer(value)
+        ) {
+            return '';
+        }
+
+        return value;
+    }
+
+    function institutionalNameIsUsername(row) {
+        const name = clean(
+            row?.responderName || ''
+        );
+
+        const email = clean(
+            row?.responder || ''
+        );
+
+        if (!name || !email.includes('@')) {
+            return false;
+        }
+
+        const local = email
+            .split('@')[0]
+            .trim();
+
+        if (!local) {
+            return false;
+        }
+
+        const compact = value =>
+            normalizeRespondentSearch(value)
+                .replace(/\s+/g, '');
+
+        return compact(name) === compact(local);
+    }
+
+    function usableInstitutionalName(row) {
+        const name = clean(
+            row?.responderName || ''
+        );
+
+        if (
+            !name ||
+            institutionalNameIsUsername(row)
+        ) {
+            return '';
+        }
+
+        return name;
+    }
+
+    function parseRespondentRows(payload) {
+        const rows = Array.isArray(payload?.value)
+            ? payload.value
+            : Array.isArray(payload)
+                ? payload
+                : [];
+
+        const parsedRows = rows
+            .filter(row =>
+                row &&
+                typeof row === 'object' &&
+                (
+                    row.id !== undefined ||
+                    row.responderName !== undefined ||
+                    row.responder !== undefined
+                )
+            )
+            .map(row => ({
+                id:
+                    row.id ??
+                    row.responseId ??
+                    '',
+                responderName: clean(
+                    row.responderName || ''
+                ),
+                responder: clean(
+                    row.responder || ''
+                ),
+                submitDate: clean(
+                    row.submitDate || ''
+                ),
+                answers: parseResponseAnswers(
+                    row.answers
+                )
+            }));
+
+        const inferred = inferManualNameQuestion(
+            parsedRows
+        );
+
+        if (inferred.id) {
+            state.manualNameQuestionId =
+                inferred.id;
+
+            state.manualNameQuestionScore =
+                inferred.score;
+
+            state.manualNameQuestionConfidence =
+                inferred.confidence;
+        }
+        else if (!state.manualNameQuestionId) {
+            state.manualNameQuestionScore =
+                inferred.score || 0;
+
+            state.manualNameQuestionConfidence =
+                inferred.confidence || '';
+        }
+
+        return parsedRows.map(row => ({
+            ...row,
+            manualName: answerForQuestion(
+                row.answers,
+                state.manualNameQuestionId
+            )
+        }));
+    }
+
+    function consumeObservedRespondents(payload, rawUrl) {
+        const rows = parseRespondentRows(payload);
+
+        if (!rows.length) {
+            return;
+        }
+
+        const formId = currentFormId();
+
+        if (!formId) {
+            return;
+        }
+
+        const offset = responseListOffset(rawUrl);
+
+        if (
+            state.respondentFormId !== formId ||
+            offset === 0
+        ) {
+            state.respondentFormId = formId;
+            state.respondents = [];
+        }
+
+        rows.forEach((row, localIndex) => {
+            const index = offset + localIndex;
+
+            state.respondents[index] = {
+                ...row,
+                index
+            };
+        });
+
+        state.respondentsCapturedAt =
+            Date.now();
+
+        refreshStudentIdentityUI();
+    }
+
+    function currentObservedRespondent() {
+        if (
+            state.respondentFormId !==
+            currentFormId()
+        ) {
+            return null;
+        }
+
+        const index = currentReviewIndex();
+
+        if (
+            Number.isInteger(index) &&
+            state.respondents[index]
+        ) {
+            return state.respondents[index];
+        }
+
+        const respondentNumber = normalizeDigits(
+            getRespondentNumber()
+        );
+
+        if (respondentNumber) {
+            const direct = state.respondents.find(row =>
+                row &&
+                (
+                    String(row.id) === respondentNumber ||
+                    String((row.index ?? -1) + 1) === respondentNumber
+                )
+            );
+
+            if (direct) {
+                return direct;
+            }
+        }
+
+        return null;
+    }
+
+    function getObservedStudentName() {
+        const row = currentObservedRespondent();
+
+        if (!row) {
+            return '';
+        }
+
+        return (
+            clean(row.manualName || '') ||
+            usableInstitutionalName(row)
+        );
+    }
+
+    function refreshStudentIdentityUI() {
+        if (!state.open) {
+            return;
+        }
+
+        const name = document.getElementById(
+            'm0ar-name'
+        );
+
+        if (name) {
+            name.textContent = getStudentName();
+        }
+    }
+
+    function installRespondentIdentityTap() {
+        const proto = window.XMLHttpRequest?.prototype;
+
+        if (
+            !proto ||
+            proto.__m0hm3d85AttachmentIdentityTapV134
+        ) {
+            return;
+        }
+
+        const nativeOpen = proto.open;
+        const nativeSend = proto.send;
+
+        proto.open = function(method, url) {
+            try {
+                this.__m0hm3d85AttachmentIdentityUrl =
+                    String(url || '');
+            }
+            catch (_) {}
+
+            return nativeOpen.apply(
+                this,
+                arguments
+            );
+        };
+
+        proto.send = function(body) {
+            const url =
+                this.__m0hm3d85AttachmentIdentityUrl ||
+                '';
+
+            if (isResponsesListUrl(url)) {
+                this.addEventListener(
+                    'loadend',
+                    () => {
+                        try {
+                            if (
+                                this.status < 200 ||
+                                this.status >= 300
+                            ) {
+                                return;
+                            }
+
+                            const payload = JSON.parse(
+                                this.responseText || '{}'
+                            );
+
+                            consumeObservedRespondents(
+                                payload,
+                                url
+                            );
+                        }
+                        catch (_) {}
+                    },
+                    {
+                        once: true
+                    }
+                );
+            }
+
+            return nativeSend.apply(
+                this,
+                arguments
+            );
+        };
+
+        Object.defineProperty(
+            proto,
+            '__m0hm3d85AttachmentIdentityTapV134',
+            {
+                value: true,
+                configurable: false,
+                enumerable: false
+            }
+        );
+    }
+
+    installRespondentIdentityTap();
+
+    /* =========================================================
        بيانات الطالب
        ========================================================= */
 
     function getStudentName() {
+        const observedName = getObservedStudentName();
+
+        if (observedName) {
+            return observedName;
+        }
+
         const studentButton = [...document.querySelectorAll('button')]
             .find(button => {
                 const text = clean(button.innerText);
