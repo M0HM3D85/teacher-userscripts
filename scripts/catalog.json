@@ -198,9 +198,9 @@
     {
       "id": "zipgrade-smart-student-manager",
       "name": "ZipGrade Smart Student Manager",
-      "version": "0.9.1",
+      "version": "0.9.3",
       "status": "stable",
-      "description": "استيراد وإدارة طلاب ZipGrade مع حذف من داخل المدير ومدقق اختبار مدمج للتكرار والحسابات والتظليل المتعدد والإجابات الفارغة والدرجات الجزئية، إضافة إلى تدقيق الفصول المسندة وكشف الاستجابات خارج النطاق والطلاب بلا استجابة قبل تصدير Full XLSX.",
+      "description": "استيراد وإدارة طلاب ZipGrade مع مدقق اختبار مدمج للتكرار والحسابات والتظليل المتعدد والإجابات الفارغة والدرجات الجزئية، وتدقيق الفصول وكشف الاستجابات خارج النطاق والطلاب بلا استجابة، مع بحث وتصفية وفرز مباشر لجدول النتائج قبل تصدير Full XLSX.",
       "sourcePath": "scripts/zipgrade-smart-student-manager/zipgrade-smart-student-manager.user.js",
       "additionalInfoPath": "scripts/zipgrade-smart-student-manager/README.md",
       "greasyFork": "https://greasyfork.org/scripts/593089",
