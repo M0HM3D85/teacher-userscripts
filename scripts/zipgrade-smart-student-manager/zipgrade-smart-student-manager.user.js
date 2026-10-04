@@ -3,7 +3,7 @@
 // @name:en      ZipGrade Smart Student Manager
 // @name:ar      مدير طلاب ZipGrade الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.9.3
+// @version      0.9.4
 // @description  Smart ZipGrade student import/management with quiz auditing, included-class scope, outside-class/no-response detection, plus instant student search, class/status filters, and result sorting.
 // @description:en Smart ZipGrade student import/management with quiz auditing, included-class scope, outside-class/no-response detection, plus instant student search, class/status filters, and result sorting.
 // @description:ar استيراد وإدارة طلاب ZipGrade بذكاء، مع مدقق اختبار شامل للفصول والحالات، وبحث فوري عن الطالب، وتصفية حسب الفصل والحالة، وفرز نتائج الطلاب داخل الصفحة.
@@ -24,13 +24,15 @@
 
 /*
 =========================================================================
- ZipGrade Smart Student Manager v0.9.3 — Final Release
+ ZipGrade Smart Student Manager v0.9.4 — Final Release
 
- إصلاح v0.9.3: إعادة تخطيط شريط البحث والتصفية ليبقى داخل حاوية جدول النتائج بدون تداخل مع أعمدة الصفحة المجاورة.
+ إضافة v0.9.4: قفل التنقل داخل فصل محدد في صفحة ورقة الطالب، مع السابق/التالي والتالي للمراجعة داخل الفصل فقط، حفظ الاختيار، والتنقل بلوحة المفاتيح Alt+← / Alt+→.
 
- إضافة v0.9.3: بحث فوري عن الطالب، تصفية حسب الفصل والحالة، وفرز جدول النتائج مع عدادات لحظية دون تغيير ملف التصدير.
+ إصلاح v0.9.4: إعادة تخطيط شريط البحث والتصفية ليبقى داخل حاوية جدول النتائج بدون تداخل مع أعمدة الصفحة المجاورة.
 
- إصلاح v0.9.3: دعم روابط أوراق فلاتر الفصول /subject/<class-id>/ ومنع تلوث اسم الطالب بشارات التدقيق.
+ إضافة v0.9.4: بحث فوري عن الطالب، تصفية حسب الفصل والحالة، وفرز جدول النتائج مع عدادات لحظية دون تغيير ملف التصدير.
+
+ إصلاح v0.9.4: دعم روابط أوراق فلاتر الفصول /subject/<class-id>/ ومنع تلوث اسم الطالب بشارات التدقيق.
 
  الإصدار النهائي لهذه المرحلة يجمع في سكربت Tampermonkey واحد:
  1) الاستيراد الذكي وإدارة الطلاب.
@@ -49,7 +51,7 @@
 
 /*
 =========================================================================
- ZipGrade Smart Student Manager - Quiz Auditor Module v0.9.3
+ ZipGrade Smart Student Manager - Quiz Auditor Module v0.9.4
 
  بنية مدقق الاختبار:
  - لم نعد نجلب صفحة كل طالب في الخلفية كي نحللها.
@@ -60,6 +62,7 @@
  - Item Analysis لا يتم تلوينه ولا يُستخدم لتحديد اسم الطالب.
  - كل التلوين يكون على صفوف الطلاب في جدول gradedPapers.
  - صفحة الطالب تحتوي فقط على شريط تنقل مدمج + ملخص مشاكله الحالية.
+ - يمكن قفل التنقل على فصل محدد؛ عندها السابق/التالي/التالي للمراجعة تبقى داخل الفصل فقط.
  - فحص نطاق الفصول يعتمد على روابط Filter for الموجودة في صفحة الاختبار.
  - قائمة /students/ تُقرأ مرة واحدة فقط في كل فحص لمعرفة الطلاب بلا استجابة.
 
@@ -76,7 +79,7 @@
     'use strict';
 
     const APP = 'zgssm-audit3';
-    const VERSION = '0.9.3';
+    const VERSION = '0.9.4';
     const FRESH_MS = 30 * 60 * 1000;
 
     const ROUTE = parseRoute();
@@ -86,8 +89,10 @@
         audit: `ZGSSM_AUDIT_V3_${ROUTE.quizId}`,
         reviews: `ZGSSM_AUDIT_REVIEWS_V3_${ROUTE.quizId}`,
         papers: `ZGSSM_AUDIT_PAPERS_V3_${ROUTE.quizId}`,
-        coverage: `ZGSSM_CLASS_COVERAGE_V093_${ROUTE.quizId}`,
-        coverageReviews: `ZGSSM_CLASS_COVERAGE_REVIEWS_V093_${ROUTE.quizId}`
+        coverage: `ZGSSM_CLASS_COVERAGE_V094_${ROUTE.quizId}`,
+        coverageReviews: `ZGSSM_CLASS_COVERAGE_REVIEWS_V094_${ROUTE.quizId}`,
+        navClass: `ZGSSM_NAV_CLASS_V094_${ROUTE.quizId}`,
+        navScope: `ZGSSM_NAV_SCOPE_V094_${ROUTE.quizId}`
     };
 
     let RUNNING = false;
@@ -395,6 +400,61 @@
 
             .${APP}-paper-problems {
                 margin:8px 0 0;
+            }
+
+            .${APP}-paper-scope {
+                display:flex;
+                flex-wrap:wrap;
+                gap:6px;
+                align-items:center;
+                margin:0 0 8px;
+                padding:8px;
+                border:1px solid #d9e2ec;
+                border-radius:5px;
+                background:#f8fafc;
+            }
+
+            .${APP}-paper-scope label {
+                margin:0;
+                font-size:12px;
+                font-weight:700;
+            }
+
+            .${APP}-paper-scope select {
+                min-width:190px;
+                max-width:100%;
+                height:32px;
+                padding:4px 7px;
+                border:1px solid #cbd5e1;
+                border-radius:4px;
+                background:#fff;
+            }
+
+            .${APP}-paper-lock {
+                display:inline-flex;
+                align-items:center;
+                gap:4px;
+                padding:4px 8px;
+                border-radius:999px;
+                background:#e8f2ff;
+                color:#24527a;
+                font-size:11px;
+                font-weight:700;
+            }
+
+            .${APP}-paper-scope-note {
+                font-size:11px;
+                color:#64748b;
+            }
+
+            .${APP}-paper-scope-warning {
+                margin:8px 0;
+                padding:9px 11px;
+                border:1px solid #f0ad4e;
+                border-radius:5px;
+                background:#fcf8e3;
+                color:#8a6d3b;
+                line-height:1.7;
             }
 
             .${APP}-coverage-note {
@@ -938,63 +998,3 @@
                 const response = clean(record.row[`stu${q}`]);
                 const primary = clean(record.row[`prikey${q}`]);
                 const pointsRaw = clean(record.row[`points${q}`]);
-                const mark = clean(record.row[`mark${q}`]).toUpperCase();
-
-                const issueBase = {
-                    studentId: record.studentId,
-                    externalRef: record.externalRef,
-                    name: record.name,
-                    paperId: record.paperId,
-                    paperUrl: record.paperUrl,
-                    question: q,
-                    response,
-                    primary,
-                    points: pointsRaw,
-                    mark
-                };
-
-                if (isMultiResponse(response)) {
-                    multi.push(issueBase);
-                    continue;
-                }
-
-                if (isBlankResponse(response)) {
-                    blanks.push(issueBase);
-                    continue;
-                }
-
-                if (mark === 'P') {
-                    partials.push(issueBase);
-                }
-            }
-        }
-
-        const audit = {
-            schema: 3,
-            appVersion: VERSION,
-            createdAt: Date.now(),
-            quizId: ROUTE.quizId,
-            paperCount: papers.length,
-            csvRecordCount: records.length,
-            questionCount: qNumbers.length,
-            fullCsvUrl: csv.url,
-            fullXlsxUrl: findFullXlsx(document),
-            papers: papers.map(p => ({
-                index: p.index,
-                paperId: p.paperId,
-                paperUrl: p.paperUrl,
-                studentId: p.studentId,
-                name: p.name,
-                points: p.points,
-                percent: p.percent,
-                keyVersion: p.keyVersion,
-                scannedAt: p.scannedAt
-            })),
-            records: records.map(r => ({
-                studentId: r.studentId,
-                externalRef: r.externalRef,
-                name: r.name,
-                paperId: r.paperId,
-                paperUrl: r.paperUrl,
-                earnedPoints: r.earnedPoints,
-                possiblePoints: r.possiblePoints,
