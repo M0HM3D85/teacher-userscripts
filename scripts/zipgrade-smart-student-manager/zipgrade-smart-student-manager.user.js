@@ -3,10 +3,10 @@
 // @name:en      ZipGrade Smart Student Manager
 // @name:ar      مدير طلاب ZipGrade الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.9.1
-// @description  Smart ZipGrade student import/management with an inline quiz auditor for duplicates, identity, multi-answer, blank/partial responses, included-class scope, outside-class responses, and students with no response.
-// @description:en Smart ZipGrade student import/management with an inline quiz auditor for duplicates, identity, multi-answer, blank/partial responses, included-class scope, outside-class responses, and students with no response.
-// @description:ar استيراد وإدارة طلاب ZipGrade بذكاء، مع حذف الطالب ومدقق اختبار مدمج لفحص التكرار والحسابات والتظليل المتعدد والإجابات الفارغة والجزئية، وكشف الاستجابات من خارج الفصول المشمولة والطلاب بلا استجابة.
+// @version      0.9.3
+// @description  Smart ZipGrade student import/management with quiz auditing, included-class scope, outside-class/no-response detection, plus instant student search, class/status filters, and result sorting.
+// @description:en Smart ZipGrade student import/management with quiz auditing, included-class scope, outside-class/no-response detection, plus instant student search, class/status filters, and result sorting.
+// @description:ar استيراد وإدارة طلاب ZipGrade بذكاء، مع مدقق اختبار شامل للفصول والحالات، وبحث فوري عن الطالب، وتصفية حسب الفصل والحالة، وفرز نتائج الطلاب داخل الصفحة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://github.com/M0HM3D85/teacher-userscripts/tree/main/scripts/zipgrade-smart-student-manager
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -24,9 +24,13 @@
 
 /*
 =========================================================================
- ZipGrade Smart Student Manager v0.9.1 — Final Release
+ ZipGrade Smart Student Manager v0.9.3 — Final Release
 
- إصلاح v0.9.1: دعم روابط أوراق فلاتر الفصول /subject/<class-id>/ ومنع تلوث اسم الطالب بشارات التدقيق.
+ إصلاح v0.9.3: إعادة تخطيط شريط البحث والتصفية ليبقى داخل حاوية جدول النتائج بدون تداخل مع أعمدة الصفحة المجاورة.
+
+ إضافة v0.9.3: بحث فوري عن الطالب، تصفية حسب الفصل والحالة، وفرز جدول النتائج مع عدادات لحظية دون تغيير ملف التصدير.
+
+ إصلاح v0.9.3: دعم روابط أوراق فلاتر الفصول /subject/<class-id>/ ومنع تلوث اسم الطالب بشارات التدقيق.
 
  الإصدار النهائي لهذه المرحلة يجمع في سكربت Tampermonkey واحد:
  1) الاستيراد الذكي وإدارة الطلاب.
@@ -45,7 +49,7 @@
 
 /*
 =========================================================================
- ZipGrade Smart Student Manager - Quiz Auditor Module v0.9.1
+ ZipGrade Smart Student Manager - Quiz Auditor Module v0.9.3
 
  بنية مدقق الاختبار:
  - لم نعد نجلب صفحة كل طالب في الخلفية كي نحللها.
@@ -72,7 +76,7 @@
     'use strict';
 
     const APP = 'zgssm-audit3';
-    const VERSION = '0.9.1';
+    const VERSION = '0.9.3';
     const FRESH_MS = 30 * 60 * 1000;
 
     const ROUTE = parseRoute();
@@ -82,11 +86,23 @@
         audit: `ZGSSM_AUDIT_V3_${ROUTE.quizId}`,
         reviews: `ZGSSM_AUDIT_REVIEWS_V3_${ROUTE.quizId}`,
         papers: `ZGSSM_AUDIT_PAPERS_V3_${ROUTE.quizId}`,
-        coverage: `ZGSSM_CLASS_COVERAGE_V091_${ROUTE.quizId}`,
-        coverageReviews: `ZGSSM_CLASS_COVERAGE_REVIEWS_V091_${ROUTE.quizId}`
+        coverage: `ZGSSM_CLASS_COVERAGE_V093_${ROUTE.quizId}`,
+        coverageReviews: `ZGSSM_CLASS_COVERAGE_REVIEWS_V093_${ROUTE.quizId}`
     };
 
     let RUNNING = false;
+
+    // Result-table view controls (display only; never alter exported data).
+    const RESULT_VIEW = {
+        search: '',
+        classKey: 'all',
+        status: 'all',
+        sort: 'original',
+        direction: 'asc'
+    };
+
+    const ORIGINAL_ROW_INDEX = new WeakMap();
+    let ORIGINAL_ROW_SEQUENCE = 0;
 
     // ---------------------------------------------------------------------
     // Helpers
@@ -390,6 +406,88 @@
             .${APP}-absence-table td,
             .${APP}-absence-table th {
                 white-space:nowrap;
+            }
+
+            #${APP}-result-tools {
+                direction:rtl;
+                text-align:right;
+                margin:10px 0 12px;
+                padding:10px 12px;
+                border:1px solid #d9e2ec;
+                border-radius:6px;
+                background:#f8fafc;
+                font-family:Tahoma,Arial,sans-serif;
+            }
+
+            .${APP}-result-tools-grid {
+                display:grid;
+                grid-template-columns:repeat(3,minmax(0,1fr));
+                gap:7px;
+                align-items:stretch;
+                width:100%;
+                max-width:100%;
+                min-width:0;
+                box-sizing:border-box;
+            }
+
+            .${APP}-result-tools-grid > * {
+                min-width:0;
+                max-width:100%;
+                box-sizing:border-box;
+            }
+
+            .${APP}-result-tools-grid input,
+            .${APP}-result-tools-grid select,
+            .${APP}-result-tools-grid button {
+                width:100%;
+                min-width:0;
+                max-width:100%;
+                min-height:34px;
+                box-sizing:border-box;
+            }
+
+            .${APP}-result-tools-grid input,
+            .${APP}-result-tools-grid select {
+                border:1px solid #cbd5e1;
+                border-radius:4px;
+                background:#fff;
+                padding:6px 8px;
+            }
+
+            #${APP}-result-tools {
+                width:100%;
+                max-width:100%;
+                min-width:0;
+                overflow:hidden;
+                box-sizing:border-box;
+            }
+
+            .${APP}-result-tools-count {
+                margin-top:7px;
+                font-size:12px;
+                font-weight:700;
+                color:#475569;
+                overflow-wrap:anywhere;
+            }
+
+            .${APP}-result-tools-note {
+                margin-top:4px;
+                font-size:11px;
+                color:#64748b;
+                line-height:1.6;
+                overflow-wrap:anywhere;
+            }
+
+            @media (max-width: 760px) {
+                .${APP}-result-tools-grid {
+                    grid-template-columns:repeat(2,minmax(0,1fr));
+                }
+            }
+
+            @media (max-width: 480px) {
+                .${APP}-result-tools-grid {
+                    grid-template-columns:minmax(0,1fr);
+                }
             }
         `;
         document.head.appendChild(style);
@@ -900,101 +998,3 @@
                 paperUrl: r.paperUrl,
                 earnedPoints: r.earnedPoints,
                 possiblePoints: r.possiblePoints,
-                percent: r.percent
-            })),
-            duplicates: duplicateGroups(records),
-            identityProblems,
-            unmappedRecords,
-            multi,
-            blanks,
-            partials
-        };
-
-        save(STORE.audit, audit);
-        save(STORE.papers, audit.papers);
-
-        return hydrate(audit);
-    }
-
-
-    // ---------------------------------------------------------------------
-    // Included classes & missing-response coverage audit (v0.9.1)
-    // ---------------------------------------------------------------------
-
-    function coverageReviewKey(issue) {
-        return `outside|${clean(issue?.paperId || issue?.studentId || issue?.name || '')}`;
-    }
-
-    function getCoverageReviews() {
-        return load(STORE.coverageReviews, {});
-    }
-
-    function setCoverageReviewed(issue, yes) {
-        const all = getCoverageReviews();
-        const key = coverageReviewKey(issue);
-
-        if (yes) {
-            all[key] = {
-                at: Date.now(),
-                paperId: issue.paperId || '',
-                studentId: issue.studentId || '',
-                name: issue.name || ''
-            };
-        } else {
-            delete all[key];
-        }
-
-        save(STORE.coverageReviews, all);
-    }
-
-    function hydrateCoverage(coverage) {
-        if (!coverage) return null;
-
-        const reviews = getCoverageReviews();
-        const outsideResponses = (coverage.outsideResponses || []).map(item => ({
-            ...item,
-            reviewed: Boolean(reviews[coverageReviewKey(item)])
-        }));
-
-        const unresolvedOutside = outsideResponses.filter(item => !item.reviewed).length;
-        const scopeReady = !coverage.scopeDetected || coverage.classFilterFetchComplete === true;
-
-        return {
-            ...coverage,
-            outsideResponses,
-            unresolvedOutside,
-            readyForExport: scopeReady && unresolvedOutside === 0
-        };
-    }
-
-    function coverageFresh(coverage) {
-        return Boolean(coverage?.createdAt && Date.now() - coverage.createdAt <= FRESH_MS);
-    }
-
-    function classFilters(doc = document) {
-        const found = [];
-        const seen = new Set();
-
-        for (const link of doc.querySelectorAll('a[href]')) {
-            const label = clean(link.textContent);
-            if (!/^filter\s+for\s+/i.test(label)) continue;
-
-            const href = abs(link.getAttribute('href'));
-            if (!href || seen.has(href)) continue;
-
-            const url = new URL(href);
-            const match = url.pathname.match(/^\/quiz\/([^/]+)\/([^/]+)\/?$/i);
-            if (!match || decodeURIComponent(match[1]) !== ROUTE.quizId) continue;
-
-            seen.add(href);
-            const className = label.replace(/^filter\s+for\s+/i, '').trim();
-
-            found.push({
-                className,
-                classKey: canon(className),
-                scopeId: decodeURIComponent(match[2]),
-                url: href
-            });
-        }
-
-        return found;
