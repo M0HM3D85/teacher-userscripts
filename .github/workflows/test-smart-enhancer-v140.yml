@@ -1,0 +1,36 @@
+name: Test Smart Enhancer v1.4.0
+
+on:
+  push:
+    branches:
+      - test/smart-enhancer-v1.4.0
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax check Smart Enhancer
+        run: node --check scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js
+
+      - name: Verify v1.4.0 baseline fix markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js"
+          grep -Fq "// @version      1.4.0" "$file"
+          grep -Fq "function migrateLegacyTrackingState(" "$file"
+          grep -Fq "late-discovery-v140" "$file"
+          grep -Fq "initial-snapshot-v140" "$file"
+          grep -Fq "legacyMigrationFixedCount" "$file"
+          cmp -s "$file" scripts/microsoft-forms-smart-enhancer/forms-smart-enhancer-v1.4.0.txt
