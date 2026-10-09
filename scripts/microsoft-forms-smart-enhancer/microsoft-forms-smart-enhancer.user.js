@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms Smart Enhancer - محسن Microsoft Forms الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.4.0
-// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة موثوقة للاستجابات الجديدة لكل نموذج، بحث مباشر بالاسم المكتوب والمؤسسي، قوالب إعدادات، وتدقيق وإدارة جماعية سريعة للأسئلة.
+// @version      1.4.1
+// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة موثوقة للاستجابات الجديدة مع معالجة إعادة ضبط الردود، بحث مباشر بالاسم المكتوب والمؤسسي، قوالب إعدادات، وتدقيق وإدارة جماعية سريعة للأسئلة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -32,11 +32,11 @@
 (() => {
   'use strict';
 
-  const FINAL_VERSION = '1.4.0';
+  const FINAL_VERSION = '1.4.1';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   /*
-   * Forms API session bridge — v1.4.0
+   * Forms API session bridge — v1.4.1
    *
    * Microsoft Forms يضيف لرابط PATCH الصحيح رؤوس جلسة لا يضيفها الطلب
    * الذي ننشئه نحن تلقائيًا، وأهمها RequestVerificationToken و UserSessionId.
@@ -627,7 +627,8 @@
        */
       trackingInitialized: false,
       trackingInitializedAt: '',
-      legacyMigrationFixedCount: 0
+      legacyMigrationFixedCount: 0,
+      resetMigrationFixedCount: 0
     };
 
     function migrateLegacyTrackingState(
@@ -810,6 +811,81 @@
       return fixed;
     }
 
+    function migrateUnreviewedDecreasesV141() {
+      const now =
+        new Date().toISOString();
+
+      let fixed =
+        0;
+
+      Object.values(
+        state.records
+      ).forEach(
+        record => {
+          if (
+            !record ||
+            typeof record !==
+              'object'
+          ) {
+            return;
+          }
+
+          /*
+           * التقرير الميداني كشف حالة دقيقة:
+           * نموذج لم يضغط المستخدم له «تمت المراجعة»،
+           * لكن عدد الردود انخفض من خط أساس قديم ثم ظهرت
+           * استجابات جديدة قبل أن نلتقط الصفر.
+           *
+           * الإصدارات السابقة كانت تجعل reviewedCount = العدد
+           * المنخفض الحالي، فتُخفي هذه الاستجابات الجديدة.
+           *
+           * إذا لم توجد مراجعة صريحة، وكان السجل قد عُدّل نزولًا
+           * سابقًا وبقي reviewedCount مساويًا للعدد الحالي،
+           * نعيد خط الأساس إلى صفر مرة واحدة عند الترقية.
+           */
+          const reviewed =
+            Number(
+              record.reviewedCount
+            );
+
+          const lastSeen =
+            Number(
+              record.lastSeenCount
+            );
+
+          if (
+            !record.reviewedAt &&
+            record.adjustedDownAt &&
+            Number.isFinite(
+              reviewed
+            ) &&
+            Number.isFinite(
+              lastSeen
+            ) &&
+            reviewed > 0 &&
+            reviewed ===
+              lastSeen
+          ) {
+            record.reviewedCount =
+              0;
+
+            record.baselineSource =
+              'unreviewed-reset-migrated-v141';
+
+            record.resetRecoveredAt =
+              now;
+
+            fixed++;
+          }
+        }
+      );
+
+      state.resetMigrationFixedCount =
+        fixed;
+
+      return fixed;
+    }
+
     function load() {
       state.trackingInitialized =
         false;
@@ -818,6 +894,9 @@
         '';
 
       state.legacyMigrationFixedCount =
+        0;
+
+      state.resetMigrationFixedCount =
         0;
 
       try {
@@ -851,26 +930,38 @@
               raw.trackingInitializedAt ||
               ''
             );
-
-          return;
+        } else if (
+          Object.keys(
+            state.records
+          ).length
+        ) {
+          migrateLegacyTrackingState(
+            raw
+          );
         }
 
         if (
           Object.keys(
             state.records
-          ).length
+          ).length &&
+          (
+            !Number.isFinite(
+              Number(
+                raw?.version
+              )
+            ) ||
+            Number(
+              raw?.version
+            ) < 3
+          )
         ) {
-          const fixed =
-            migrateLegacyTrackingState(
-              raw
-            );
+          migrateUnreviewedDecreasesV141();
+        }
 
-          if (
-            fixed > 0 ||
-            raw?.version !== 2
-          ) {
-            save();
-          }
+        if (
+          raw?.version !== 3
+        ) {
+          save();
         }
       } catch {
         state.records = {};
@@ -883,6 +974,9 @@
 
         state.legacyMigrationFixedCount =
           0;
+
+        state.resetMigrationFixedCount =
+          0;
       }
     }
 
@@ -891,7 +985,7 @@
         localStorage.setItem(
           STORAGE_KEY,
           JSON.stringify({
-            version: 2,
+            version: 3,
             updatedAt:
               new Date().toISOString(),
             trackingInitialized:
@@ -2921,11 +3015,26 @@
               count < reviewed
             ) {
               /*
-               * إذا حُذفت استجابات من Forms، ننزل خط الأساس إلى العدد
-               * الحالي حتى لا ينتظر التنبيه تجاوز رقم قديم لم يعد موجودًا.
+               * انخفاض العدد يعني أن مجموعة الردود تغيّرت.
+               *
+               * - إذا كان المستخدم قد ضغط «تمت المراجعة» صراحةً،
+               *   نحافظ على السلوك المحافظ وننزل baseline للعدد الحالي
+               *   حتى لا تظهر الردود المتبقية كجديدة بسبب حذف جزئي.
+               *
+               * - إذا لم توجد مراجعة صريحة، فلا يجوز اعتبار العدد
+               *   المنخفض الحالي «مراجَعًا». قد يكون المستخدم مسح
+               *   الردود القديمة ثم وصلت ردود جديدة قبل الفحص التالي.
+               *   لذلك نعيد baseline إلى صفر كي لا نفوّت أي رد جديد.
                */
               record.reviewedCount =
-                count;
+                record.reviewedAt
+                  ? count
+                  : 0;
+
+              record.baselineSource =
+                record.reviewedAt
+                  ? 'explicit-reviewed-adjusted-down-v141'
+                  : 'unreviewed-reset-v141';
 
               record.adjustedDownAt =
                 now;
@@ -2971,6 +3080,15 @@
       ) {
         state.status =
           'تم بدء التتبع من الآن؛ لن تُحسب الاستجابات السابقة كجديدة.';
+      } else if (
+        state.resetMigrationFixedCount >
+          0
+      ) {
+        state.status =
+          `تم إصلاح ${state.resetMigrationFixedCount} نموذج انخفضت ردوده دون مراجعة صريحة؛ ستظهر الردود الحالية كجديدة.`;
+
+        state.resetMigrationFixedCount =
+          0;
       } else if (
         state.legacyMigrationFixedCount >
           0
@@ -4995,6 +5113,8 @@
               state.trackingInitializedAt,
             legacyMigrationFixedCount:
               state.legacyMigrationFixedCount,
+            resetMigrationFixedCount:
+              state.resetMigrationFixedCount,
             manualNameCount:
               state.respondents.filter(
                 row =>
@@ -13883,7 +14003,7 @@
     );
 
     console.log(
-      '✅ المحسن جاهز: متابعة الاستجابات الجديدة لكل نموذج + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
+      '✅ المحسن جاهز: متابعة الاستجابات الجديدة لكل نموذج مع معالجة إعادة ضبط الردود + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
     );
   }
 
