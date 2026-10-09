@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms Smart Enhancer - محسن Microsoft Forms الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.9
-// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة الاستجابات الجديدة، بحث مباشر بالاسم المكتوب والمؤسسي، قوالب إعدادات، وتدقيق وإدارة جماعية سريعة للأسئلة.
+// @version      1.4.1
+// @description  محسن شامل لـ Microsoft Forms: فهرسة وبحث، متابعة موثوقة للاستجابات الجديدة مع معالجة إعادة ضبط الردود، بحث مباشر بالاسم المكتوب والمؤسسي، قوالب إعدادات، وتدقيق وإدارة جماعية سريعة للأسئلة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -32,11 +32,11 @@
 (() => {
   'use strict';
 
-  const FINAL_VERSION = '1.3.9';
+  const FINAL_VERSION = '1.4.1';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   /*
-   * Forms API session bridge — v1.3.9
+   * Forms API session bridge — v1.4.1
    *
    * Microsoft Forms يضيف لرابط PATCH الصحيح رؤوس جلسة لا يضيفها الطلب
    * الذي ننشئه نحن تلقائيًا، وأهمها RequestVerificationToken و UserSessionId.
@@ -614,10 +614,291 @@
       manualNameQuestionId: '',
       manualNameQuestionScore: 0,
       manualNameQuestionConfidence: '',
-      manualNameDetectedAt: 0
+      manualNameDetectedAt: 0,
+
+      /*
+       * v1.4.0 — حالة خط الأساس العامة.
+       *
+       * الفرق المهم:
+       * - أول Snapshot عالمي فقط يعتمد الأعداد الحالية كخط أساس.
+       * - أي نموذج يظهر لاحقًا لا يُعتبر «مراجَعًا» تلقائيًا؛
+       *   يبدأ reviewedCount له من صفر حتى يضغط المستخدم
+       *   «تمت مراجعة الاستجابات».
+       */
+      trackingInitialized: false,
+      trackingInitializedAt: '',
+      legacyMigrationFixedCount: 0,
+      resetMigrationFixedCount: 0
     };
 
+    function migrateLegacyTrackingState(
+      raw
+    ) {
+      const entries =
+        Object.entries(
+          state.records
+        );
+
+      if (!entries.length) {
+        state.trackingInitialized =
+          false;
+
+        state.trackingInitializedAt =
+          '';
+
+        state.legacyMigrationFixedCount =
+          0;
+
+        return 0;
+      }
+
+      const initializedTimes =
+        entries
+          .map(
+            ([, record]) => {
+              const time =
+                Date.parse(
+                  record?.initializedAt ||
+                  ''
+                );
+
+              return Number.isFinite(
+                time
+              )
+                ? time
+                : null;
+            }
+          )
+          .filter(
+            value =>
+              Number.isFinite(
+                value
+              )
+          );
+
+      const earliestTime =
+        initializedTimes.length
+          ? Math.min(
+              ...initializedTimes
+            )
+          : NaN;
+
+      /*
+       * في الإصدارات حتى 1.3.9 كان أول ظهور لأي نموذج جديد
+       * يُنشئ reviewedCount مساويًا للعدد الحالي. هذا صحيح فقط
+       * لأول Snapshot عالمي، لكنه يخفي استجابات النماذج التي
+       * اكتُشفت لاحقًا.
+       *
+       * عند الترقية نحافظ على دفعة التهيئة الأولى (أقدم initializedAt)
+       * ونصحح فقط السجلات اللاحقة التي:
+       * 1) لم تُراجع صراحةً (reviewedAt فارغ)
+       * 2) reviewedCount == lastSeenCount
+       * 3) العدد أكبر من صفر
+       *
+       * السجلات التي سبق أن ضغط المستخدم لها «تمت المراجعة»
+       * لا تُمس إطلاقًا.
+       */
+      const INITIAL_BATCH_WINDOW_MS =
+        2000;
+
+      const now =
+        new Date().toISOString();
+
+      let fixed =
+        0;
+
+      entries.forEach(
+        ([, record]) => {
+          if (
+            !record ||
+            typeof record !==
+              'object'
+          ) {
+            return;
+          }
+
+          if (
+            record.reviewedAt
+          ) {
+            return;
+          }
+
+          const initialized =
+            Date.parse(
+              record.initializedAt ||
+              ''
+            );
+
+          const belongsToInitialBatch =
+            Number.isFinite(
+              earliestTime
+            ) &&
+            Number.isFinite(
+              initialized
+            ) &&
+            Math.abs(
+              initialized -
+              earliestTime
+            ) <=
+              INITIAL_BATCH_WINDOW_MS;
+
+          if (
+            belongsToInitialBatch
+          ) {
+            record.baselineSource =
+              record.baselineSource ||
+              'legacy-initial-snapshot';
+
+            return;
+          }
+
+          const reviewed =
+            Number(
+              record.reviewedCount
+            );
+
+          const lastSeen =
+            Number(
+              record.lastSeenCount
+            );
+
+          if (
+            Number.isFinite(
+              reviewed
+            ) &&
+            Number.isFinite(
+              lastSeen
+            ) &&
+            reviewed > 0 &&
+            reviewed ===
+              lastSeen
+          ) {
+            record.reviewedCount =
+              0;
+
+            record.baselineSource =
+              'late-discovery-migrated-v140';
+
+            record.migratedAt =
+              now;
+
+            fixed++;
+          }
+        }
+      );
+
+      state.trackingInitialized =
+        true;
+
+      state.trackingInitializedAt =
+        clean(
+          raw?.trackingInitializedAt ||
+          ''
+        ) ||
+        (
+          Number.isFinite(
+            earliestTime
+          )
+            ? new Date(
+                earliestTime
+              ).toISOString()
+            : now
+        );
+
+      state.legacyMigrationFixedCount =
+        fixed;
+
+      return fixed;
+    }
+
+    function migrateUnreviewedDecreasesV141() {
+      const now =
+        new Date().toISOString();
+
+      let fixed =
+        0;
+
+      Object.values(
+        state.records
+      ).forEach(
+        record => {
+          if (
+            !record ||
+            typeof record !==
+              'object'
+          ) {
+            return;
+          }
+
+          /*
+           * التقرير الميداني كشف حالة دقيقة:
+           * نموذج لم يضغط المستخدم له «تمت المراجعة»،
+           * لكن عدد الردود انخفض من خط أساس قديم ثم ظهرت
+           * استجابات جديدة قبل أن نلتقط الصفر.
+           *
+           * الإصدارات السابقة كانت تجعل reviewedCount = العدد
+           * المنخفض الحالي، فتُخفي هذه الاستجابات الجديدة.
+           *
+           * إذا لم توجد مراجعة صريحة، وكان السجل قد عُدّل نزولًا
+           * سابقًا وبقي reviewedCount مساويًا للعدد الحالي،
+           * نعيد خط الأساس إلى صفر مرة واحدة عند الترقية.
+           */
+          const reviewed =
+            Number(
+              record.reviewedCount
+            );
+
+          const lastSeen =
+            Number(
+              record.lastSeenCount
+            );
+
+          if (
+            !record.reviewedAt &&
+            record.adjustedDownAt &&
+            Number.isFinite(
+              reviewed
+            ) &&
+            Number.isFinite(
+              lastSeen
+            ) &&
+            reviewed > 0 &&
+            reviewed ===
+              lastSeen
+          ) {
+            record.reviewedCount =
+              0;
+
+            record.baselineSource =
+              'unreviewed-reset-migrated-v141';
+
+            record.resetRecoveredAt =
+              now;
+
+            fixed++;
+          }
+        }
+      );
+
+      state.resetMigrationFixedCount =
+        fixed;
+
+      return fixed;
+    }
+
     function load() {
+      state.trackingInitialized =
+        false;
+
+      state.trackingInitializedAt =
+        '';
+
+      state.legacyMigrationFixedCount =
+        0;
+
+      state.resetMigrationFixedCount =
+        0;
+
       try {
         const raw =
           JSON.parse(
@@ -635,8 +916,67 @@
           state.records =
             raw.records;
         }
+
+        if (
+          raw?.version >= 2 &&
+          raw?.trackingInitialized ===
+            true
+        ) {
+          state.trackingInitialized =
+            true;
+
+          state.trackingInitializedAt =
+            clean(
+              raw.trackingInitializedAt ||
+              ''
+            );
+        } else if (
+          Object.keys(
+            state.records
+          ).length
+        ) {
+          migrateLegacyTrackingState(
+            raw
+          );
+        }
+
+        if (
+          Object.keys(
+            state.records
+          ).length &&
+          (
+            !Number.isFinite(
+              Number(
+                raw?.version
+              )
+            ) ||
+            Number(
+              raw?.version
+            ) < 3
+          )
+        ) {
+          migrateUnreviewedDecreasesV141();
+        }
+
+        if (
+          raw?.version !== 3
+        ) {
+          save();
+        }
       } catch {
         state.records = {};
+
+        state.trackingInitialized =
+          false;
+
+        state.trackingInitializedAt =
+          '';
+
+        state.legacyMigrationFixedCount =
+          0;
+
+        state.resetMigrationFixedCount =
+          0;
       }
     }
 
@@ -645,9 +985,13 @@
         localStorage.setItem(
           STORAGE_KEY,
           JSON.stringify({
-            version: 1,
+            version: 3,
             updatedAt:
               new Date().toISOString(),
+            trackingInitialized:
+              state.trackingInitialized,
+            trackingInitializedAt:
+              state.trackingInitializedAt,
             records:
               state.records
           })
@@ -2590,12 +2934,20 @@
       const now =
         new Date().toISOString();
 
-      const hadAny =
-        Object.keys(
-          state.records
-        ).length > 0;
+      /*
+       * لا نعتمد وجود أي record كدليل على اكتمال التهيئة.
+       * قد يدخل المستخدم صفحة Review مباشرة قبل أن تصل أول
+       * لقطة GetRespCounts العالمية. trackingInitialized وحده
+       * هو الذي يحدد هل أخذنا Snapshot البداية أم لا.
+       */
+      const trackerWasInitialized =
+        state.trackingInitialized ===
+        true;
 
       let created =
+        0;
+
+      let lateDiscovered =
         0;
 
       let adjustedDown =
@@ -2607,9 +2959,14 @@
             state.records[id];
 
           if (!record) {
+            const isLateDiscovery =
+              trackerWasInitialized;
+
             record = {
               reviewedCount:
-                count,
+                isLateDiscovery
+                  ? 0
+                  : count,
               initializedAt:
                 now,
               reviewedAt:
@@ -2617,13 +2974,24 @@
               lastSeenCount:
                 count,
               lastSeenAt:
-                now
+                now,
+              baselineSource:
+                isLateDiscovery
+                  ? 'late-discovery-v140'
+                  : 'initial-snapshot-v140'
             };
 
             state.records[id] =
               record;
 
             created++;
+
+            if (
+              isLateDiscovery &&
+              count > 0
+            ) {
+              lateDiscovered++;
+            }
           } else {
             const reviewed =
               Number(
@@ -2635,17 +3003,38 @@
                 reviewed
               )
             ) {
+              /*
+               * سجل قديم غير صالح:
+               * إذا سبق أن تهيأ المتعقب فلا نعتبر العدد الحالي مراجَعًا.
+               */
               record.reviewedCount =
-                count;
+                trackerWasInitialized
+                  ? 0
+                  : count;
             } else if (
               count < reviewed
             ) {
               /*
-               * إذا حُذفت استجابات من Forms، ننزل خط الأساس إلى العدد
-               * الحالي حتى لا ينتظر التنبيه تجاوز رقم قديم لم يعد موجودًا.
+               * انخفاض العدد يعني أن مجموعة الردود تغيّرت.
+               *
+               * - إذا كان المستخدم قد ضغط «تمت المراجعة» صراحةً،
+               *   نحافظ على السلوك المحافظ وننزل baseline للعدد الحالي
+               *   حتى لا تظهر الردود المتبقية كجديدة بسبب حذف جزئي.
+               *
+               * - إذا لم توجد مراجعة صريحة، فلا يجوز اعتبار العدد
+               *   المنخفض الحالي «مراجَعًا». قد يكون المستخدم مسح
+               *   الردود القديمة ثم وصلت ردود جديدة قبل الفحص التالي.
+               *   لذلك نعيد baseline إلى صفر كي لا نفوّت أي رد جديد.
                */
               record.reviewedCount =
-                count;
+                record.reviewedAt
+                  ? count
+                  : 0;
+
+              record.baselineSource =
+                record.reviewedAt
+                  ? 'explicit-reviewed-adjusted-down-v141'
+                  : 'unreviewed-reset-v141';
 
               record.adjustedDownAt =
                 now;
@@ -2668,8 +3057,18 @@
         );
 
       state.firstRun =
-        !hadAny &&
-        created > 0;
+        !trackerWasInitialized &&
+        counts.size > 0;
+
+      if (
+        state.firstRun
+      ) {
+        state.trackingInitialized =
+          true;
+
+        state.trackingInitializedAt =
+          now;
+      }
 
       state.lastCheckAt =
         Date.now();
@@ -2681,6 +3080,29 @@
       ) {
         state.status =
           'تم بدء التتبع من الآن؛ لن تُحسب الاستجابات السابقة كجديدة.';
+      } else if (
+        state.resetMigrationFixedCount >
+          0
+      ) {
+        state.status =
+          `تم إصلاح ${state.resetMigrationFixedCount} نموذج انخفضت ردوده دون مراجعة صريحة؛ ستظهر الردود الحالية كجديدة.`;
+
+        state.resetMigrationFixedCount =
+          0;
+      } else if (
+        state.legacyMigrationFixedCount >
+          0
+      ) {
+        state.status =
+          `تم تصحيح خط الأساس لـ ${state.legacyMigrationFixedCount} نموذج كان قد اكتُشف لاحقًا؛ ستظهر استجاباته غير المراجعة كجديدة.`;
+
+        state.legacyMigrationFixedCount =
+          0;
+      } else if (
+        lateDiscovered
+      ) {
+        state.status =
+          `تم اكتشاف ${lateDiscovered} نموذج لديه استجابات ولم يُراجع بعد؛ عُدّت استجاباته الحالية جديدة.`;
       } else if (
         adjustedDown
       ) {
@@ -3504,9 +3926,21 @@
         ];
 
       if (!record) {
+        /*
+         * إذا لم تصل لقطة البداية العالمية بعد، يكون هذا سجلًا
+         * مؤقتًا من صفحة Review ونحافظ على السلوك القديم لهذه الصفحة.
+         * أما بعد اكتمال التهيئة، فظهور نموذج لأول مرة لا يعني
+         * أن استجاباته الحالية تمت مراجعتها.
+         */
+        const isLateDiscovery =
+          state.trackingInitialized ===
+          true;
+
         record = {
           reviewedCount:
-            current,
+            isLateDiscovery
+              ? 0
+              : current,
           initializedAt:
             now,
           reviewedAt:
@@ -3514,7 +3948,11 @@
           lastSeenCount:
             current,
           lastSeenAt:
-            now
+            now,
+          baselineSource:
+            isLateDiscovery
+              ? 'late-discovery-v140'
+              : 'provisional-initial-review-v140'
         };
 
         state.records[
@@ -4669,6 +5107,14 @@
             respondentFormMatches:
               state.respondentFormId ===
               currentFormId(),
+            trackingInitialized:
+              state.trackingInitialized,
+            trackingInitializedAt:
+              state.trackingInitializedAt,
+            legacyMigrationFixedCount:
+              state.legacyMigrationFixedCount,
+            resetMigrationFixedCount:
+              state.resetMigrationFixedCount,
             manualNameCount:
               state.respondents.filter(
                 row =>
@@ -13557,7 +14003,7 @@
     );
 
     console.log(
-      '✅ المحسن جاهز: متابعة الاستجابات الجديدة + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
+      '✅ المحسن جاهز: متابعة الاستجابات الجديدة لكل نموذج مع معالجة إعادة ضبط الردود + بحث مباشر بالاسم المكتوب والمؤسسي في Review + طي القوالب تلقائيًا + أدوات Forms API السريعة.'
     );
   }
 
