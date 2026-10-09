@@ -35,3 +35,12 @@ jobs:
           grep -Fq "explicit-reviewed-adjusted-down-v141" "$file"
           grep -Fq "version: 3" "$file"
           cmp -s "$file" scripts/microsoft-forms-smart-enhancer/forms-smart-enhancer-v1.4.1.txt
+
+      - name: Package test files
+        uses: actions/upload-artifact@v4
+        with:
+          name: forms-smart-enhancer-v1.4.1
+          path: |
+            scripts/microsoft-forms-smart-enhancer/microsoft-forms-smart-enhancer.user.js
+            scripts/microsoft-forms-smart-enhancer/forms-smart-enhancer-v1.4.1.txt
+          if-no-files-found: error
