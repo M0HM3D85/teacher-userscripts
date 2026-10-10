@@ -70,9 +70,9 @@
     {
       "id": "madrasati-assignment-intelligence",
       "name": "Madrasati Assignment Intelligence | مدير الواجبات الذكي",
-      "version": "1.4.6",
+      "version": "1.4.7",
       "status": "stable",
-      "description": "مدير واجبات مدرستي المتقدم: تقارير نهائية بعد انتهاء النشر وفق وقت الخادم، دعم واجبات خارج النظام، ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وتقارير PDF/Excel/CSV تتبع التصفية الحالية.",
+      "description": "مدير واجبات مدرستي المتقدم: تقارير نهائية بعد انتهاء النشر وفق وقت الخادم، دعم واجبات خارج النظام، ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وتقارير PDF/Excel/CSV تتبع التصفية الحالية، مع اسم واجب موثوق في تقارير GradeAssignment.",
       "sourcePath": "scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-assignment-intelligence/README.md",
       "greasyFork": "https://greasyfork.org/scripts/596241",
