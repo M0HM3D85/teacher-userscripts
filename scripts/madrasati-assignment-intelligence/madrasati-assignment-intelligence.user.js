@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Assignment Intelligence | مدير الواجبات الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.4.6
+// @version      1.4.7
 // @description  مدير واجبات مدرستي: تحليل وتقارير نهائية مع ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وبطاقات وتقارير تتبع التصفية الحالية، مع PDF/Excel/CSV واستيراد درجات ذكي.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -18,7 +18,7 @@
 
 /*
 =========================================================================
- Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.6
+ Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.7
 
  تصميم وتطوير: Mohammed Almalki (M0HM3D85)
  X / Twitter : https://x.com/M0HM3D85
@@ -27,6 +27,10 @@
 
  هذا الإصدار يبني طبقة التحليل المتقدمة فوق النواة المستقرة v1.1.7
  المثبتة على commit محدد لضمان عدم تغير السلوك الأساسي دون قصد.
+
+ v1.4.7:
+ - إصلاح اسم الواجب في تقرير صفحة GradeAssignment بالاعتماد على عنوان بطاقة الواجب المرئي مباشرة وقت الطباعة.
+ - تمرير اسم الواجب المحقق صراحة إلى رأس التقرير وعنوان نافذة الطباعة بدل الاعتماد على قيمة حالة قديمة.
 
  v1.4.6:
  - إصلاح نهائي لربط الفصل بالطالب باستخدام checkStudent-<StudentId> المؤكد من بنية مدرستي.
@@ -60,7 +64,7 @@
   'use strict';
 
   const APP = 'MAI';
-  const VERSION = '1.4.6';
+  const VERSION = '1.4.7';
   const BASE_REQUIRED_VERSION = '1.1.7';
   const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V5';
   const PANEL_COLLAPSE_KEY = 'MAI_PANEL_COLLAPSED_V1';
@@ -76,7 +80,7 @@
   // صفحة GradeAssignment تعتمد على النواة المستقرة v1.1.7.
   // أما صفحة Index فلها لوحة مستقلة، لذلك لا نمنع تشغيلها إذا تعذر تحميل النواة لأي سبب.
   if (!base && isGradeAssignment) {
-    console.error('[MAI v1.4.6] Base v1.1.7 was not loaded on GradeAssignment.');
+    console.error('[MAI v1.4.7] Base v1.1.7 was not loaded on GradeAssignment.');
     return;
   }
 
@@ -817,7 +821,7 @@
       const batch = submitted.slice(i, i + concurrency);
       const links = await Promise.all(batch.map(async s => {
         try { return await resolveSingleStudentResultLink(s, params); }
-        catch (e) { console.warn('[MAI v1.4.6] Could not resolve student result link:', e); return ''; }
+        catch (e) { console.warn('[MAI v1.4.7] Could not resolve student result link:', e); return ''; }
       }));
       batch.forEach((s, j) => {
         if (links[j]) {
@@ -1222,7 +1226,7 @@
           const doc = await fetchTextDocument(detailsUrl);
           name = extractAssignmentNameFromDocument(doc);
         } catch (e) {
-          console.warn('[MAI v1.4.6] Could not resolve assignment name from details page:', e);
+          console.warn('[MAI v1.4.7] Could not resolve assignment name from details page:', e);
         }
       }
     }
@@ -1958,7 +1962,7 @@
       }).join('');
   };
 
-  const buildAssignmentPrintReport = () => {
+  const buildAssignmentPrintReport = (assignmentName = '') => {
     const data = state.gradeData;
     const viewRows = studentViewRows();
     const s = computeEnhancedSummary(viewRows);
@@ -2004,7 +2008,7 @@
       ? `<div class="section"><div class="card"><b>تنبيه تعارض بيانات</b><span>اكتشف النظام ${s.discrepancyCount} حالة اختلفت فيها درجة صفحة الرصد عن صفحة نتيجة الطالب؛ تم اعتماد صفحة النتيجة في هذا التقرير.</span></div></div>`
       : '';
 
-    return `${printHeaderHtml('تقرير الواجب', { rows: viewRows })}
+    return `${printHeaderHtml('تقرير الواجب', { rows: viewRows, assignmentName })}
       <div class="section"><div class="section-title"><h2>الملخص التنفيذي</h2></div><div class="cards">${cards.map(([v,l]) => `<div class="card"><b>${v}</b><span>${esc(l)}</span></div>`).join('')}</div></div>
       ${discrepancyNote}
       <div class="section"><div class="section-title"><h2>توزيع مستويات الطلاب</h2><span class="muted">${outside ? 'لم يسلّم مستقل عن سلّم وأخذ صفرًا' : 'ضعيف = 50% فأقل لمن لديه درجة'}</span></div><div class="levels">${printLevelGrid(viewRows)}</div></div>
@@ -2019,10 +2023,24 @@
     const w = openPrintShell('تقرير الواجب');
     try {
       if (!state.gradeData) await refreshEnhanced(false);
+
+      // تقرير الواجب يجب أن يأخذ الاسم من بطاقة الواجب الظاهرة في نفس صفحة GradeAssignment
+      // وقت الطباعة، حتى لا يعتمد على قيمة قديمة في state أو cache.
+      const directAssignmentName = extractAssignmentNameFromDocument(document);
+      const assignmentName = isUsableAssignmentName(directAssignmentName)
+        ? cleanAssignmentNameCandidate(directAssignmentName)
+        : await resolveAssignmentNameEnhanced({ allowFetch: true });
+
+      if (state.gradeData && assignmentName) {
+        assignmentNameCache = assignmentName;
+        state.gradeData.assignmentName = assignmentName;
+        state.gradeData.title = assignmentName;
+      }
+
       if (isOnlineQuestions() && !getQuestionAnalytics() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
         await runDeepQuestionAnalysisEnhanced({ silent: true });
       }
-      renderPrintDocument(w, `${state.gradeData?.assignmentName || state.gradeData?.title || 'الواجب'} — تقرير الواجب`, buildAssignmentPrintReport());
+      renderPrintDocument(w, `${assignmentName || 'الواجب'} — تقرير الواجب`, buildAssignmentPrintReport(assignmentName));
     } catch (e) {
       renderPrintDocument(w, 'تقرير الواجب', `<div class="header"><h1>تقرير الواجب</h1></div><div class="card"><b>تعذر تجهيز التقرير</b><div>${esc(String(e?.message || e))}</div></div>`, { autoPrint: false });
       throw e;
@@ -2160,7 +2178,7 @@
         try {
           await runDeepQuestionAnalysisEnhanced({ silent: true });
         } catch (e) {
-          console.warn('[MAI v1.4.6] Question analysis skipped:', e);
+          console.warn('[MAI v1.4.7] Question analysis skipped:', e);
         }
       }
 
@@ -2203,11 +2221,11 @@
             return;
           }
           if (isOnlineQuestions() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
-            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.6] Post-base refresh analysis skipped:', e); }
+            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.7] Post-base refresh analysis skipped:', e); }
           }
           renderInlineAnalysis();
         } catch (e) {
-          console.warn('[MAI v1.4.6] UI sync after base update failed:', e);
+          console.warn('[MAI v1.4.7] UI sync after base update failed:', e);
         }
       }, 650);
     });
@@ -2382,7 +2400,7 @@
         else if (action === 'excel') exportExcelEnhanced();
         else throw new Error(`إجراء غير معروف: ${action}`);
       } catch (e) {
-        console.error('[MAI v1.4.6] Action failed:', action, e);
+        console.error('[MAI v1.4.7] Action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         btn.dataset.running = '0';
@@ -2913,7 +2931,7 @@
           exportIndexExcel();
         }
       } catch (e) {
-        console.error('[MAI v1.4.6] Index action failed:', action, e);
+        console.error('[MAI v1.4.7] Index action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         setIndexBusy(false);
@@ -3206,7 +3224,7 @@
             row.gradeDiscrepancy = Number.isFinite(pageGrade) && !nearlyEqual(pageGrade, summary.resultScore);
           }
         } catch (e) {
-          console.warn('[MAI v1.4.6] Fractional result verification skipped:', e);
+          console.warn('[MAI v1.4.7] Fractional result verification skipped:', e);
         }
       }));
     }
