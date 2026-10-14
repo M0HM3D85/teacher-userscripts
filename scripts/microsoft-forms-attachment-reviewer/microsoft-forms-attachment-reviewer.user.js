@@ -1325,9 +1325,8 @@
         }
 
         try {
-            saveCurrentGrade({ quiet: true });
             flushCurrentReferenceNotes();
-            await sleep(80);
+            await sleep(40);
 
             const row = await ensureCurrentObservedRespondent();
             const responseId = clean(row?.id || '');
@@ -1425,13 +1424,16 @@
             state.unreviewedCountFormKey = '';
 
             const successMessage = `✓ تم حذف استجابة ${studentName || 'المستجيب'} بنجاح.`;
-            scheduleViewerReopenAfterDelete(successMessage);
 
             if (remainingCount <= 0) {
-                closeViewer();
+                state.open = false;
+                document.getElementById(APP_ID)?.remove();
+                document.getElementById(STYLE_ID)?.remove();
                 location.reload();
                 return;
             }
+
+            scheduleViewerReopenAfterDelete(successMessage);
 
             const nextIndex = Math.max(
                 0,
@@ -4769,13 +4771,13 @@
 
         if (state.referenceLoadedKey !== question.storageKey) {
             if (state.referenceVisible) {
-            loadReferenceForQuestion(question);
-        }
-        else {
-            revokeReferenceObjectURL();
-            state.referenceRecord = null;
-            state.referenceLoadedKey = '';
-        }
+                loadReferenceForQuestion(question);
+            }
+            else {
+                revokeReferenceObjectURL();
+                state.referenceRecord = null;
+                state.referenceLoadedKey = '';
+            }
         }
 
         qPrev.disabled = state.questionIndex <= 0;
