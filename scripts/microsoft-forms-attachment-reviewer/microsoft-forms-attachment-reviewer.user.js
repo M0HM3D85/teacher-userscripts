@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - عارض المرفقات والتصحيح السريع
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.4
-// @description  بيئة تصحيح مرفقات Microsoft Forms مع إظهار اسم الطالب المكتوب في سؤال الاسم، مرجع قابل لتغيير الحجم، تصحيح تراكمي سريع، تنقل واختصارات، عداد غير المصححين، والتكبير والسحب والتدوير.
+// @version      1.3.5
+// @description  بيئة تصحيح مرفقات Microsoft Forms مع قسم نموذج اختياري، حذف آمن للاستجابة الحالية، أزرار صفر/الدرجة الكاملة واختصاراتها في شريط التصحيح السريع، والتنقل والتكبير والسحب والتدوير.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -36,7 +36,7 @@
 
     /* =========================================================
        Microsoft Forms - Attachment Reviewer
-       Version 1.3.4
+       Version 1.3.5
 
        Developer:
        Mohammed Almalki (M0HM3D85)
@@ -45,7 +45,7 @@
        جميع الحقوق محفوظة
        ========================================================= */
 
-    const VERSION = '1.3.4';
+    const VERSION = '1.3.5';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -61,6 +61,9 @@
 
     const SKIP_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_SKIP_GRADED_V1';
     const SPLIT_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_WIDTH_V1';
+    const REFERENCE_VISIBLE_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_VISIBLE_V135';
+    const REOPEN_AFTER_DELETE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_REOPEN_AFTER_DELETE_V135';
+    const DELETE_STATUS_KEY = 'M0HM3D85_FORMS_ATTACHMENT_DELETE_STATUS_V135';
 
     const REFERENCE_DB_NAME = 'M0HM3D85_FORMS_ATTACHMENT_REVIEWER_DB';
     const REFERENCE_DB_VERSION = 1;
@@ -103,10 +106,12 @@
         /* هوية المستجيب: الاسم المكتوب في سؤال الاسم أولًا */
         respondents: [],
         respondentFormId: '',
+        responsesListUrl: '',
         manualNameQuestionId: '',
         manualNameQuestionScore: 0,
         manualNameQuestionConfidence: '',
         respondentsCapturedAt: 0,
+        deletingResponse: false,
 
         /* التصحيح التراكمي السريع */
         gradeHistoryContext: '',
@@ -126,7 +131,7 @@
         unreviewedStatusMap: new Map(),
         unreviewedCountFormKey: '',
 
-        referenceVisible: true,
+        referenceVisible: readReferenceVisiblePreference(),
         referenceMode: 'original',
         referenceRecord: null,
         referenceLoadedKey: '',
@@ -210,6 +215,25 @@
             localStorage.setItem(
                 SPLIT_STORAGE_KEY,
                 String(Math.round(value * 10) / 10)
+            );
+        }
+        catch (_) {}
+    }
+
+    function readReferenceVisiblePreference() {
+        try {
+            return localStorage.getItem(REFERENCE_VISIBLE_STORAGE_KEY) !== '0';
+        }
+        catch (_) {
+            return true;
+        }
+    }
+
+    function writeReferenceVisiblePreference(visible) {
+        try {
+            localStorage.setItem(
+                REFERENCE_VISIBLE_STORAGE_KEY,
+                visible ? '1' : '0'
             );
         }
         catch (_) {}
@@ -1003,6 +1027,14 @@
     }
 
     function consumeObservedRespondents(payload, rawUrl) {
+        try {
+            state.responsesListUrl = new URL(
+                String(rawUrl || ''),
+                location.href
+            ).href;
+        }
+        catch (_) {}
+
         const rows = parseRespondentRows(payload);
 
         if (!rows.length) {
@@ -1110,7 +1142,7 @@
 
         if (
             !proto ||
-            proto.__m0hm3d85AttachmentIdentityTapV134
+            proto.__m0hm3d85AttachmentIdentityTapV135
         ) {
             return;
         }
@@ -1173,7 +1205,7 @@
 
         Object.defineProperty(
             proto,
-            '__m0hm3d85AttachmentIdentityTapV134',
+            '__m0hm3d85AttachmentIdentityTapV135',
             {
                 value: true,
                 configurable: false,
@@ -1183,6 +1215,246 @@
     }
 
     installRespondentIdentityTap();
+
+    /* =========================================================
+       حذف الاستجابة الحالية — بطلب صريح فقط
+       ========================================================= */
+
+    function discoverResponsesListUrl() {
+        if (state.responsesListUrl && isResponsesListUrl(state.responsesListUrl)) {
+            return state.responsesListUrl;
+        }
+
+        try {
+            const resources = performance
+                .getEntriesByType('resource')
+                .map(entry => entry.name)
+                .filter(isResponsesListUrl);
+
+            return resources.at(-1) || '';
+        }
+        catch (_) {
+            return '';
+        }
+    }
+
+    async function ensureCurrentObservedRespondent() {
+        let row = currentObservedRespondent();
+
+        if (row && discoverResponsesListUrl()) {
+            return row;
+        }
+
+        const listUrl = discoverResponsesListUrl();
+
+        if (!listUrl) {
+            return row || null;
+        }
+
+        try {
+            const response = await fetch(listUrl, {
+                credentials: 'include',
+                cache: 'no-store',
+                headers: {
+                    Accept: 'application/json, text/plain, */*'
+                }
+            });
+
+            if (!response.ok) {
+                return row || null;
+            }
+
+            const payload = await response.json();
+            consumeObservedRespondents(payload, listUrl);
+            row = currentObservedRespondent();
+        }
+        catch (_) {}
+
+        return row || null;
+    }
+
+    function responseDeleteCandidates(listUrl, responseId) {
+        if (!listUrl || !/^\d+$/.test(String(responseId || ''))) {
+            return [];
+        }
+
+        try {
+            const url = new URL(listUrl, location.href);
+            url.search = '';
+            url.hash = '';
+
+            const collection = url.href.replace(/\/+$/, '');
+            const id = String(responseId);
+
+            const canonical = collection.replace(
+                /\/light\/forms\(/i,
+                '/forms('
+            );
+
+            return [
+                `${canonical}(${id})`,
+                `${collection}(${id})`
+            ].filter((value, index, array) => array.indexOf(value) === index);
+        }
+        catch (_) {
+            return [];
+        }
+    }
+
+    function scheduleViewerReopenAfterDelete(message) {
+        try {
+            sessionStorage.setItem(REOPEN_AFTER_DELETE_KEY, '1');
+            sessionStorage.setItem(DELETE_STATUS_KEY, String(message || ''));
+        }
+        catch (_) {}
+    }
+
+    async function deleteCurrentResponse() {
+        if (state.deletingResponse || state.navigatingStudent || state.countingUnreviewed) {
+            return;
+        }
+
+        const button = $('#m0ar-delete-response');
+        const originalText = button?.textContent || '🗑 حذف الاستجابة';
+
+        state.deletingResponse = true;
+
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'جارٍ التحقق...';
+        }
+
+        try {
+            saveCurrentGrade({ quiet: true });
+            flushCurrentReferenceNotes();
+            await sleep(80);
+
+            const row = await ensureCurrentObservedRespondent();
+            const responseId = clean(row?.id || '');
+            const listUrl = discoverResponsesListUrl();
+
+            if (!row || !responseId || !listUrl) {
+                throw new Error(
+                    'تعذر تحديد الاستجابة الحالية بأمان. أغلق العارض وأعد فتح صفحة المراجعة ثم حاول مرة أخرى.'
+                );
+            }
+
+            const studentName = getStudentName();
+            const respondentNumber = getRespondentNumber();
+            const accepted = confirm(
+                'حذف الاستجابة الحالية نهائيًا؟\n\n' +
+                `الطالب: ${studentName || 'المستجيب'}\n` +
+                (respondentNumber ? `رقم المستجيب: ${respondentNumber}\n` : '') +
+                `معرّف الاستجابة: ${responseId}\n\n` +
+                'لا يمكن التراجع عن هذا الإجراء، وسيتم حذف الاستجابة كاملة من Microsoft Forms.'
+            );
+
+            if (!accepted) {
+                return;
+            }
+
+            if (button) {
+                button.textContent = 'جارٍ الحذف...';
+            }
+
+            const candidates = responseDeleteCandidates(listUrl, responseId);
+
+            if (!candidates.length) {
+                throw new Error('تعذر تكوين مسار حذف الاستجابة الحالية.');
+            }
+
+            let deleted = false;
+            let lastStatus = 0;
+            let lastMessage = '';
+
+            for (const deleteUrl of candidates) {
+                let response;
+
+                try {
+                    response = await fetch(deleteUrl, {
+                        method: 'DELETE',
+                        credentials: 'include',
+                        cache: 'no-store',
+                        headers: {
+                            Accept: 'application/json, text/plain, */*'
+                        }
+                    });
+                }
+                catch (error) {
+                    /*
+                     * لا نعيد المحاولة عند خطأ شبكة غير حاسم:
+                     * قد يكون الخادم نفذ الحذف وانقطع الرد.
+                     */
+                    throw new Error(
+                        'تعذر تأكيد نتيجة طلب الحذف بسبب مشكلة شبكة. حدّث الصفحة وتحقق قبل إعادة المحاولة.'
+                    );
+                }
+
+                lastStatus = response.status;
+                lastMessage = clean(await response.text().catch(() => ''));
+
+                if (response.ok) {
+                    deleted = true;
+                    break;
+                }
+
+                /*
+                 * نجرّب مسار light فقط إذا رفض المسار القياسي
+                 * بصيغة غير موجود/غير مدعوم. بقية الأخطاء توقف العملية.
+                 */
+                if (![404, 405].includes(response.status)) {
+                    break;
+                }
+            }
+
+            if (!deleted) {
+                throw new Error(
+                    lastStatus
+                        ? `رفض Microsoft Forms حذف الاستجابة (HTTP ${lastStatus})${lastMessage ? `: ${lastMessage.slice(0, 180)}` : ''}`
+                        : 'تعذر حذف الاستجابة الحالية.'
+                );
+            }
+
+            const currentIndex = currentReviewIndex() ?? row.index ?? 0;
+            const knownCount = state.respondents.filter(Boolean).length;
+            const remainingCount = Math.max(0, knownCount - 1);
+
+            state.unreviewedCount = null;
+            state.countedStudents = null;
+            state.unreviewedStatusMap = new Map();
+            state.unreviewedCountFormKey = '';
+
+            const successMessage = `✓ تم حذف استجابة ${studentName || 'المستجيب'} بنجاح.`;
+            scheduleViewerReopenAfterDelete(successMessage);
+
+            if (remainingCount <= 0) {
+                closeViewer();
+                location.reload();
+                return;
+            }
+
+            const nextIndex = Math.max(
+                0,
+                Math.min(currentIndex, remainingCount - 1)
+            );
+
+            const nextUrl = new URL(location.href);
+            nextUrl.searchParams.set('ridx', String(nextIndex));
+            location.assign(nextUrl.href);
+        }
+        catch (error) {
+            console.error('[Attachment Reviewer v1.3.5] delete response failed', error);
+            setStatus(clean(error?.message || error));
+
+            if (button) {
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+        finally {
+            state.deletingResponse = false;
+        }
+    }
 
     /* =========================================================
        بيانات الطالب
@@ -1726,7 +1998,7 @@
         state.open = true;
         state.questionIndex = 0;
         state.fileIndex = 0;
-        state.referenceVisible = true;
+        state.referenceVisible = readReferenceVisiblePreference();
         state.referenceMode = 'original';
         state.referenceRecord = null;
         state.referenceLoadedKey = '';
@@ -1970,7 +2242,8 @@
 }
 
 #m0ar-workspace.reference-hidden #m0ar-reference-pane,
-#m0ar-workspace.reference-hidden #m0ar-splitter{
+#m0ar-workspace.reference-hidden #m0ar-splitter,
+#m0ar-side.reference-hidden #m0ar-reference-card{
     display:none;
 }
 
@@ -2102,12 +2375,8 @@
 #m0ar-quick-grade-actions{
     display:grid;
     grid-template-columns:
-        minmax(62px,.65fr)
-        minmax(70px,.75fr)
-        minmax(70px,.75fr)
-        minmax(62px,.65fr)
-        minmax(88px,.9fr)
-        minmax(190px,1.75fr);
+        repeat(7,minmax(62px,.72fr))
+        minmax(190px,1.65fr);
     gap:6px;
 }
 
@@ -2539,7 +2808,7 @@
 
 @media(max-width:1500px){
     #m0ar-quick-grade-actions{
-        grid-template-columns:repeat(5,minmax(60px,1fr));
+        grid-template-columns:repeat(4,minmax(60px,1fr));
     }
 
     #m0ar-quick-approve{
@@ -2620,11 +2889,20 @@
     </button>
 
     <button type="button" class="m0ar-btn" id="m0ar-reference-toggle">
-        📘 إخفاء المرجع
+        📘 إخفاء قسم النموذج
     </button>
 
     <button type="button" class="m0ar-btn primary" id="m0ar-student-next-top">
         الطالب التالي ▶
+    </button>
+
+    <button
+        type="button"
+        class="m0ar-btn danger"
+        id="m0ar-delete-response"
+        title="حذف الاستجابة الحالية كاملة من Microsoft Forms"
+    >
+        🗑 حذف الاستجابة
     </button>
 
     <button type="button" class="m0ar-btn danger" id="m0ar-close" title="إغلاق العارض">
@@ -2669,7 +2947,7 @@
             <div id="m0ar-question-counter">—</div>
         </div>
 
-        <div class="m0ar-card">
+        <div class="m0ar-card" id="m0ar-reference-card">
             <div class="m0ar-label">📘 مرجع التصحيح لهذا السؤال</div>
 
             <div id="m0ar-reference-file-name">
@@ -2726,10 +3004,6 @@
                 <span id="m0ar-max">/ —</span>
             </div>
 
-            <div id="m0ar-score-buttons">
-                <button type="button" class="m0ar-btn zero" id="m0ar-zero-score">صفر</button>
-                <button type="button" class="m0ar-btn good" id="m0ar-full-score">الدرجة كاملة</button>
-            </div>
         </div>
 
         <div class="m0ar-card">
@@ -2801,7 +3075,7 @@
                     <div id="m0ar-quick-grade-top">
                         <div id="m0ar-quick-grade-title">
                             ⚡ التصحيح التراكمي السريع
-                            <span id="m0ar-quick-shortcut-hint">1 = +1 • 5 = +0.5 • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
+                            <span id="m0ar-quick-shortcut-hint">1 = +1 • 5 = +0.5 • 0 = صفر • F = كاملة • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
                         </div>
 
                         <div id="m0ar-quick-score-display">
@@ -2825,6 +3099,14 @@
 
                         <button type="button" class="m0ar-btn m0ar-score-subtract" id="m0ar-score-minus-one" title="خصم درجة واحدة">
                             −1
+                        </button>
+
+                        <button type="button" class="m0ar-btn zero" id="m0ar-zero-score" title="رصد صفر مباشرة">
+                            صفر <span class="m0ar-key">0</span>
+                        </button>
+
+                        <button type="button" class="m0ar-btn good" id="m0ar-full-score" title="رصد الدرجة الكاملة مباشرة">
+                            كاملة <span class="m0ar-key">F</span>
                         </button>
 
                         <button type="button" class="m0ar-btn" id="m0ar-quick-undo" title="التراجع عن آخر تعديل سريع">
@@ -2897,6 +3179,7 @@
 
     function updateReferenceVisibilityUI() {
         const workspace = $('#m0ar-workspace');
+        const side = $('#m0ar-side');
         const button = $('#m0ar-reference-toggle');
 
         workspace?.classList.toggle(
@@ -2904,10 +3187,20 @@
             !state.referenceVisible
         );
 
+        side?.classList.toggle(
+            'reference-hidden',
+            !state.referenceVisible
+        );
+
         if (button) {
             button.textContent = state.referenceVisible
-                ? '📘 إخفاء المرجع'
-                : '📘 إظهار المرجع';
+                ? '📘 إخفاء قسم النموذج'
+                : '📘 إظهار قسم النموذج';
+
+            button.setAttribute(
+                'aria-pressed',
+                state.referenceVisible ? 'true' : 'false'
+            );
         }
 
         applyReferencePaneWidth();
@@ -3015,7 +3308,16 @@
 
     function toggleReferenceVisibility() {
         state.referenceVisible = !state.referenceVisible;
+        writeReferenceVisiblePreference(state.referenceVisible);
         updateReferenceVisibilityUI();
+
+        if (state.referenceVisible) {
+            loadReferenceForQuestion(currentQuestion());
+            setStatus('📘 تم إظهار قسم النموذج والمرجع.');
+        }
+        else {
+            setStatus('📘 تم إخفاء قسم النموذج وتوسيع مساحة إجابة الطالب.');
+        }
     }
 
     function updateReferenceTabs() {
@@ -3747,6 +4049,8 @@
         const plusHalf = $('#m0ar-score-plus-half');
         const minusHalf = $('#m0ar-score-minus-half');
         const minusOne = $('#m0ar-score-minus-one');
+        const zeroScore = $('#m0ar-zero-score');
+        const fullScore = $('#m0ar-full-score');
         const undo = $('#m0ar-quick-undo');
         const approve = $('#m0ar-quick-approve');
 
@@ -3830,6 +4134,14 @@
 
         if (minusOne) {
             minusOne.disabled = unavailable || !recorded || atMinimum;
+        }
+
+        if (zeroScore) {
+            zeroScore.disabled = unavailable || atMinimum;
+        }
+
+        if (fullScore) {
+            fullScore.disabled = unavailable || max === null || atMaximum;
         }
 
         if (undo) {
@@ -4456,7 +4768,14 @@
             `السؤال ${state.questionIndex + 1} من ${state.questions.length}`;
 
         if (state.referenceLoadedKey !== question.storageKey) {
+            if (state.referenceVisible) {
             loadReferenceForQuestion(question);
+        }
+        else {
+            revokeReferenceObjectURL();
+            state.referenceRecord = null;
+            state.referenceLoadedKey = '';
+        }
         }
 
         qPrev.disabled = state.questionIndex <= 0;
@@ -5147,6 +5466,18 @@
        الدرجات السريعة
        ========================================================= */
 
+    function setFullQuickScore() {
+        const question = currentQuestion();
+        const max = getQuestionMaxNumber(question);
+
+        if (max === null) {
+            setStatus('تعذر تحديد الدرجة الكاملة لهذا السؤال.');
+            return;
+        }
+
+        setQuickScore(formatScore(max));
+    }
+
     function setQuickScore(value) {
         const question = currentQuestion();
         const grade = $('#m0ar-grade');
@@ -5279,6 +5610,11 @@
         $('#m0ar-reference-toggle').addEventListener(
             'click',
             toggleReferenceVisibility
+        );
+
+        $('#m0ar-delete-response').addEventListener(
+            'click',
+            deleteCurrentResponse
         );
 
         $('#m0ar-unreviewed-counter').addEventListener(
@@ -5446,15 +5782,7 @@
 
         $('#m0ar-full-score').addEventListener(
             'click',
-            () => {
-                const question = currentQuestion();
-
-                if (!question?.maxPoints) {
-                    return;
-                }
-
-                setQuickScore(question.maxPoints);
-            }
+            setFullQuickScore
         );
 
         $('#m0ar-score-plus-one').addEventListener(
@@ -5725,6 +6053,30 @@
         if (
             !event.repeat &&
             plainKey &&
+            (event.code === 'Digit0' || event.code === 'Numpad0')
+        ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setQuickScore('0');
+            focusViewerShell();
+            return;
+        }
+
+        if (
+            !event.repeat &&
+            plainKey &&
+            event.code === 'KeyF'
+        ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setFullQuickScore();
+            focusViewerShell();
+            return;
+        }
+
+        if (
+            !event.repeat &&
+            plainKey &&
             event.code === 'KeyZ'
         ) {
             event.preventDefault();
@@ -5925,13 +6277,24 @@
 
         showReference: () => {
             state.referenceVisible = true;
+            writeReferenceVisiblePreference(true);
             updateReferenceVisibilityUI();
+            loadReferenceForQuestion(currentQuestion());
         },
 
         hideReference: () => {
             state.referenceVisible = false;
+            writeReferenceVisiblePreference(false);
             updateReferenceVisibilityUI();
         },
+
+        setZeroScore: () =>
+            setQuickScore('0'),
+
+        setFullScore: () =>
+            setFullQuickScore(),
+
+        deleteCurrentResponse,
 
         addOnePoint: () =>
             applyQuickScoreDelta(1),
@@ -5992,7 +6355,49 @@
        التشغيل
        ========================================================= */
 
+    function reopenViewerAfterDeleteIfNeeded() {
+        let shouldReopen = false;
+        let message = '';
+
+        try {
+            shouldReopen = sessionStorage.getItem(REOPEN_AFTER_DELETE_KEY) === '1';
+            message = sessionStorage.getItem(DELETE_STATUS_KEY) || '';
+
+            if (shouldReopen) {
+                sessionStorage.removeItem(REOPEN_AFTER_DELETE_KEY);
+                sessionStorage.removeItem(DELETE_STATUS_KEY);
+            }
+        }
+        catch (_) {}
+
+        if (!shouldReopen) {
+            return;
+        }
+
+        let attempts = 0;
+
+        const timer = setInterval(() => {
+            attempts++;
+
+            if (isReviewPage()) {
+                clearInterval(timer);
+                openViewer();
+
+                if (message) {
+                    setTimeout(() => setStatus(message), 220);
+                }
+
+                return;
+            }
+
+            if (attempts >= 40) {
+                clearInterval(timer);
+            }
+        }, 250);
+    }
+
     installLauncher();
+    reopenViewerAfterDeleteIfNeeded();
 
     console.log(
         '%cMicrosoft Forms Attachment Reviewer',
@@ -6002,9 +6407,9 @@
     console.log('الإصدار:', VERSION);
     console.log('المطور:', `${DEVELOPER.name} (${DEVELOPER.handle})`);
     console.log('تجاوز المصححين:', state.skipGraded ? 'مفعّل' : 'متوقف');
-    console.log('اختصارات التصحيح: 1 = +1 | 5 = +0.5 | Z = تراجع | Enter = اعتماد ومتابعة');
+    console.log('اختصارات التصحيح: 1 = +1 | 5 = +0.5 | 0 = صفر | F = الدرجة كاملة | Z = تراجع | Enter = اعتماد ومتابعة');
     console.log('PgDn/PgUp: الملف التالي/السابق | Shift+PgDn/PgUp: سؤال المرفق التالي/السابق');
-    console.log('V1.3.3: اختصارات R/H/V/Z وغيرها تعمل مع تخطيط الكيبورد العربي والإنجليزي باستخدام المفاتيح الفيزيائية.');
+    console.log('V1.3.5: اختصارات R/H/V/Z/F وغيرها تعمل مع تخطيط الكيبورد العربي والإنجليزي باستخدام المفاتيح الفيزيائية.');
     console.log(DEVELOPER.copyright);
 
 })();
