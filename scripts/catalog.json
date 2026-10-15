@@ -84,6 +84,21 @@
       "normalizedIdentity": true
     },
     {
+      "id": "madrasati-projects-intelligence",
+      "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
+      "version": "1.5.0",
+      "status": "stable",
+      "description": "مدير الأنشطة والمشاريع في مدرستي: فهرسة وبحث، تحليلات ورسوم وإحصائيات للطلاب والمنشورات، التحقق من نهاية الاستقبال، تقارير PDF/Excel/CSV، واستيراد درجات مع معاينة ونسخة احتياطية.",
+      "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
+      "additionalInfoPath": "scripts/madrasati-projects-intelligence/README.md",
+      "greasyFork": null,
+      "legacyVersionFormat": false,
+      "targets": [
+        "https://schools.madrasati.sa/Projects/Projects/*"
+      ],
+      "normalizedIdentity": true
+    },
+    {
       "id": "madrasati-smart-attendance",
       "name": "Madrasati Smart Attendance | التحضير الذكي لمدرستي",
       "version": "0.3.2",
