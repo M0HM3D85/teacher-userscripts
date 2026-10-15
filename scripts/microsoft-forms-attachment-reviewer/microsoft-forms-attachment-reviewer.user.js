@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - عارض المرفقات والتصحيح السريع
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.4
-// @description  بيئة تصحيح مرفقات Microsoft Forms مع إظهار اسم الطالب المكتوب في سؤال الاسم، مرجع قابل لتغيير الحجم، تصحيح تراكمي سريع، تنقل واختصارات، عداد غير المصححين، والتكبير والسحب والتدوير.
+// @version      1.3.5
+// @description  بيئة تصحيح مرفقات Microsoft Forms مع قسم نموذج قابل للإخفاء، حذف الاستجابة من العارض عبر أمر Forms الأصلي، وأزرار صفر/الدرجة الكاملة واختصاراتها في شريط التصحيح السريع.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -36,7 +36,7 @@
 
     /* =========================================================
        Microsoft Forms - Attachment Reviewer
-       Version 1.3.4
+       Version 1.3.5
 
        Developer:
        Mohammed Almalki (M0HM3D85)
@@ -45,7 +45,7 @@
        جميع الحقوق محفوظة
        ========================================================= */
 
-    const VERSION = '1.3.4';
+    const VERSION = '1.3.5';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -61,6 +61,8 @@
 
     const SKIP_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_SKIP_GRADED_V1';
     const SPLIT_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_WIDTH_V1';
+    const REFERENCE_VISIBILITY_STORAGE_KEY =
+        'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_VISIBLE_V1';
 
     const REFERENCE_DB_NAME = 'M0HM3D85_FORMS_ATTACHMENT_REVIEWER_DB';
     const REFERENCE_DB_VERSION = 1;
@@ -98,6 +100,7 @@
 
         imageToken: 0,
         navigatingStudent: false,
+        deletingResponse: false,
         open: false,
 
         /* هوية المستجيب: الاسم المكتوب في سؤال الاسم أولًا */
@@ -126,7 +129,7 @@
         unreviewedStatusMap: new Map(),
         unreviewedCountFormKey: '',
 
-        referenceVisible: true,
+        referenceVisible: readReferenceVisibilityPreference(),
         referenceMode: 'original',
         referenceRecord: null,
         referenceLoadedKey: '',
@@ -188,6 +191,35 @@
     function writeSkipPreference(enabled) {
         try {
             localStorage.setItem(SKIP_STORAGE_KEY, enabled ? '1' : '0');
+        }
+        catch (_) {}
+    }
+
+    function readReferenceVisibilityPreference() {
+        try {
+            const value = localStorage.getItem(
+                REFERENCE_VISIBILITY_STORAGE_KEY
+            );
+
+            /*
+             * الإعداد افتراضيًا مفعّل للحفاظ على سلوك الإصدارات السابقة.
+             * بعد أول إخفاء يتذكر العارض اختيار المستخدم في المرات التالية.
+             */
+            return value === null
+                ? true
+                : value === '1';
+        }
+        catch (_) {
+            return true;
+        }
+    }
+
+    function writeReferenceVisibilityPreference(visible) {
+        try {
+            localStorage.setItem(
+                REFERENCE_VISIBILITY_STORAGE_KEY,
+                visible ? '1' : '0'
+            );
         }
         catch (_) {}
     }
@@ -1110,7 +1142,7 @@
 
         if (
             !proto ||
-            proto.__m0hm3d85AttachmentIdentityTapV134
+            proto.__m0hm3d85AttachmentIdentityTapV135
         ) {
             return;
         }
@@ -1173,7 +1205,7 @@
 
         Object.defineProperty(
             proto,
-            '__m0hm3d85AttachmentIdentityTapV134',
+            '__m0hm3d85AttachmentIdentityTapV135',
             {
                 value: true,
                 configurable: false,
@@ -1726,7 +1758,8 @@
         state.open = true;
         state.questionIndex = 0;
         state.fileIndex = 0;
-        state.referenceVisible = true;
+        state.referenceVisible =
+            readReferenceVisibilityPreference();
         state.referenceMode = 'original';
         state.referenceRecord = null;
         state.referenceLoadedKey = '';
@@ -1853,6 +1886,10 @@
 
 #m0ar-unreviewed-counter.ready #m0ar-unreviewed-value{
     color:#f8fafc;
+}
+
+#m0ar-delete-response{
+    white-space:nowrap;
 }
 
 #m0ar-count-overlay{
@@ -2102,12 +2139,14 @@
 #m0ar-quick-grade-actions{
     display:grid;
     grid-template-columns:
-        minmax(62px,.65fr)
-        minmax(70px,.75fr)
-        minmax(70px,.75fr)
-        minmax(62px,.65fr)
-        minmax(88px,.9fr)
-        minmax(190px,1.75fr);
+        minmax(58px,.62fr)
+        minmax(92px,.9fr)
+        minmax(58px,.62fr)
+        minmax(66px,.72fr)
+        minmax(66px,.72fr)
+        minmax(58px,.62fr)
+        minmax(86px,.82fr)
+        minmax(180px,1.65fr);
     gap:6px;
 }
 
@@ -2115,6 +2154,20 @@
     min-height:36px;
     padding:5px 9px;
     font-size:12px;
+}
+
+.m0ar-score-zero{
+    background:#374151;
+    border-color:#475569;
+}
+
+.m0ar-score-full{
+    background:#047857;
+    border-color:#059669;
+}
+
+.m0ar-score-full:hover:not(:disabled){
+    background:#059669;
 }
 
 .m0ar-score-add{
@@ -2539,7 +2592,7 @@
 
 @media(max-width:1500px){
     #m0ar-quick-grade-actions{
-        grid-template-columns:repeat(5,minmax(60px,1fr));
+        grid-template-columns:repeat(4,minmax(60px,1fr));
     }
 
     #m0ar-quick-approve{
@@ -2627,6 +2680,15 @@
         الطالب التالي ▶
     </button>
 
+    <button
+        type="button"
+        class="m0ar-btn danger"
+        id="m0ar-delete-response"
+        title="حذف استجابة المستجيب الحالية باستخدام أمر Microsoft Forms الأصلي"
+    >
+        🗑 حذف الاستجابة
+    </button>
+
     <button type="button" class="m0ar-btn danger" id="m0ar-close" title="إغلاق العارض">
         ✕
     </button>
@@ -2669,7 +2731,7 @@
             <div id="m0ar-question-counter">—</div>
         </div>
 
-        <div class="m0ar-card">
+        <div class="m0ar-card" id="m0ar-reference-card">
             <div class="m0ar-label">📘 مرجع التصحيح لهذا السؤال</div>
 
             <div id="m0ar-reference-file-name">
@@ -2726,9 +2788,8 @@
                 <span id="m0ar-max">/ —</span>
             </div>
 
-            <div id="m0ar-score-buttons">
-                <button type="button" class="m0ar-btn zero" id="m0ar-zero-score">صفر</button>
-                <button type="button" class="m0ar-btn good" id="m0ar-full-score">الدرجة كاملة</button>
+            <div style="margin-top:8px;color:#64748b;font-size:11px;line-height:1.6">
+                أزرار «صفر» و«الدرجة كاملة» أصبحت في شريط التصحيح السريع أعلى إجابة الطالب.
             </div>
         </div>
 
@@ -2801,7 +2862,7 @@
                     <div id="m0ar-quick-grade-top">
                         <div id="m0ar-quick-grade-title">
                             ⚡ التصحيح التراكمي السريع
-                            <span id="m0ar-quick-shortcut-hint">1 = +1 • 5 = +0.5 • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
+                            <span id="m0ar-quick-shortcut-hint">0 = صفر • F = كاملة • 1 = +1 • 5 = +0.5 • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
                         </div>
 
                         <div id="m0ar-quick-score-display">
@@ -2811,6 +2872,14 @@
                     </div>
 
                     <div id="m0ar-quick-grade-actions">
+                        <button type="button" class="m0ar-btn m0ar-score-zero" id="m0ar-zero-score" title="رصد صفر مباشرة">
+                            صفر <span class="m0ar-key">0</span>
+                        </button>
+
+                        <button type="button" class="m0ar-btn m0ar-score-full" id="m0ar-full-score" title="رصد الدرجة الكاملة مباشرة">
+                            الدرجة كاملة <span class="m0ar-key">F</span>
+                        </button>
+
                         <button type="button" class="m0ar-btn m0ar-score-add" id="m0ar-score-plus-one" title="إضافة درجة واحدة">
                             +1 <span class="m0ar-key">1</span>
                         </button>
@@ -2898,16 +2967,25 @@
     function updateReferenceVisibilityUI() {
         const workspace = $('#m0ar-workspace');
         const button = $('#m0ar-reference-toggle');
+        const card = $('#m0ar-reference-card');
 
         workspace?.classList.toggle(
             'reference-hidden',
             !state.referenceVisible
         );
 
+        if (card) {
+            card.hidden = !state.referenceVisible;
+        }
+
         if (button) {
             button.textContent = state.referenceVisible
-                ? '📘 إخفاء المرجع'
-                : '📘 إظهار المرجع';
+                ? '📘 إخفاء قسم النموذج'
+                : '📘 إظهار قسم النموذج';
+
+            button.title = state.referenceVisible
+                ? 'إخفاء مرجع التصحيح ونموذج الإجابة لتوسيع مساحة إجابة الطالب'
+                : 'إظهار مرجع التصحيح ونموذج الإجابة';
         }
 
         applyReferencePaneWidth();
@@ -3015,7 +3093,16 @@
 
     function toggleReferenceVisibility() {
         state.referenceVisible = !state.referenceVisible;
+        writeReferenceVisibilityPreference(
+            state.referenceVisible
+        );
         updateReferenceVisibilityUI();
+
+        setStatus(
+            state.referenceVisible
+                ? '📘 تم إظهار قسم النموذج والمرجع.'
+                : '✓ تم إخفاء قسم النموذج والمرجع وسيبقى مخفيًا عند فتح العارض مرة أخرى.'
+        );
     }
 
     function updateReferenceTabs() {
@@ -3743,6 +3830,8 @@
         const valueEl = $('#m0ar-quick-score-value');
         const maxEl = $('#m0ar-quick-score-max');
         const progress = $('#m0ar-quick-progress-bar');
+        const zeroScore = $('#m0ar-zero-score');
+        const fullScore = $('#m0ar-full-score');
         const plusOne = $('#m0ar-score-plus-one');
         const plusHalf = $('#m0ar-score-plus-half');
         const minusHalf = $('#m0ar-score-minus-half');
@@ -3815,6 +3904,14 @@
             score !== null &&
             score <= 0
         );
+
+        if (zeroScore) {
+            zeroScore.disabled = unavailable;
+        }
+
+        if (fullScore) {
+            fullScore.disabled = unavailable || max === null;
+        }
 
         if (plusOne) {
             plusOne.disabled = unavailable || atMaximum;
@@ -4377,6 +4474,7 @@
         }
 
         updateSkipButton();
+        updateDeleteResponseButton();
         setReviewState(state.questions);
 
         if (
@@ -5144,6 +5242,368 @@
     }
 
     /* =========================================================
+       حذف الاستجابة الحالية — عبر أمر Microsoft Forms الأصلي
+       ========================================================= */
+
+    const DELETE_RESPONSE_TEXT =
+        /(?:حذف\s+(?:هذه\s+)?(?:الاستجابة|الرد)|delete\s+(?:this\s+)?response)/i;
+
+    const MORE_ACTIONS_TEXT =
+        /(?:المزيد\s+من\s+الخيارات|خيارات\s+إضافية|إجراءات\s+إضافية|more\s+options|more\s+actions)/i;
+
+    function controlLabel(element) {
+        return clean(
+            [
+                element?.innerText,
+                element?.textContent,
+                element?.getAttribute?.('aria-label'),
+                element?.getAttribute?.('title')
+            ]
+                .filter(Boolean)
+                .join(' ')
+        );
+    }
+
+    function isVisibleNativeControl(element) {
+        if (
+            !(element instanceof Element) ||
+            element.closest('#' + APP_ID)
+        ) {
+            return false;
+        }
+
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+    }
+
+    function findNativeDeleteResponseAction() {
+        return [
+            ...document.querySelectorAll(
+                'button,[role="menuitem"],[role="menuitemradio"],a[href]'
+            )
+        ].find(element =>
+            isVisibleNativeControl(element) &&
+            DELETE_RESPONSE_TEXT.test(
+                controlLabel(element)
+            )
+        ) || null;
+    }
+
+    function nativeMoreActionCandidates() {
+        return [
+            ...document.querySelectorAll('button,[role="button"]')
+        ]
+            .filter(element => {
+                if (!isVisibleNativeControl(element)) {
+                    return false;
+                }
+
+                if (
+                    element.closest(
+                        '[data-automation-id="questionContent"]'
+                    )
+                ) {
+                    return false;
+                }
+
+                return MORE_ACTIONS_TEXT.test(
+                    controlLabel(element)
+                );
+            })
+            .map(element => {
+                const rect = element.getBoundingClientRect();
+                const label = controlLabel(element);
+
+                let score = 0;
+
+                if (
+                    /(?:استجابة|رد|response|respondent)/i.test(label)
+                ) {
+                    score += 100;
+                }
+
+                if (rect.top >= 0 && rect.top < 260) {
+                    score += 45;
+                }
+
+                if (rect.right > window.innerWidth * 0.55) {
+                    score += 10;
+                }
+
+                return {
+                    element,
+                    score,
+                    top: rect.top
+                };
+            })
+            .sort(
+                (a, b) =>
+                    b.score - a.score ||
+                    a.top - b.top
+            );
+    }
+
+    async function waitForValue(
+        factory,
+        timeout = 1600,
+        interval = 80
+    ) {
+        const started = Date.now();
+
+        while (
+            Date.now() - started <
+            timeout
+        ) {
+            const value = factory();
+
+            if (value) {
+                return value;
+            }
+
+            await sleep(interval);
+        }
+
+        return null;
+    }
+
+    async function resolveNativeDeleteResponseAction() {
+        const direct = findNativeDeleteResponseAction();
+
+        if (direct) {
+            return direct;
+        }
+
+        const candidates = nativeMoreActionCandidates()
+            .slice(0, 6);
+
+        for (const candidate of candidates) {
+            try {
+                candidate.element.click();
+            }
+            catch (_) {
+                continue;
+            }
+
+            const action = await waitForValue(
+                findNativeDeleteResponseAction,
+                900,
+                75
+            );
+
+            if (action) {
+                return action;
+            }
+
+            /*
+             * لم تكن هذه قائمة الاستجابة. نحاول إغلاقها دون تنفيذ شيء
+             * ثم ننتقل للمرشح التالي.
+             */
+            try {
+                candidate.element.click();
+            }
+            catch (_) {}
+
+            await sleep(100);
+        }
+
+        return null;
+    }
+
+    function findNativeDeleteConfirmButton() {
+        const dialogs = [
+            ...document.querySelectorAll(
+                '[role="dialog"],[role="alertdialog"]'
+            )
+        ].filter(isVisibleNativeControl);
+
+        for (const dialog of dialogs) {
+            const text = controlLabel(dialog);
+
+            if (!DELETE_RESPONSE_TEXT.test(text)) {
+                continue;
+            }
+
+            const buttons = [
+                ...dialog.querySelectorAll(
+                    'button,[role="button"]'
+                )
+            ].filter(isVisibleNativeControl);
+
+            const exact = buttons.find(button => {
+                const label = controlLabel(button);
+
+                return /^(?:حذف|delete)$/i.test(label);
+            });
+
+            if (exact) {
+                return exact;
+            }
+
+            const destructive = buttons.find(button =>
+                /(?:حذف|delete)/i.test(
+                    controlLabel(button)
+                )
+            );
+
+            if (destructive) {
+                return destructive;
+            }
+        }
+
+        return null;
+    }
+
+    function updateDeleteResponseButton() {
+        const button = $('#m0ar-delete-response');
+
+        if (!button) {
+            return;
+        }
+
+        button.disabled =
+            state.deletingResponse ||
+            !isReviewPage();
+
+        button.textContent = state.deletingResponse
+            ? 'جارٍ الحذف…'
+            : '🗑 حذف الاستجابة';
+    }
+
+    async function deleteCurrentResponseFromViewer() {
+        if (
+            state.deletingResponse ||
+            state.navigatingStudent ||
+            state.countingUnreviewed
+        ) {
+            return;
+        }
+
+        const respondentNumber =
+            getRespondentNumber() ||
+            String(
+                (currentReviewIndex() ?? 0) + 1
+            );
+
+        const studentName =
+            getStudentName() ||
+            'المستجيب';
+
+        const accepted = confirm(
+            'حذف استجابة هذا المستجيب من Microsoft Forms؟\n\n' +
+            'الطالب: ' + studentName + '\n' +
+            'رقم الاستجابة: ' + respondentNumber + '\n\n' +
+            'سيتم استخدام أمر الحذف الأصلي في Forms، ولا يمكن التراجع عن حذف الاستجابة. هل تريد المتابعة؟'
+        );
+
+        if (!accepted) {
+            return;
+        }
+
+        state.deletingResponse = true;
+        updateDeleteResponseButton();
+        setStatus('جارٍ البحث عن أمر حذف الاستجابة الأصلي في Forms...');
+
+        const before =
+            studentFingerprint();
+
+        try {
+            const action =
+                await resolveNativeDeleteResponseAction();
+
+            if (!action) {
+                throw new Error(
+                    'لم أجد أمر «حذف الاستجابة» الأصلي في واجهة Forms الحالية. لم يتم حذف أي شيء.'
+                );
+            }
+
+            action.click();
+
+            /*
+             * بعض إصدارات Forms تعرض تأكيدًا ثانيًا أصليًا.
+             * بما أن المستخدم أكد الحذف بالفعل داخل العارض،
+             * نؤكد فقط حوار Forms الذي يحتوي نص حذف الاستجابة صراحةً.
+             */
+            const nativeConfirm =
+                await waitForValue(
+                    findNativeDeleteConfirmButton,
+                    2200,
+                    80
+                );
+
+            if (nativeConfirm) {
+                nativeConfirm.click();
+            }
+
+            setStatus('تم إرسال أمر حذف الاستجابة إلى Forms. جارٍ انتظار تحديث المستجيب...');
+
+            /*
+             * نتخلص من الهوية المؤقتة حتى لا يظهر اسم الاستجابة المحذوفة
+             * إذا تأخر Forms في إعادة جلب /responses.
+             */
+            state.respondents = [];
+            state.respondentFormId = '';
+            state.manualNameQuestionId = '';
+            state.manualNameQuestionScore = 0;
+            state.manualNameQuestionConfidence = '';
+
+            state.unreviewedCount = null;
+            state.countedStudents = null;
+            state.unreviewedStatusMap = new Map();
+            state.unreviewedCountFormKey = '';
+
+            const changed =
+                await waitForStudentChange(
+                    before,
+                    8000
+                );
+
+            if (changed && state.open) {
+                state.questionIndex = 0;
+                state.fileIndex = 0;
+                state.gradeHistoryContext = '';
+                state.gradeHistory = [];
+
+                render({
+                    preferPending: state.skipGraded,
+                    statusMessage: '✓ تم حذف الاستجابة والانتقال إلى الاستجابة المتاحة التالية.'
+                });
+            }
+            else if (state.open) {
+                render({
+                    preferPending: state.skipGraded,
+                    statusMessage: '✓ تم تنفيذ أمر الحذف. إذا لم تتحدث الصفحة تلقائيًا، حدّث صفحة المراجعة مرة واحدة.'
+                });
+            }
+        }
+        catch (error) {
+            console.error(
+                '[Attachment Reviewer v1.3.5] delete response failed',
+                error
+            );
+
+            setStatus(
+                clean(
+                    error?.message ||
+                    error ||
+                    'تعذر حذف الاستجابة.'
+                )
+            );
+        }
+        finally {
+            state.deletingResponse = false;
+            updateDeleteResponseButton();
+            focusViewerShell();
+        }
+    }
+
+    /* =========================================================
        الدرجات السريعة
        ========================================================= */
 
@@ -5275,6 +5735,13 @@
 
     function bindViewerEvents() {
         $('#m0ar-close').addEventListener('click', closeViewer);
+
+        $('#m0ar-delete-response').addEventListener(
+            'click',
+            deleteCurrentResponseFromViewer
+        );
+
+        updateDeleteResponseButton();
 
         $('#m0ar-reference-toggle').addEventListener(
             'click',
@@ -5701,6 +6168,36 @@
         if (
             !event.repeat &&
             plainKey &&
+            (event.code === 'Digit0' || event.code === 'Numpad0')
+        ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setQuickScore('0');
+            focusViewerShell();
+            return;
+        }
+
+        if (
+            !event.repeat &&
+            plainKey &&
+            event.code === 'KeyF'
+        ) {
+            const question = currentQuestion();
+            const max = getQuestionMaxNumber(question);
+
+            if (max !== null) {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuickScore(formatScore(max));
+                focusViewerShell();
+            }
+
+            return;
+        }
+
+        if (
+            !event.repeat &&
+            plainKey &&
             (event.code === 'Digit1' || event.code === 'Numpad1')
         ) {
             event.preventDefault();
@@ -5925,12 +6422,39 @@
 
         showReference: () => {
             state.referenceVisible = true;
+            writeReferenceVisibilityPreference(true);
             updateReferenceVisibilityUI();
         },
 
         hideReference: () => {
             state.referenceVisible = false;
+            writeReferenceVisibilityPreference(false);
             updateReferenceVisibilityUI();
+        },
+
+        showReferencePersisted: () => {
+            state.referenceVisible = true;
+            writeReferenceVisibilityPreference(true);
+            updateReferenceVisibilityUI();
+        },
+
+        deleteCurrentResponse:
+            deleteCurrentResponseFromViewer,
+
+        setZeroScore: () =>
+            setQuickScore('0'),
+
+        setFullScore: () => {
+            const max =
+                getQuestionMaxNumber(
+                    currentQuestion()
+                );
+
+            if (max !== null) {
+                setQuickScore(
+                    formatScore(max)
+                );
+            }
         },
 
         addOnePoint: () =>
