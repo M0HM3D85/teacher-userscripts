@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - عارض المرفقات والتصحيح السريع
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.4
-// @description  بيئة تصحيح مرفقات Microsoft Forms مع إظهار اسم الطالب المكتوب في سؤال الاسم، مرجع قابل لتغيير الحجم، تصحيح تراكمي سريع، تنقل واختصارات، عداد غير المصححين، والتكبير والسحب والتدوير.
+// @version      1.3.7
+// @description  عارض مرفقات Microsoft Forms مع أولوية الاسم المكتوب في سؤال الاسم، والتصحيح السريع، وإخفاء المرجع، وحذف الاستجابة بالتأكيد الأصلي.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -11,7 +11,7 @@
 // @match        https://forms.cloud.microsoft/Pages/DesignPageV2.aspx*
 // @match        https://forms.office.com/Pages/DesignPageV2.aspx*
 // @match        https://forms.microsoft.com/Pages/DesignPageV2.aspx*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // @downloadURL https://update.greasyfork.org/scripts/595568/Microsoft%20Forms%20-%20%D8%B9%D8%A7%D8%B1%D8%B6%20%D8%A7%D9%84%D9%85%D8%B1%D9%81%D9%82%D8%A7%D8%AA%20%D9%88%D8%A7%D9%84%D8%AA%D8%B5%D8%AD%D9%8A%D8%AD%20%D8%A7%D9%84%D8%B3%D8%B1%D9%8A%D8%B9.user.js
 // @updateURL https://update.greasyfork.org/scripts/595568/Microsoft%20Forms%20-%20%D8%B9%D8%A7%D8%B1%D8%B6%20%D8%A7%D9%84%D9%85%D8%B1%D9%81%D9%82%D8%A7%D8%AA%20%D9%88%D8%A7%D9%84%D8%AA%D8%B5%D8%AD%D9%8A%D8%AD%20%D8%A7%D9%84%D8%B3%D8%B1%D9%8A%D8%B9.meta.js
@@ -36,7 +36,7 @@
 
     /* =========================================================
        Microsoft Forms - Attachment Reviewer
-       Version 1.3.4
+       Version 1.3.7
 
        Developer:
        Mohammed Almalki (M0HM3D85)
@@ -45,7 +45,7 @@
        جميع الحقوق محفوظة
        ========================================================= */
 
-    const VERSION = '1.3.4';
+    const VERSION = '1.3.7';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -61,6 +61,8 @@
 
     const SKIP_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_SKIP_GRADED_V1';
     const SPLIT_STORAGE_KEY = 'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_WIDTH_V1';
+    const REFERENCE_VISIBILITY_STORAGE_KEY =
+        'M0HM3D85_FORMS_ATTACHMENT_REFERENCE_VISIBLE_V1';
 
     const REFERENCE_DB_NAME = 'M0HM3D85_FORMS_ATTACHMENT_REVIEWER_DB';
     const REFERENCE_DB_VERSION = 1;
@@ -98,6 +100,7 @@
 
         imageToken: 0,
         navigatingStudent: false,
+        deletingResponse: false,
         open: false,
 
         /* هوية المستجيب: الاسم المكتوب في سؤال الاسم أولًا */
@@ -106,7 +109,10 @@
         manualNameQuestionId: '',
         manualNameQuestionScore: 0,
         manualNameQuestionConfidence: '',
+        nameQuestionFormId: '',
+        explicitNameQuestionIds: new Set(),
         respondentsCapturedAt: 0,
+        nameRefreshTimer: null,
 
         /* التصحيح التراكمي السريع */
         gradeHistoryContext: '',
@@ -126,7 +132,7 @@
         unreviewedStatusMap: new Map(),
         unreviewedCountFormKey: '',
 
-        referenceVisible: true,
+        referenceVisible: readReferenceVisibilityPreference(),
         referenceMode: 'original',
         referenceRecord: null,
         referenceLoadedKey: '',
@@ -188,6 +194,35 @@
     function writeSkipPreference(enabled) {
         try {
             localStorage.setItem(SKIP_STORAGE_KEY, enabled ? '1' : '0');
+        }
+        catch (_) {}
+    }
+
+    function readReferenceVisibilityPreference() {
+        try {
+            const value = localStorage.getItem(
+                REFERENCE_VISIBILITY_STORAGE_KEY
+            );
+
+            /*
+             * الإعداد افتراضيًا مفعّل للحفاظ على سلوك الإصدارات السابقة.
+             * بعد أول إخفاء يتذكر العارض اختيار المستخدم في المرات التالية.
+             */
+            return value === null
+                ? true
+                : value === '1';
+        }
+        catch (_) {
+            return true;
+        }
+    }
+
+    function writeReferenceVisibilityPreference(visible) {
+        try {
+            localStorage.setItem(
+                REFERENCE_VISIBILITY_STORAGE_KEY,
+                visible ? '1' : '0'
+            );
         }
         catch (_) {}
     }
@@ -502,9 +537,11 @@
 
     function currentReviewIndex() {
         try {
-            const value = Number(
-                new URL(location.href).searchParams.get('ridx')
-            );
+            const raw = new URL(location.href).searchParams.get('ridx');
+            if (raw === null || clean(raw) === '') {
+                return null;
+            }
+            const value = Number(raw);
 
             return Number.isFinite(value)
                 ? Math.max(0, Math.floor(value))
@@ -652,6 +689,250 @@
         }
     }
 
+    /* v1.3.7 — عنوان السؤال هو المصدر الأول، لا التخمين الإحصائي. */
+    function isNameQuestionTitle(value = '') {
+        const title = normalizeRespondentSearch(
+            String(value || '').replace(/<[^>]*>/g, ' ')
+        )
+            .replace(/^\d+[\s.\-():،]+/, '')
+            .trim();
+
+        if (!title || title.length > 180) {
+            return false;
+        }
+
+        /* لا نخلط اسم الطالب باسم مدرسة/مقرر/ملف/مشروع. */
+        if (/(?:^|\s)(?:اسم|الاسم)\s+(?:المدرسه|الماده|المقرر|النشاط|المشروع|الملف|النموذج|الاختبار|المعلم|المعلمه|الاب|الام|ولي\s+الامر)(?:\s|$)/u.test(title)) {
+            return false;
+        }
+
+        return /(?:^|\s)(?:اسمك|الاسم|اسم\s+(?:الطالب|الطالبه|المستجيب|المستجيبه|المتدرب|المتدربه|المستفيد|المستفيده)|اسم\s+المشارك|student\s+name|full\s+name|respondent\s+name|your\s+name)(?=\s|$|[؟?:،])/iu.test(title);
+    }
+
+    function validPersonName(value = '') {
+        const name = clean(value);
+        if (!name || name.length > 90 || looksStructuredAnswer(name)) {
+            return '';
+        }
+        if (/@|https?:|\b(?:sharepoint|onedrive)\b/i.test(name)) {
+            return '';
+        }
+        if (!/\p{L}/u.test(name) || /[\r\n]/.test(name)) {
+            return '';
+        }
+        if (/^(?:مطلوب|اجب|اجابه|الاجابه|لا\s+يوجد|لم\s+يجب|نقاط|points)$/iu.test(normalizeRespondentSearch(name))) {
+            return '';
+        }
+        return name;
+    }
+
+    function ensureNameFormScope() {
+        const formId = currentFormId();
+        if (formId !== state.nameQuestionFormId) {
+            state.nameQuestionFormId = formId;
+            state.explicitNameQuestionIds = new Set();
+            state.manualNameQuestionId = '';
+            state.manualNameQuestionScore = 0;
+            state.manualNameQuestionConfidence = '';
+            state.respondentFormId = '';
+            state.respondents = [];
+        }
+        return formId;
+    }
+
+    function nameQuestionTitleElements() {
+        return [...document.querySelectorAll('[data-automation-id="questionTitle"]')]
+            .filter(el => !el.closest('#' + APP_ID))
+            .filter(el => isNameQuestionTitle(el.innerText || el.textContent || ''));
+    }
+
+    function getNameQuestionDomIds(answerIds = null) {
+        const ids = new Set();
+        const attrs = [
+            'data-question-id', 'data-questionid', 'data-item-id',
+            'data-id', 'data-question-key', 'data-automation-key',
+            'questionid', 'question-id', 'id'
+        ];
+
+        for (const title of nameQuestionTitleElements()) {
+            let node = title;
+            for (let depth = 0; node && node !== document.body && depth < 8; depth++, node = node.parentElement) {
+                if (depth > 0 && node.querySelectorAll('[data-automation-id="questionTitle"]').length > 1) {
+                    break;
+                }
+                for (const attr of attrs) {
+                    const id = clean(node.getAttribute(attr) || '');
+                    if (id && (!answerIds || answerIds.has(id))) {
+                        ids.add(id);
+                    }
+                }
+            }
+        }
+        return ids;
+    }
+
+    /* قراءة إجابة الاسم مباشرة من بطاقة السؤال عند عرض الاستجابة.
+       نقيد القراءة ببطاقة تحتوي عنوانًا واحدًا حتى لا نلتقط إجابة سؤال آخر. */
+    function getManualNameFromReviewDOM() {
+        const answerSelectors = [
+            '[data-automation-id="answerContent"]',
+            '[data-automation-id="answerText"]',
+            '[data-automation-id="textAnswer"]',
+            '[data-automation-id="responseText"]',
+            '[data-automation-id="responseContent"]',
+            '[data-automation-id="answer"]',
+            '[data-automation-id="response"]'
+        ].join(',');
+
+        for (const title of nameQuestionTitleElements()) {
+            let node = title.parentElement;
+            for (let depth = 0; node && node !== document.body && depth < 8; depth++, node = node.parentElement) {
+                if (node.querySelectorAll('[data-automation-id="questionTitle"]').length > 1) {
+                    break;
+                }
+                for (const input of node.querySelectorAll('textarea,input:not([type="hidden"]):not([type="number"])')) {
+                    if (input.closest('#' + APP_ID) || input === title) {
+                        continue;
+                    }
+                    const value = validPersonName(input.value || '');
+                    if (value && !isNameQuestionTitle(value)) {
+                        return value;
+                    }
+                }
+                for (const answer of node.querySelectorAll(answerSelectors)) {
+                    if (title.contains(answer) || answer.contains(title)) {
+                        continue;
+                    }
+                    const value = validPersonName(answer.innerText || answer.textContent || '');
+                    if (value && !isNameQuestionTitle(value)) {
+                        return value;
+                    }
+                }
+                /* غالبًا يوجد عنوان السؤال والرد في questionContent نفسه. */
+                if (node.matches('[data-automation-id="questionContent"]') ||
+                    node.querySelector('[data-automation-id="questionContent"]')) {
+                    const clone = node.cloneNode(true);
+                    clone.querySelectorAll(
+                        '[data-automation-id="questionTitle"],button,input,textarea,select,svg,a,script,style,[role="button"],input[type="number"]'
+                    ).forEach(el => el.remove());
+                    const value = clean(clone.textContent || '')
+                        .replace(/^(?:مطلوب\s+الإجابة\.?|مطلوب\s+الاجابة\.?|required\.?)/iu, '')
+                        .replace(/(?:\d+(?:\.\d+)?\s*(?:من\s+النقاط|نقاط|points)|إدخال\s+نقاط).*$/iu, '')
+                        .trim();
+                    /* قراءة النص الحر فقط إن بدا كاسم بسيط غير مصحوب بعناصر أخرى. */
+                    if (value && !/\b(?:إجابة|الاجابة|answer|السؤال)\b/iu.test(value) &&
+                        !/[0-9٠-٩]/.test(value) && !/[|:]/.test(value)) {
+                        const name = validPersonName(value);
+                        if (name && !isNameQuestionTitle(name)) {
+                            return name;
+                        }
+                    }
+                }
+            }
+        }
+        return '';
+    }
+
+    /* نستفيد أيضًا من تعريف الأسئلة الذي يعيده Forms عبر طلباته الأصلية. */
+    function captureExplicitNameQuestionIds(payload) {
+        if (!payload || typeof payload !== 'object') {
+            return false;
+        }
+        ensureNameFormScope();
+        let changed = false;
+        const pending = [payload];
+        const visited = new Set();
+        let count = 0;
+
+        while (pending.length && count < 6000) {
+            const node = pending.pop();
+            if (!node || typeof node !== 'object' || visited.has(node)) {
+                continue;
+            }
+            visited.add(node);
+            count++;
+            if (!Array.isArray(node)) {
+                const title = node.questionTitle ?? node.QuestionTitle ??
+                    node.questionText ?? node.QuestionText ?? node.title ?? node.Title ?? '';
+                const id = clean(node.questionId ?? node.QuestionId ?? node.id ?? node.Id ?? node.qid ?? '');
+                if (id && typeof title === 'string' && isNameQuestionTitle(title) &&
+                    !state.explicitNameQuestionIds.has(id)) {
+                    state.explicitNameQuestionIds.add(id);
+                    changed = true;
+                }
+            }
+            for (const child of Object.values(node)) {
+                if (child && typeof child === 'object') {
+                    pending.push(child);
+                }
+            }
+        }
+        return changed;
+    }
+
+    function getExplicitNameFromAnswers(answers) {
+        if (!Array.isArray(answers)) {
+            return '';
+        }
+        const ids = new Set(answers.map(answerQuestionId).filter(Boolean));
+        const domIds = getNameQuestionDomIds(ids);
+        for (const answer of answers) {
+            const title = answer?.questionTitle ?? answer?.QuestionTitle ??
+                answer?.title ?? answer?.Title ?? answer?.questionText ?? '';
+            const id = answerQuestionId(answer);
+            if ((typeof title === 'string' && isNameQuestionTitle(title)) ||
+                (id && (state.explicitNameQuestionIds.has(id) || domIds.has(id)))) {
+                const name = validPersonName(answerTextValue(answer));
+                if (name) {
+                    return name;
+                }
+            }
+        }
+        return '';
+    }
+
+    function getManualNameFromAnswers(answers) {
+        const explicit = getExplicitNameFromAnswers(answers);
+        if (explicit) {
+            return explicit;
+        }
+        /* إذا حُدد سؤال الاسم صراحة وكانت إجابته فارغة، لا نأخذ
+           إجابة سؤال نصي آخر عبر الاستدلال الإحصائي. */
+        if (Array.isArray(answers) && answers.some(answer => {
+            const id = answerQuestionId(answer);
+            const title = answer?.questionTitle ?? answer?.QuestionTitle ??
+                answer?.title ?? answer?.Title ?? answer?.questionText ?? '';
+            return (id && state.explicitNameQuestionIds.has(id)) ||
+                (typeof title === 'string' && isNameQuestionTitle(title));
+        })) {
+            return '';
+        }
+        const inferred = answerForQuestion(answers, state.manualNameQuestionId);
+        return validPersonName(inferred);
+    }
+
+    function refreshCapturedManualNames() {
+        for (const row of state.respondents) {
+            if (row) {
+                row.manualName = getManualNameFromAnswers(row.answers);
+            }
+        }
+        refreshStudentIdentityUI();
+    }
+
+    function consumeObservedFormPayload(payload, rawUrl) {
+        if (!currentFormId()) {
+            return;
+        }
+        const changed = captureExplicitNameQuestionIds(payload);
+        if (isResponsesListUrl(rawUrl)) {
+            consumeObservedRespondents(payload, rawUrl);
+        }
+        else if (changed) {
+            refreshCapturedManualNames();
+        }
+    }
+
     function manualNameTitleExistsInReview() {
         return [
             ...document.querySelectorAll(
@@ -664,7 +945,7 @@
                 ''
             );
 
-            return NAME_QUESTION_PATTERN.test(title);
+            return isNameQuestionTitle(title);
         });
     }
 
@@ -995,21 +1276,17 @@
 
         return parsedRows.map(row => ({
             ...row,
-            manualName: answerForQuestion(
-                row.answers,
-                state.manualNameQuestionId
-            )
+            manualName: getManualNameFromAnswers(row.answers)
         }));
     }
 
     function consumeObservedRespondents(payload, rawUrl) {
+        const formId = ensureNameFormScope();
         const rows = parseRespondentRows(payload);
 
         if (!rows.length) {
             return;
         }
-
-        const formId = currentFormId();
 
         if (!formId) {
             return;
@@ -1086,6 +1363,7 @@
         }
 
         return (
+            getManualNameFromAnswers(row.answers) ||
             clean(row.manualName || '') ||
             usableInstitutionalName(row)
         );
@@ -1101,85 +1379,95 @@
         );
 
         if (name) {
-            name.textContent = getStudentName();
+            const resolved = getStudentName();
+            if (name.textContent !== resolved) {
+                name.textContent = resolved;
+            }
+            name.title = getManualNameFromReviewDOM()
+                ? 'المصدر: إجابة سؤال الاسم في صفحة Forms'
+                : (getExplicitNameFromAnswers(currentObservedRespondent()?.answers) ||
+                   validPersonName(currentObservedRespondent()?.manualName))
+                    ? 'المصدر: إجابة سؤال الاسم من بيانات Forms'
+                    : 'المصدر: الاسم المتاح في حساب Forms';
         }
     }
 
     function installRespondentIdentityTap() {
         const proto = window.XMLHttpRequest?.prototype;
+        const marker = '__m0hm3d85AttachmentIdentityTapV137';
 
-        if (
-            !proto ||
-            proto.__m0hm3d85AttachmentIdentityTapV134
-        ) {
-            return;
-        }
+        if (proto && !proto[marker]) {
+            const nativeOpen = proto.open;
+            const nativeSend = proto.send;
 
-        const nativeOpen = proto.open;
-        const nativeSend = proto.send;
+            proto.open = function(method, url) {
+                try {
+                    this.__m0hm3d85AttachmentIdentityUrl = String(url || '');
+                    this.__m0hm3d85AttachmentIdentityMethod = String(method || 'GET').toUpperCase();
+                }
+                catch (_) {}
+                return nativeOpen.apply(this, arguments);
+            };
 
-        proto.open = function(method, url) {
-            try {
-                this.__m0hm3d85AttachmentIdentityUrl =
-                    String(url || '');
-            }
-            catch (_) {}
-
-            return nativeOpen.apply(
-                this,
-                arguments
-            );
-        };
-
-        proto.send = function(body) {
-            const url =
-                this.__m0hm3d85AttachmentIdentityUrl ||
-                '';
-
-            if (isResponsesListUrl(url)) {
-                this.addEventListener(
-                    'loadend',
-                    () => {
+            proto.send = function(body) {
+                const url = this.__m0hm3d85AttachmentIdentityUrl || '';
+                if (this.__m0hm3d85AttachmentIdentityMethod === 'GET' &&
+                    /\/formapi\/api\//i.test(url)) {
+                    this.addEventListener('loadend', () => {
                         try {
-                            if (
-                                this.status < 200 ||
-                                this.status >= 300
-                            ) {
+                            if (this.status < 200 || this.status >= 300) {
                                 return;
                             }
-
-                            const payload = JSON.parse(
-                                this.responseText || '{}'
-                            );
-
-                            consumeObservedRespondents(
-                                payload,
-                                url
-                            );
+                            const payload = this.responseType === 'json'
+                                ? this.response
+                                : JSON.parse(this.responseText || '{}');
+                            consumeObservedFormPayload(payload, url);
                         }
                         catch (_) {}
-                    },
-                    {
-                        once: true
+                    }, { once: true });
+                }
+                return nativeSend.apply(this, arguments);
+            };
+
+            Object.defineProperty(proto, marker, {
+                value: true, configurable: false, enumerable: false
+            });
+        }
+
+        /* بعض صفحات Forms تستخدم fetch بدل XMLHttpRequest. لا نعيد أي طلب،
+           ونقرأ نسخة clone من الاستجابة بدون تعطيل طلب الموقع الأصلي. */
+        const fetchMarker = '__m0hm3d85AttachmentIdentityFetchV137';
+        if (typeof window.fetch === 'function' && !window[fetchMarker]) {
+            const nativeFetch = window.fetch;
+            window.fetch = function(input, init) {
+                const promise = nativeFetch.apply(this, arguments);
+                try {
+                    const url = typeof input === 'string' ? input :
+                        (input?.url || String(input || ''));
+                    const method = String(init?.method || input?.method || 'GET').toUpperCase();
+                    if (method === 'GET' && /\/formapi\/api\//i.test(url)) {
+                        Promise.resolve(promise).then(response => {
+                            try {
+                                const length = Number(response.headers?.get('content-length') || 0);
+                                if (!response.ok || (length && length > 8 * 1024 * 1024)) {
+                                    return;
+                                }
+                                const cloned = response.clone();
+                                cloned.json().then(payload => {
+                                    consumeObservedFormPayload(payload, url);
+                                }).catch(() => {});
+                            }
+                            catch (_) {}
+                        }).catch(() => {});
                     }
-                );
-            }
-
-            return nativeSend.apply(
-                this,
-                arguments
-            );
-        };
-
-        Object.defineProperty(
-            proto,
-            '__m0hm3d85AttachmentIdentityTapV134',
-            {
-                value: true,
-                configurable: false,
-                enumerable: false
-            }
-        );
+                }
+                catch (_) {}
+                return promise;
+            };
+            Object.defineProperty(window, fetchMarker, {
+                value: true, configurable: false, enumerable: false
+            });
+        }
     }
 
     installRespondentIdentityTap();
@@ -1189,6 +1477,12 @@
        ========================================================= */
 
     function getStudentName() {
+        /* أهم تعديل: إجابة سؤال «الاسم» الظاهرة تسبق الاسم المؤسسي. */
+        const directName = getManualNameFromReviewDOM();
+        if (directName) {
+            return directName;
+        }
+
         const observedName = getObservedStudentName();
 
         if (observedName) {
@@ -1726,7 +2020,8 @@
         state.open = true;
         state.questionIndex = 0;
         state.fileIndex = 0;
-        state.referenceVisible = true;
+        state.referenceVisible =
+            readReferenceVisibilityPreference();
         state.referenceMode = 'original';
         state.referenceRecord = null;
         state.referenceLoadedKey = '';
@@ -1853,6 +2148,10 @@
 
 #m0ar-unreviewed-counter.ready #m0ar-unreviewed-value{
     color:#f8fafc;
+}
+
+#m0ar-delete-response{
+    white-space:nowrap;
 }
 
 #m0ar-count-overlay{
@@ -2102,12 +2401,14 @@
 #m0ar-quick-grade-actions{
     display:grid;
     grid-template-columns:
-        minmax(62px,.65fr)
-        minmax(70px,.75fr)
-        minmax(70px,.75fr)
-        minmax(62px,.65fr)
-        minmax(88px,.9fr)
-        minmax(190px,1.75fr);
+        minmax(58px,.62fr)
+        minmax(92px,.9fr)
+        minmax(58px,.62fr)
+        minmax(66px,.72fr)
+        minmax(66px,.72fr)
+        minmax(58px,.62fr)
+        minmax(86px,.82fr)
+        minmax(180px,1.65fr);
     gap:6px;
 }
 
@@ -2115,6 +2416,20 @@
     min-height:36px;
     padding:5px 9px;
     font-size:12px;
+}
+
+.m0ar-score-zero{
+    background:#374151;
+    border-color:#475569;
+}
+
+.m0ar-score-full{
+    background:#047857;
+    border-color:#059669;
+}
+
+.m0ar-score-full:hover:not(:disabled){
+    background:#059669;
 }
 
 .m0ar-score-add{
@@ -2539,7 +2854,7 @@
 
 @media(max-width:1500px){
     #m0ar-quick-grade-actions{
-        grid-template-columns:repeat(5,minmax(60px,1fr));
+        grid-template-columns:repeat(4,minmax(60px,1fr));
     }
 
     #m0ar-quick-approve{
@@ -2627,6 +2942,15 @@
         الطالب التالي ▶
     </button>
 
+    <button
+        type="button"
+        class="m0ar-btn danger"
+        id="m0ar-delete-response"
+        title="حذف استجابة المستجيب الحالية باستخدام أمر Microsoft Forms الأصلي"
+    >
+        🗑 حذف الاستجابة
+    </button>
+
     <button type="button" class="m0ar-btn danger" id="m0ar-close" title="إغلاق العارض">
         ✕
     </button>
@@ -2669,7 +2993,7 @@
             <div id="m0ar-question-counter">—</div>
         </div>
 
-        <div class="m0ar-card">
+        <div class="m0ar-card" id="m0ar-reference-card">
             <div class="m0ar-label">📘 مرجع التصحيح لهذا السؤال</div>
 
             <div id="m0ar-reference-file-name">
@@ -2726,9 +3050,8 @@
                 <span id="m0ar-max">/ —</span>
             </div>
 
-            <div id="m0ar-score-buttons">
-                <button type="button" class="m0ar-btn zero" id="m0ar-zero-score">صفر</button>
-                <button type="button" class="m0ar-btn good" id="m0ar-full-score">الدرجة كاملة</button>
+            <div style="margin-top:8px;color:#64748b;font-size:11px;line-height:1.6">
+                أزرار «صفر» و«الدرجة كاملة» أصبحت في شريط التصحيح السريع أعلى إجابة الطالب.
             </div>
         </div>
 
@@ -2801,7 +3124,7 @@
                     <div id="m0ar-quick-grade-top">
                         <div id="m0ar-quick-grade-title">
                             ⚡ التصحيح التراكمي السريع
-                            <span id="m0ar-quick-shortcut-hint">1 = +1 • 5 = +0.5 • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
+                            <span id="m0ar-quick-shortcut-hint">0 = صفر • F = كاملة • 1 = +1 • 5 = +0.5 • Z = تراجع • Enter = اعتماد • PgDn/PgUp = الملف التالي/السابق • Shift+PgDn/PgUp = السؤال التالي/السابق</span>
                         </div>
 
                         <div id="m0ar-quick-score-display">
@@ -2811,6 +3134,14 @@
                     </div>
 
                     <div id="m0ar-quick-grade-actions">
+                        <button type="button" class="m0ar-btn m0ar-score-zero" id="m0ar-zero-score" title="رصد صفر مباشرة">
+                            صفر <span class="m0ar-key">0</span>
+                        </button>
+
+                        <button type="button" class="m0ar-btn m0ar-score-full" id="m0ar-full-score" title="رصد الدرجة الكاملة مباشرة">
+                            الدرجة كاملة <span class="m0ar-key">F</span>
+                        </button>
+
                         <button type="button" class="m0ar-btn m0ar-score-add" id="m0ar-score-plus-one" title="إضافة درجة واحدة">
                             +1 <span class="m0ar-key">1</span>
                         </button>
@@ -2898,16 +3229,25 @@
     function updateReferenceVisibilityUI() {
         const workspace = $('#m0ar-workspace');
         const button = $('#m0ar-reference-toggle');
+        const card = $('#m0ar-reference-card');
 
         workspace?.classList.toggle(
             'reference-hidden',
             !state.referenceVisible
         );
 
+        if (card) {
+            card.hidden = !state.referenceVisible;
+        }
+
         if (button) {
             button.textContent = state.referenceVisible
-                ? '📘 إخفاء المرجع'
-                : '📘 إظهار المرجع';
+                ? '📘 إخفاء قسم النموذج'
+                : '📘 إظهار قسم النموذج';
+
+            button.title = state.referenceVisible
+                ? 'إخفاء مرجع التصحيح ونموذج الإجابة لتوسيع مساحة إجابة الطالب'
+                : 'إظهار مرجع التصحيح ونموذج الإجابة';
         }
 
         applyReferencePaneWidth();
@@ -3015,7 +3355,16 @@
 
     function toggleReferenceVisibility() {
         state.referenceVisible = !state.referenceVisible;
+        writeReferenceVisibilityPreference(
+            state.referenceVisible
+        );
         updateReferenceVisibilityUI();
+
+        setStatus(
+            state.referenceVisible
+                ? '📘 تم إظهار قسم النموذج والمرجع.'
+                : '✓ تم إخفاء قسم النموذج والمرجع وسيبقى مخفيًا عند فتح العارض مرة أخرى.'
+        );
     }
 
     function updateReferenceTabs() {
@@ -3743,6 +4092,8 @@
         const valueEl = $('#m0ar-quick-score-value');
         const maxEl = $('#m0ar-quick-score-max');
         const progress = $('#m0ar-quick-progress-bar');
+        const zeroScore = $('#m0ar-zero-score');
+        const fullScore = $('#m0ar-full-score');
         const plusOne = $('#m0ar-score-plus-one');
         const plusHalf = $('#m0ar-score-plus-half');
         const minusHalf = $('#m0ar-score-minus-half');
@@ -3815,6 +4166,14 @@
             score !== null &&
             score <= 0
         );
+
+        if (zeroScore) {
+            zeroScore.disabled = unavailable;
+        }
+
+        if (fullScore) {
+            fullScore.disabled = unavailable || max === null;
+        }
 
         if (plusOne) {
             plusOne.disabled = unavailable || atMaximum;
@@ -4366,7 +4725,7 @@
         const meta = $('#m0ar-person-meta');
 
         if (name) {
-            name.textContent = getStudentName();
+            refreshStudentIdentityUI();
         }
 
         if (meta) {
@@ -4377,6 +4736,7 @@
         }
 
         updateSkipButton();
+        updateDeleteResponseButton();
         setReviewState(state.questions);
 
         if (
@@ -4608,7 +4968,7 @@
 
         return [
             getRespondentNumber(),
-            getStudentName(),
+            currentReviewIndex() ?? '',
             questions
                 .map(question => [
                     question.title,
@@ -4654,7 +5014,7 @@
     function getCurrentStudentStableKey() {
         return [
             getRespondentNumber(),
-            getStudentName()
+            (currentReviewIndex() ?? (getManualNameFromReviewDOM() || getStudentName()))
         ].join('::');
     }
 
@@ -5144,6 +5504,518 @@
     }
 
     /* =========================================================
+       حذف الاستجابة الحالية — عبر أمر Microsoft Forms الأصلي
+       ========================================================= */
+
+    const DELETE_RESPONSE_TEXT =
+        /(?:حذف\s+(?:هذه\s+)?(?:الاستجابة|الرد)|delete\s+(?:this\s+)?response)/i;
+
+    const MORE_ACTIONS_TEXT =
+        /(?:المزيد\s+من\s+الخيارات|خيارات\s+إضافية|إجراءات\s+إضافية|more\s+options|more\s+actions)/i;
+
+    function controlLabel(element) {
+        return clean(
+            [
+                element?.innerText,
+                element?.textContent,
+                element?.getAttribute?.('aria-label'),
+                element?.getAttribute?.('title')
+            ]
+                .filter(Boolean)
+                .join(' ')
+        );
+    }
+
+    function isVisibleNativeControl(element) {
+        if (
+            !(element instanceof Element) ||
+            element.closest('#' + APP_ID)
+        ) {
+            return false;
+        }
+
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+    }
+
+    function findNativeDeleteResponseAction() {
+        return [
+            ...document.querySelectorAll(
+                'button,[role="menuitem"],[role="menuitemradio"],a[href]'
+            )
+        ].find(element =>
+            isVisibleNativeControl(element) &&
+            DELETE_RESPONSE_TEXT.test(
+                controlLabel(element)
+            )
+        ) || null;
+    }
+
+    function nativeMoreActionCandidates() {
+        return [
+            ...document.querySelectorAll('button,[role="button"]')
+        ]
+            .filter(element => {
+                if (!isVisibleNativeControl(element)) {
+                    return false;
+                }
+
+                if (
+                    element.closest(
+                        '[data-automation-id="questionContent"]'
+                    )
+                ) {
+                    return false;
+                }
+
+                return MORE_ACTIONS_TEXT.test(
+                    controlLabel(element)
+                );
+            })
+            .map(element => {
+                const rect = element.getBoundingClientRect();
+                const label = controlLabel(element);
+
+                let score = 0;
+
+                if (
+                    /(?:استجابة|رد|response|respondent)/i.test(label)
+                ) {
+                    score += 100;
+                }
+
+                if (rect.top >= 0 && rect.top < 260) {
+                    score += 45;
+                }
+
+                if (rect.right > window.innerWidth * 0.55) {
+                    score += 10;
+                }
+
+                return {
+                    element,
+                    score,
+                    top: rect.top
+                };
+            })
+            .sort(
+                (a, b) =>
+                    b.score - a.score ||
+                    a.top - b.top
+            );
+    }
+
+    async function waitForValue(
+        factory,
+        timeout = 1600,
+        interval = 80
+    ) {
+        const started = Date.now();
+
+        while (
+            Date.now() - started <
+            timeout
+        ) {
+            const value = factory();
+
+            if (value) {
+                return value;
+            }
+
+            await sleep(interval);
+        }
+
+        return null;
+    }
+
+    async function resolveNativeDeleteResponseAction() {
+        const direct = findNativeDeleteResponseAction();
+
+        if (direct) {
+            return direct;
+        }
+
+        const candidates = nativeMoreActionCandidates()
+            .slice(0, 6);
+
+        for (const candidate of candidates) {
+            try {
+                candidate.element.click();
+            }
+            catch (_) {
+                continue;
+            }
+
+            const action = await waitForValue(
+                findNativeDeleteResponseAction,
+                900,
+                75
+            );
+
+            if (action) {
+                return action;
+            }
+
+            /*
+             * لم تكن هذه قائمة الاستجابة. نحاول إغلاقها دون تنفيذ شيء
+             * ثم ننتقل للمرشح التالي.
+             */
+            try {
+                candidate.element.click();
+            }
+            catch (_) {}
+
+            await sleep(100);
+        }
+
+        return null;
+    }
+
+    /*
+     * بعض حسابات Forms تعرض رسالة التأكيد في لوحة رمادية عادية
+     * لا تملك role="dialog". لذلك لا نعتمد على role وحده.
+     * لا يُضغط أي زر حذف إلا داخل حاوية صغيرة تطابق تحذير حذف
+     * الاستجابة الحالية، وتحتوي زري «حذف» و«إلغاء الأمر» معًا.
+     */
+    function nativeButtonLabel(element) {
+        if (!element) {
+            return '';
+        }
+
+        const candidates = [
+            element.innerText,
+            element.value,
+            element.getAttribute?.('aria-label'),
+            element.getAttribute?.('title'),
+            element.textContent
+        ];
+
+        return clean(candidates.find(value => clean(value)) || '');
+    }
+
+    function normalizeNativePrompt(text) {
+        return clean(text)
+            .normalize('NFKC')
+            .toLowerCase()
+            .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+            .replace(/\u0640/g, '')
+            .replace(/[أإآٱ]/g, 'ا')
+            .replace(/ة/g, 'ه');
+    }
+
+    function isDeleteConfirmLabel(label) {
+        return /^(?:حذف|delete|remove)$/i.test(
+            normalizeNativePrompt(label)
+        );
+    }
+
+    function isCancelConfirmLabel(label) {
+        return /^(?:الغاء(?: الامر)?|cancel(?: action)?|no)$/i.test(
+            normalizeNativePrompt(label)
+        );
+    }
+
+    function isNativeResponseDeleteWarning(text) {
+        const normalized = normalizeNativePrompt(text);
+
+        /* نفس النص الذي يظهر في النافذة المصوّرة لدى المستخدم. */
+        const arabic =
+            /حذف\s+(?:هذه\s+)?الاستجابه\s+الحاليه/.test(normalized) &&
+            /(?:نهائي|هل تريد|تاكيد)/.test(normalized);
+
+        const english =
+            /(?:delete|delet(?:ed|ing)|remove|remov(?:ed|ing))/.test(normalized) &&
+            /response/.test(normalized) &&
+            /(?:permanent|confirm|cannot be undone|are you sure)/.test(normalized);
+
+        return arabic || english;
+    }
+
+    function nativeDeleteConfirmButtons(container) {
+        return [
+            ...container.querySelectorAll(
+                'button,[role="button"],input[type="button"],input[type="submit"]'
+            )
+        ].filter(isVisibleNativeControl);
+    }
+
+    function findNativeDeleteConfirmButton() {
+        const candidateButtons = [
+            ...document.querySelectorAll(
+                'button,[role="button"],input[type="button"],input[type="submit"]'
+            )
+        ].filter(button =>
+            isVisibleNativeControl(button) &&
+            isDeleteConfirmLabel(nativeButtonLabel(button))
+        );
+
+        for (const deleteButton of candidateButtons) {
+            let ancestor = deleteButton.parentElement;
+
+            /* نبحث عن أصغر لوحة تجمع الرسالة وزر الإلغاء مع زر الحذف. */
+            for (let depth = 0; ancestor && depth < 12; depth++) {
+                if (
+                    ancestor === document.body ||
+                    ancestor === document.documentElement ||
+                    ancestor.closest?.('#' + APP_ID)
+                ) {
+                    break;
+                }
+
+                const text = clean(ancestor.textContent || '');
+
+                if (text.length > 900) {
+                    break;
+                }
+
+                if (!isNativeResponseDeleteWarning(text)) {
+                    ancestor = ancestor.parentElement;
+                    continue;
+                }
+
+                const buttons = nativeDeleteConfirmButtons(ancestor);
+                const deleteButtons = buttons.filter(button =>
+                    isDeleteConfirmLabel(nativeButtonLabel(button))
+                );
+                const cancelButtons = buttons.filter(button =>
+                    isCancelConfirmLabel(nativeButtonLabel(button))
+                );
+
+                if (
+                    buttons.length <= 8 &&
+                    deleteButtons.length === 1 &&
+                    deleteButtons[0] === deleteButton &&
+                    cancelButtons.length >= 1
+                ) {
+                    return deleteButton;
+                }
+
+                ancestor = ancestor.parentElement;
+            }
+        }
+
+        return null;
+    }
+
+    function findNativeDeleteWarningPanel() {
+        const candidateNodes = document.querySelectorAll(
+            '[role="dialog"],[role="alertdialog"],div,section,aside'
+        );
+
+        for (const node of candidateNodes) {
+            if (!isVisibleNativeControl(node)) {
+                continue;
+            }
+
+            const text = clean(node.textContent || '');
+
+            if (
+                text.length > 0 &&
+                text.length <= 500 &&
+                isNativeResponseDeleteWarning(text)
+            ) {
+                const buttons = nativeDeleteConfirmButtons(node);
+                if (
+                    buttons.some(button => isDeleteConfirmLabel(nativeButtonLabel(button))) &&
+                    buttons.some(button => isCancelConfirmLabel(nativeButtonLabel(button)))
+                ) {
+                    return node;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function updateDeleteResponseButton() {
+        const button = $('#m0ar-delete-response');
+
+        if (!button) {
+            return;
+        }
+
+        button.disabled =
+            state.deletingResponse ||
+            !isReviewPage();
+
+        button.textContent = state.deletingResponse
+            ? 'جارٍ الحذف…'
+            : '🗑 حذف الاستجابة';
+    }
+
+    function clearStaleResponseCacheAfterDeletion() {
+        state.respondents = [];
+        state.respondentFormId = '';
+        state.manualNameQuestionId = '';
+        state.manualNameQuestionScore = 0;
+        state.manualNameQuestionConfidence = '';
+        state.explicitNameQuestionIds = new Set();
+
+        state.unreviewedCount = null;
+        state.countedStudents = null;
+        state.unreviewedStatusMap = new Map();
+        state.unreviewedCountFormKey = '';
+    }
+
+    async function waitForConfirmedResponseChange(before, timeout = 9000) {
+        const started = Date.now();
+
+        while (Date.now() - started < timeout) {
+            await sleep(180);
+
+            /* بعد حذف آخر مستجيب قد يغادر Forms صفحة مراجعة الأشخاص. */
+            if (!isReviewPage()) {
+                return true;
+            }
+
+            const after = studentFingerprint();
+
+            if (after && after !== before) {
+                await sleep(260);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    async function deleteCurrentResponseFromViewer() {
+        if (
+            state.deletingResponse ||
+            state.navigatingStudent ||
+            state.countingUnreviewed
+        ) {
+            return;
+        }
+
+        const respondentNumber =
+            getRespondentNumber() ||
+            String((currentReviewIndex() ?? 0) + 1);
+
+        const studentName = getStudentName() || 'المستجيب';
+        const beforeFormId = currentFormId();
+        const before = studentFingerprint();
+
+        const accepted = confirm(
+            'حذف استجابة هذا المستجيب من Microsoft Forms؟\n\n' +
+            'الطالب: ' + studentName + '\n' +
+            'رقم الاستجابة: ' + respondentNumber + '\n\n' +
+            'الحذف نهائي ولا يمكن التراجع عنه. هل تريد المتابعة؟'
+        );
+
+        if (!accepted) {
+            return;
+        }
+
+        state.deletingResponse = true;
+        updateDeleteResponseButton();
+        setStatus('جارٍ الوصول إلى أمر حذف الاستجابة الأصلي في Forms...');
+
+        try {
+            const action = await resolveNativeDeleteResponseAction();
+
+            if (!action) {
+                throw new Error(
+                    'لم أجد أمر «حذف الاستجابة» الأصلي في صفحة Forms؛ لم يتم حذف شيء.'
+                );
+            }
+
+            /* حماية من التنقل أثناء البحث عن أمر الحذف. */
+            if (
+                currentFormId() !== beforeFormId ||
+                studentFingerprint() !== before
+            ) {
+                throw new Error(
+                    'تغيّر المستجيب أثناء تجهيز الحذف. أعد المحاولة للمستجيب المطلوب.'
+                );
+            }
+
+            action.click();
+            setStatus('جارٍ انتظار نافذة تأكيد الحذف الأصلية في Forms...');
+
+            const nativeConfirm = await waitForValue(
+                findNativeDeleteConfirmButton,
+                5200,
+                90
+            );
+
+            if (!nativeConfirm) {
+                /*
+                 * لا نفترض أن الحذف تم لأن أمر Forms الأول نُقر.
+                 * في بعض البيئات قد يحدث الحذف مباشرة دون حوار ثانٍ.
+                 */
+                const alreadyChanged =
+                    await waitForConfirmedResponseChange(before, 1800);
+
+                if (!alreadyChanged) {
+                    throw new Error(
+                        findNativeDeleteWarningPanel()
+                            ? 'ظهرت نافذة تأكيد Forms لكن تعذر تحديد زر الحذف بشكل آمن. أغلق العارض واضغط «حذف» في نافذة Forms يدويًا.'
+                            : 'لم يظهر تأكيد حذف يمكن التعرف عليه، ولم يُلاحظ انتقال الاستجابة. لم أؤكد نجاح الحذف.'
+                    );
+                }
+            }
+            else {
+                /* زر «حذف» الوحيد داخل لوحة التأكيد التي تحوي رسالة الحذف النهائي وزر «إلغاء الأمر». */
+                if (
+                    currentFormId() !== beforeFormId ||
+                    studentFingerprint() !== before
+                ) {
+                    throw new Error(
+                        'تغيّر المستجيب قبل تأكيد الحذف. تم إيقاف التأكيد الآلي.'
+                    );
+                }
+
+                nativeConfirm.click();
+                setStatus('تم الضغط على تأكيد Forms. جارٍ التحقق من تحديث الاستجابات...');
+
+                const changed =
+                    await waitForConfirmedResponseChange(before, 9500);
+
+                if (!changed) {
+                    throw new Error(
+                        findNativeDeleteWarningPanel()
+                            ? 'ما زالت نافذة تأكيد الحذف ظاهرة؛ ربما لم يقبل Forms الضغطة. أغلق العارض واضغط زر «حذف» الأصلي يدويًا.'
+                            : 'أُرسل تأكيد الحذف إلى Forms، لكن لم يتأكد العارض من تحديث قائمة الاستجابات. تحقق من الاستجابة في Forms قبل تكرار الحذف.'
+                    );
+                }
+            }
+
+            clearStaleResponseCacheAfterDeletion();
+            if (state.open) {
+                state.questionIndex = 0;
+                state.fileIndex = 0;
+                state.gradeHistoryContext = '';
+                state.gradeHistory = [];
+                render({
+                    preferPending: state.skipGraded,
+                    statusMessage: '✓ تم تأكيد الحذف ورصد تحديث الاستجابات في Forms.'
+                });
+            }
+        }
+        catch (error) {
+            console.error(
+                '[Attachment Reviewer v1.3.6] delete response failed',
+                error
+            );
+
+            setStatus(clean(error?.message || error || 'تعذر حذف الاستجابة.'));
+        }
+        finally {
+            state.deletingResponse = false;
+            updateDeleteResponseButton();
+            focusViewerShell();
+        }
+    }
+
+    /* =========================================================
        الدرجات السريعة
        ========================================================= */
 
@@ -5275,6 +6147,13 @@
 
     function bindViewerEvents() {
         $('#m0ar-close').addEventListener('click', closeViewer);
+
+        $('#m0ar-delete-response').addEventListener(
+            'click',
+            deleteCurrentResponseFromViewer
+        );
+
+        updateDeleteResponseButton();
 
         $('#m0ar-reference-toggle').addEventListener(
             'click',
@@ -5614,7 +6493,11 @@
        ========================================================= */
 
     function keyboardHandler(event) {
-        if (!state.open || state.countingUnreviewed) {
+        if (
+            !state.open ||
+            state.countingUnreviewed ||
+            state.deletingResponse
+        ) {
             return;
         }
 
@@ -5698,6 +6581,36 @@
         الاعتماد هنا على event.code يجعلها تعمل مع تخطيط الكيبورد
         العربي أو الإنجليزي بنفس المفتاح الفعلي.
         */
+        if (
+            !event.repeat &&
+            plainKey &&
+            (event.code === 'Digit0' || event.code === 'Numpad0')
+        ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setQuickScore('0');
+            focusViewerShell();
+            return;
+        }
+
+        if (
+            !event.repeat &&
+            plainKey &&
+            event.code === 'KeyF'
+        ) {
+            const question = currentQuestion();
+            const max = getQuestionMaxNumber(question);
+
+            if (max !== null) {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuickScore(formatScore(max));
+                focusViewerShell();
+            }
+
+            return;
+        }
+
         if (
             !event.repeat &&
             plainKey &&
@@ -5877,6 +6790,8 @@
 
         clearTimeout(state.referenceNotesTimer);
         state.referenceNotesTimer = null;
+        clearTimeout(state.nameRefreshTimer);
+        state.nameRefreshTimer = null;
         state.open = false;
         state.imageToken++;
         state.referenceToken++;
@@ -5893,22 +6808,36 @@
        مراقبة React لإعادة زر التشغيل إذا تغير الشريط
        ========================================================= */
 
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(records => {
+        /* تحديث الاسم عند انتقال React بين إجابات الطلاب دون تحديث الصفحة. */
+        if (state.open && records.some(record =>
+            !(record.target instanceof Element && record.target.closest('#' + APP_ID))
+        )) {
+            clearTimeout(state.nameRefreshTimer);
+            state.nameRefreshTimer = setTimeout(refreshStudentIdentityUI, 180);
+        }
         clearTimeout(launcherTimer);
-
-        launcherTimer = setTimeout(
-            installLauncher,
-            300
-        );
+        launcherTimer = setTimeout(installLauncher, 300);
     });
 
-    observer.observe(
-        document.documentElement,
-        {
+    function startReviewObserver() {
+        if (!document.documentElement) {
+            return;
+        }
+        observer.observe(document.documentElement, {
             childList: true,
             subtree: true
-        }
-    );
+        });
+        installLauncher();
+    }
+
+    /* عند document-start قد لا يوجد documentElement بعد. */
+    if (document.documentElement) {
+        startReviewObserver();
+    }
+    else {
+        document.addEventListener('DOMContentLoaded', startReviewObserver, { once: true });
+    }
 
     /* =========================================================
        API
@@ -5920,17 +6849,56 @@
         close: closeViewer,
         scan: scanUploadQuestions,
 
+        getStudentNameInfo: () => ({
+            name: getStudentName(),
+            source: getManualNameFromReviewDOM()
+                ? 'question-dom'
+                : getExplicitNameFromAnswers(currentObservedRespondent()?.answers)
+                    ? 'question-response'
+                    : getManualNameFromAnswers(currentObservedRespondent()?.answers)
+                        ? 'inferred-response'
+                        : 'forms-fallback',
+            questionIds: [...state.explicitNameQuestionIds]
+        }),
+
         getCurrentReferenceKey: () =>
             currentQuestion()?.storageKey || '',
 
         showReference: () => {
             state.referenceVisible = true;
+            writeReferenceVisibilityPreference(true);
             updateReferenceVisibilityUI();
         },
 
         hideReference: () => {
             state.referenceVisible = false;
+            writeReferenceVisibilityPreference(false);
             updateReferenceVisibilityUI();
+        },
+
+        showReferencePersisted: () => {
+            state.referenceVisible = true;
+            writeReferenceVisibilityPreference(true);
+            updateReferenceVisibilityUI();
+        },
+
+        deleteCurrentResponse:
+            deleteCurrentResponseFromViewer,
+
+        setZeroScore: () =>
+            setQuickScore('0'),
+
+        setFullScore: () => {
+            const max =
+                getQuestionMaxNumber(
+                    currentQuestion()
+                );
+
+            if (max !== null) {
+                setQuickScore(
+                    formatScore(max)
+                );
+            }
         },
 
         addOnePoint: () =>
@@ -6000,6 +6968,7 @@
     );
 
     console.log('الإصدار:', VERSION);
+    console.log('v1.3.7: الأولوية لإجابة سؤال الاسم في صفحة Forms أو بيانات الاستجابة، قبل الاسم المؤسسي.');
     console.log('المطور:', `${DEVELOPER.name} (${DEVELOPER.handle})`);
     console.log('تجاوز المصححين:', state.skipGraded ? 'مفعّل' : 'متوقف');
     console.log('اختصارات التصحيح: 1 = +1 | 5 = +0.5 | Z = تراجع | Enter = اعتماد ومتابعة');
