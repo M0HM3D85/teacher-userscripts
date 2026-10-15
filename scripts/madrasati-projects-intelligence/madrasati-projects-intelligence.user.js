@@ -1146,3 +1146,10 @@
     parseStudentsHtml
   };
 })();
+/*
+ * المطور: Mohammed Almalki (M0HM3D85)
+ * GitHub: https://github.com/M0HM3D85/teacher-userscripts
+ * X / Twitter: https://x.com/M0HM3D85
+ * Snapchat: https://www.snapchat.com/add/M0HM3D85
+ * © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
+ */
