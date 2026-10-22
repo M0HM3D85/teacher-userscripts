@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.3-beta5
-// @description  نسخة اختبارية: إصلاح اكتشاف التحويل إلى حاضر، وتتبع الحالة الرئيسية والتفصيلية، مع حفظ الكل وسجل تشخيص مرئي.
+// @version      0.3.3
+// @description  مركز ذكي لإدارة حضور الحصة في مدرستي مع حفظ الكل المتسلسل، تتبع التغييرات، الإحصاءات، البحث والفرز، التراجع والتقارير.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta5/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta5/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.user.js
+// @updateURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.meta.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.3-beta5',
+        version: '0.3.3',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -2117,7 +2117,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             return;
         }
 
-        saveDebug('1/6 — بدأ تنفيذ حفظ الكل لـ ' + targets.length + ' طالب.');
+        saveDebug('بدأ حفظ ' + targets.length + ' طالب بالتتابع.');
         state.saveAllRunning = true;
         state.saveAllArmedUntil = 0;
         state.saveFailures = [];
@@ -2126,12 +2126,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const failures = [];
 
         try {
-            saveDebug('2/6 — تهيئة واجهة الحفظ...');
+            saveDebug('جاري تجهيز عملية الحفظ...');
             document.body.classList.add('msa-save-lock');
             root?.classList.add('msa-is-saving');
             updateSaveAllUi();
-            setSaveProgress(0, targets.length, '3/6 — تم تجهيز الواجهة، سيبدأ إرسال أول طالب...');
-            saveDebug('3/6 — تم تجهيز الواجهة، سيبدأ إرسال أول طالب...');
+            setSaveProgress(0, targets.length, 'تم تجهيز الحفظ، جاري إرسال أول طالب...');
+            saveDebug('تم تجهيز الحفظ، جاري إرسال أول طالب...');
 
             console.info('[Madrasati Smart Attendance] بدء حفظ الكل', {
                 count: targets.length,
@@ -2146,9 +2146,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     'جاري حفظ ' + (i + 1) + ' من ' + targets.length + ': ' + student.name
                 );
 
-                saveDebug('4/6 — إرسال الطالب ' + (i + 1) + '/' + targets.length + ': ' + student.name);
+                saveDebug('جاري حفظ ' + (i + 1) + ' من ' + targets.length + ': ' + student.name);
                 const result = await saveStudentViaPageAjax(student);
-                saveDebug('5/6 — وصل رد الطالب ' + (i + 1) + '/' + targets.length + ': ' + (result.ok ? 'نجاح' : 'فشل'));
+                saveDebug('تمت معالجة ' + (i + 1) + ' من ' + targets.length + ': ' + (result.ok ? 'نجاح' : 'فشل'));
 
                 if (result.ok) {
                     success++;
@@ -2194,7 +2194,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             updateSaveAllUi();
         }
 
-        saveDebug('6/6 — انتهت قائمة الحفظ. نجاح: ' + success + '، فشل: ' + failures.length, failures.length > 0);
+        saveDebug('انتهى الحفظ — نجح: ' + success + '، فشل: ' + failures.length, failures.length > 0);
 
         if (failures.length) {
             setSaveProgress(
@@ -2226,15 +2226,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         if (Date.now() >= Number(state.saveAllArmedUntil || 0)) {
             state.saveAllArmedUntil = Date.now() + 10000;
-            const details = targets.slice(0, 3).map(student => {
-                const raw = rawStudentStatus(student);
-                const effective = readStudentStatus(student);
-                return student.name + ' [' + raw.main + '/' + raw.detail + ' → ' + effective.main + '/' + effective.detail + ']';
-            }).join('، ');
-
             saveDebug(
-                'تم رصد ' + targets.length + ' طالب غير محفوظ. ' +
-                (details ? 'مثال: ' + details + '. ' : '') +
+                'تم رصد ' + targets.length + ' طالب لديهم تغييرات غير محفوظة. ' +
                 'اضغط زر التأكيد الأخضر مرة ثانية خلال 10 ثوانٍ لبدء الحفظ.'
             );
             updateSaveAllUi();
@@ -2640,7 +2633,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.3-beta5] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
