@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.3-beta4
-// @description  نسخة اختبارية تشخيصية: تأكيد داخل اللوحة بدل النافذة المنبثقة، وسجل مرئي لمراحل حفظ الكل خطوة بخطوة.
+// @version      0.3.3-beta5
+// @description  نسخة اختبارية: إصلاح اكتشاف التحويل إلى حاضر، وتتبع الحالة الرئيسية والتفصيلية، مع حفظ الكل وسجل تشخيص مرئي.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta4/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta4/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta5/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta5/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.3-beta4',
+        version: '0.3.3-beta5',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -695,39 +695,153 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
-    function readStudentStatus(student) {
+    function rawStudentStatus(student) {
         const idx = student.index;
+
         const detail =
-            q(`input[name="${escapeAttr(`List[${idx}].AttendStatusId`)}"]:checked`, student.row) ||
-            q(`input[name="${escapeAttr(`List[${idx}].AttendStatusId`)}"]:checked`);
+            q('input[name="' + escapeAttr('List[' + idx + '].AttendStatusId') + '"]:checked', student.row) ||
+            q('input[name="' + escapeAttr('List[' + idx + '].AttendStatusId') + '"]:checked');
 
         const main =
-            q(`input[name="${escapeAttr(`Attend[${idx}]`)}"]:checked`, student.row) ||
-            q(`input[name="${escapeAttr(`Attend[${idx}]`)}"]:checked`);
-
-        const detailValue = detail?.value ?? '';
-        const mainValue = main?.value ?? '';
-
-        let kind = DETAIL_KIND[detailValue] || '';
-        if (!kind) {
-            if (mainValue === '0') kind = 'present';
-            else if (mainValue === '12') kind = 'absent';
-            else if (mainValue === '34') kind = 'late';
-            else kind = 'unset';
-        }
-
-        let key = 'unset';
-        if (detailValue === '0') key = STATUS.PRESENT.key;
-        else if (detailValue === '1') key = STATUS.ABSENT_EXCUSED.key;
-        else if (detailValue === '2') key = STATUS.ABSENT_UNEXCUSED.key;
-        else if (detailValue === '4') key = STATUS.LATE_EXCUSED.key;
-        else if (detailValue === '3') key = STATUS.LATE_UNEXCUSED.key;
+            q('input[name="' + escapeAttr('Attend[' + idx + ']') + '"]:checked', student.row) ||
+            q('input[name="' + escapeAttr('Attend[' + idx + ']') + '"]:checked');
 
         return {
-            kind,
-            key,
-            main: mainValue,
-            detail: detailValue
+            main: main?.value ?? '',
+            detail: detail?.value ?? ''
+        };
+    }
+
+    function readStudentStatus(student) {
+        const raw = rawStudentStatus(student);
+        const mainValue = raw.main;
+        const rawDetailValue = raw.detail;
+
+        // مدرستي قد تُبقي سبب الغياب/التأخر القديم checked في DOM
+        // حتى بعد تحويل الطالب إلى «حاضر». لذلك الحالة الرئيسية هي المرجع الأول.
+        if (mainValue === '0') {
+            return {
+                kind: 'present',
+                key: STATUS.PRESENT.key,
+                main: '0',
+                detail: '0',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        if (mainValue === '12') {
+            if (rawDetailValue === '1') {
+                return {
+                    kind: 'absent',
+                    key: STATUS.ABSENT_EXCUSED.key,
+                    main: '12',
+                    detail: '1',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            if (rawDetailValue === '2') {
+                return {
+                    kind: 'absent',
+                    key: STATUS.ABSENT_UNEXCUSED.key,
+                    main: '12',
+                    detail: '2',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            return {
+                kind: 'absent',
+                key: 'unset',
+                main: '12',
+                detail: '',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        if (mainValue === '34') {
+            if (rawDetailValue === '4') {
+                return {
+                    kind: 'late',
+                    key: STATUS.LATE_EXCUSED.key,
+                    main: '34',
+                    detail: '4',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            if (rawDetailValue === '3') {
+                return {
+                    kind: 'late',
+                    key: STATUS.LATE_UNEXCUSED.key,
+                    main: '34',
+                    detail: '3',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            return {
+                kind: 'late',
+                key: 'unset',
+                main: '34',
+                detail: '',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        // fallback للواجهات التي قد تعرض التفصيل بدون قيمة رئيسية واضحة.
+        if (rawDetailValue === '0') {
+            return {
+                kind: 'present',
+                key: STATUS.PRESENT.key,
+                main: '0',
+                detail: '0',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '1') {
+            return {
+                kind: 'absent',
+                key: STATUS.ABSENT_EXCUSED.key,
+                main: '12',
+                detail: '1',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '2') {
+            return {
+                kind: 'absent',
+                key: STATUS.ABSENT_UNEXCUSED.key,
+                main: '12',
+                detail: '2',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '4') {
+            return {
+                kind: 'late',
+                key: STATUS.LATE_EXCUSED.key,
+                main: '34',
+                detail: '4',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '3') {
+            return {
+                kind: 'late',
+                key: STATUS.LATE_UNEXCUSED.key,
+                main: '34',
+                detail: '3',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        return {
+            kind: 'unset',
+            key: 'unset',
+            main: '',
+            detail: '',
+            rawDetail: rawDetailValue
         };
     }
 
@@ -1697,7 +1811,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
     function rowSaveSignature(student) {
         if (!student?.row) return '';
-        const status = readStudentStatus(student);
+
+        // البصمة تعتمد على الاختيار الرئيسي + التفصيلي الخام.
+        // هذا يضمن اكتشاف غائب/متأخر ← حاضر حتى لو أبقت مدرستي السبب القديم checked.
+        const rawStatus = rawStudentStatus(student);
 
         const checkedStars =
             q('input[name="Stars"]:checked', student.row) ||
@@ -1708,7 +1825,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             q('input[name="Stars"], select[name="Stars"], input[name$=".Stars"], select[name$=".Stars"]', student.row);
 
         const stars = starsField?.value ?? '';
-        return String(status.detail || '') + '|' + String(stars);
+        return String(rawStatus.main || '') + '|' +
+            String(rawStatus.detail || '') + '|' +
+            String(stars);
     }
 
     function resetSavedSignatures() {
@@ -1971,7 +2090,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const oldStar = q('input[type="hidden"][name="OldStar"]', student.row);
         const current = readStudentStatus(student);
 
-        if (oldStatus && current.detail) oldStatus.value = current.detail;
+        if (oldStatus) oldStatus.value = current.detail || '';
         if (oldStar) oldStar.value = currentStarsValue(student);
 
         student.row.classList.remove('msa-save-dirty', 'msa-save-failed');
@@ -2107,7 +2226,17 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         if (Date.now() >= Number(state.saveAllArmedUntil || 0)) {
             state.saveAllArmedUntil = Date.now() + 10000;
-            saveDebug('تم رصد ' + targets.length + ' طالب غير محفوظ. اضغط زر التأكيد الأخضر مرة ثانية خلال 10 ثوانٍ لبدء الحفظ.');
+            const details = targets.slice(0, 3).map(student => {
+                const raw = rawStudentStatus(student);
+                const effective = readStudentStatus(student);
+                return student.name + ' [' + raw.main + '/' + raw.detail + ' → ' + effective.main + '/' + effective.detail + ']';
+            }).join('، ');
+
+            saveDebug(
+                'تم رصد ' + targets.length + ' طالب غير محفوظ. ' +
+                (details ? 'مثال: ' + details + '. ' : '') +
+                'اضغط زر التأكيد الأخضر مرة ثانية خلال 10 ثوانٍ لبدء الحفظ.'
+            );
             updateSaveAllUi();
 
             setTimeout(() => {
@@ -2511,7 +2640,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.3-beta4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.3-beta5] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
