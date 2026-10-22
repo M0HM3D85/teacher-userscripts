@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.3-beta2
-// @description  نسخة اختبارية: حفظ الكل المتسلسل يرسل نفس طلب مدرستي مباشرة للصفوف المتغيرة، ويتتبع المحفوظ وغير المحفوظ والفاشل.
+// @version      0.3.3-beta3
+// @description  نسخة اختبارية: حفظ الكل عبر AJAX الأصلي للصفحة مع تتبع المحفوظ وغير المحفوظ وإظهار الخطأ مباشرة عند التعطل.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta2/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta2/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta3/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-save-all-v0.3.3-beta3/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.3-beta2',
+        version: '0.3.3-beta3',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -1870,51 +1870,83 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         };
     }
 
-    async function saveStudentDirect(student, timeoutMs = 12000) {
+    function saveStudentViaPageAjax(student, timeoutMs = 12000) {
         const params = buildRowSaveParams(student);
         const valid = validateRowSaveParams(params);
 
         if (!valid.ok) {
-            return {
+            return Promise.resolve({
                 ok: false,
                 message: 'بيانات الحفظ ناقصة: ' + valid.missing.join(', ')
-            };
+            });
         }
 
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const jq = window.jQuery;
+        if (!jq?.ajax) {
+            return Promise.resolve({
+                ok: false,
+                message: 'لم يتم العثور على jQuery/AJAX الخاص بمدرستي في الصفحة.'
+            });
+        }
 
-        try {
-            const response = await fetch('/SchoolSchedule/AttendStudents/SaveAttendStudent', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: params.toString(),
-                signal: controller.signal
+        return new Promise(resolve => {
+            let settled = false;
+
+            const finish = result => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+
+            let request;
+            try {
+                request = jq.ajax({
+                    url: '/SchoolSchedule/AttendStudents/SaveAttendStudent',
+                    type: 'POST',
+                    method: 'POST',
+                    data: params.toString(),
+                    processData: false,
+                    contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+                    dataType: 'json',
+                    cache: false,
+                    timeout: timeoutMs
+                });
+            } catch (error) {
+                finish({
+                    ok: false,
+                    message: 'تعذر بدء طلب AJAX: ' + String(error?.message || error)
+                });
+                return;
+            }
+
+            request.done((payload, _textStatus, xhr) => {
+                finish(parseSavePayload(payload, true, xhr?.status || 200));
             });
 
-            const text = await response.text();
-            let payload = null;
+            request.fail((xhr, textStatus, errorThrown) => {
+                let payload = xhr?.responseJSON || null;
+                if (!payload) {
+                    try { payload = JSON.parse(String(xhr?.responseText || '')); } catch (_) {}
+                }
 
-            try {
-                payload = JSON.parse(text);
-            } catch (_) {}
+                if (payload?.result?.status === true) {
+                    finish(parseSavePayload(payload, true, xhr?.status || 200));
+                    return;
+                }
 
-            return parseSavePayload(payload, response.ok, response.status);
-        } catch (error) {
-            if (error?.name === 'AbortError') {
-                return { ok: false, message: 'انتهت مهلة انتظار رد مدرستي.' };
-            }
-            return {
-                ok: false,
-                message: 'تعذر إرسال الحفظ: ' + String(error?.message || error)
-            };
-        } finally {
-            clearTimeout(timer);
-        }
+                const reason =
+                    payload?.result?.msg ||
+                    (textStatus === 'timeout'
+                        ? 'انتهت مهلة انتظار رد مدرستي.'
+                        : String(errorThrown || textStatus || ('HTTP ' + (xhr?.status || 0))));
+
+                finish({
+                    ok: false,
+                    message: reason,
+                    status: xhr?.status || 0
+                });
+            });
+        });
     }
 
     function markStudentSaved(student) {
@@ -1961,17 +1993,21 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         state.saveAllRunning = true;
         state.saveFailures = [];
-        document.body.classList.add('msa-save-lock');
-
         const root = q('#' + APP_ID);
-        root?.classList.add('msa-is-saving');
-        updateSaveAllUi();
-        setSaveProgress(0, targets.length, 'بدء الحفظ...');
-
         let success = 0;
         const failures = [];
 
         try {
+            document.body.classList.add('msa-save-lock');
+            root?.classList.add('msa-is-saving');
+            updateSaveAllUi();
+            setSaveProgress(0, targets.length, 'بدء الحفظ...');
+
+            console.info('[Madrasati Smart Attendance] بدء حفظ الكل', {
+                count: targets.length,
+                students: targets.map(s => ({ index: s.index, studentId: s.studentId, name: s.name }))
+            });
+
             for (let i = 0; i < targets.length; i++) {
                 const student = targets[i];
                 setSaveProgress(
@@ -1980,7 +2016,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     'جاري حفظ ' + (i + 1) + ' من ' + targets.length + ': ' + student.name
                 );
 
-                const result = await saveStudentDirect(student);
+                const result = await saveStudentViaPageAjax(student);
 
                 if (result.ok) {
                     success++;
@@ -2007,14 +2043,24 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     await new Promise(r => setTimeout(r, 120));
                 }
             }
+        } catch (error) {
+            const message = 'تعطل حفظ الكل: ' + String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Save-all fatal error', error);
+            failures.push({
+                index: -1,
+                studentId: '',
+                name: 'خطأ داخلي',
+                reason: message
+            });
+            setSaveProgress(success, targets.length, message, true);
+            toast(message);
         } finally {
             state.saveAllRunning = false;
             state.saveFailures = failures;
             document.body.classList.remove('msa-save-lock');
             root?.classList.remove('msa-is-saving');
+            updateSaveAllUi();
         }
-
-        updateSaveAllUi();
 
         if (failures.length) {
             setSaveProgress(
@@ -2036,7 +2082,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     }
 
     function saveAllChanges() {
-        runSaveQueue(dirtyRowSaveStudents(), false);
+        runSaveQueue(dirtyRowSaveStudents(), false).catch(error => {
+            const message = 'تعذر بدء حفظ الكل: ' + String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Save-all start error', error);
+            state.saveAllRunning = false;
+            document.body.classList.remove('msa-save-lock');
+            setSaveProgress(0, 1, message, true);
+            toast(message);
+            updateSaveAllUi();
+        });
     }
 
     function retryFailedSaves() {
@@ -2411,7 +2465,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.3-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.3-beta3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
