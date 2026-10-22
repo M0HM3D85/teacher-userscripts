@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.2
-// @description  مركز ذكي لإدارة حضور الحصة في مدرستي: تحضير جماعي، إحصاءات تفاعلية، تقارير دقيقة ببيانات الحصة، نسخ قوائم، طباعة/PDF، CSV، بحث وفرز وتراجع.
+// @version      0.3.3
+// @description  مركز ذكي لإدارة حضور الحصة في مدرستي مع حفظ الكل المتسلسل، تتبع التغييرات، الإحصاءات، البحث والفرز، التراجع والتقارير.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.2',
+        version: '0.3.3',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -116,7 +116,12 @@
         sort: 'original',
         scope: 'all',
         collapsed: false,
-        suspendUpdates: false
+        suspendUpdates: false,
+        saveAllRunning: false,
+        savedSignatures: new Map(),
+        saveFailures: [],
+        saveAllArmedUntil: 0,
+        saveDebugStep: ''
     };
 
     const q = (sel, root = document) => root.querySelector(sel);
@@ -326,6 +331,59 @@
 }
 #${APP_ID} .msa-toast.is-visible { display:block; }
 
+#${APP_ID} .msa-save-panel {
+    display:none;
+    grid-template-columns:auto minmax(180px,1fr) auto;
+    align-items:center;
+    gap:10px;
+    margin:12px 0 10px;
+    padding:11px 12px;
+    border:1px solid #cfe2dc;
+    border-radius:12px;
+    background:#f6fbf9;
+}
+#${APP_ID} .msa-save-panel.is-visible { display:grid; }
+#${APP_ID} .msa-save-actions { display:flex; gap:7px; flex-wrap:wrap; }
+#${APP_ID} .msa-save-all {
+    background:#0f766e;
+    color:#fff;
+    border-color:#0f766e;
+    font-weight:900;
+    min-width:120px;
+}
+#${APP_ID} .msa-save-all:hover { background:#0c645e; border-color:#0c645e; }
+#${APP_ID} .msa-retry-save { background:#fff7ed; border-color:#fdba74; color:#9a3412; font-weight:800; }
+#${APP_ID} .msa-save-track {
+    height:9px;
+    border-radius:999px;
+    background:#dfe9e6;
+    overflow:hidden;
+}
+#${APP_ID} .msa-save-track > i {
+    display:block;
+    width:0;
+    height:100%;
+    border-radius:inherit;
+    background:#0f766e;
+    transition:width .18s ease;
+}
+#${APP_ID} .msa-save-meta {
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    min-width:170px;
+    font-size:11px;
+    color:#64748b;
+}
+#${APP_ID} .msa-save-meta strong { color:#24443d; font-size:12px; }
+#${APP_ID} .msa-save-panel.is-error { border-color:#fecaca; background:#fff8f8; }
+#${APP_ID} .msa-save-panel.is-error .msa-save-track > i { background:#dc2626; }
+.msa-student-row.msa-save-dirty > td { outline:1px dashed rgba(14,116,144,.22); outline-offset:-1px; }
+.msa-student-row.msa-save-failed > td { outline:2px solid rgba(220,38,38,.34); outline-offset:-2px; }
+body.msa-save-lock .msa-student-row input,
+body.msa-save-lock .msa-student-row label,
+body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
+
 .msa-row-hidden { display:none !important; }
 .msa-student-row > td { transition:background .15s ease, box-shadow .15s ease; }
 /* تلوين أوضح للصفوف حتى يمكن تمييز الحالة من النظرة الأولى */
@@ -407,6 +465,9 @@
     #${APP_ID} input[type="search"] { flex-basis:100%; }
     #${APP_ID} .msa-ready { grid-template-columns:1fr auto; }
     #${APP_ID} .msa-progress { grid-column:1 / -1; order:3; }
+    #${APP_ID} .msa-save-panel { grid-template-columns:1fr; }
+    #${APP_ID} .msa-save-actions { width:100%; }
+    #${APP_ID} .msa-save-actions button { flex:1 1 auto; }
     .msa-report-meta-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .msa-report-summary { grid-template-columns:repeat(3,1fr); }
     .msa-report-groups { grid-template-columns:1fr; }
@@ -634,39 +695,153 @@
         };
     }
 
-    function readStudentStatus(student) {
+    function rawStudentStatus(student) {
         const idx = student.index;
+
         const detail =
-            q(`input[name="${escapeAttr(`List[${idx}].AttendStatusId`)}"]:checked`, student.row) ||
-            q(`input[name="${escapeAttr(`List[${idx}].AttendStatusId`)}"]:checked`);
+            q('input[name="' + escapeAttr('List[' + idx + '].AttendStatusId') + '"]:checked', student.row) ||
+            q('input[name="' + escapeAttr('List[' + idx + '].AttendStatusId') + '"]:checked');
 
         const main =
-            q(`input[name="${escapeAttr(`Attend[${idx}]`)}"]:checked`, student.row) ||
-            q(`input[name="${escapeAttr(`Attend[${idx}]`)}"]:checked`);
-
-        const detailValue = detail?.value ?? '';
-        const mainValue = main?.value ?? '';
-
-        let kind = DETAIL_KIND[detailValue] || '';
-        if (!kind) {
-            if (mainValue === '0') kind = 'present';
-            else if (mainValue === '12') kind = 'absent';
-            else if (mainValue === '34') kind = 'late';
-            else kind = 'unset';
-        }
-
-        let key = 'unset';
-        if (detailValue === '0') key = STATUS.PRESENT.key;
-        else if (detailValue === '1') key = STATUS.ABSENT_EXCUSED.key;
-        else if (detailValue === '2') key = STATUS.ABSENT_UNEXCUSED.key;
-        else if (detailValue === '4') key = STATUS.LATE_EXCUSED.key;
-        else if (detailValue === '3') key = STATUS.LATE_UNEXCUSED.key;
+            q('input[name="' + escapeAttr('Attend[' + idx + ']') + '"]:checked', student.row) ||
+            q('input[name="' + escapeAttr('Attend[' + idx + ']') + '"]:checked');
 
         return {
-            kind,
-            key,
-            main: mainValue,
-            detail: detailValue
+            main: main?.value ?? '',
+            detail: detail?.value ?? ''
+        };
+    }
+
+    function readStudentStatus(student) {
+        const raw = rawStudentStatus(student);
+        const mainValue = raw.main;
+        const rawDetailValue = raw.detail;
+
+        // مدرستي قد تُبقي سبب الغياب/التأخر القديم checked في DOM
+        // حتى بعد تحويل الطالب إلى «حاضر». لذلك الحالة الرئيسية هي المرجع الأول.
+        if (mainValue === '0') {
+            return {
+                kind: 'present',
+                key: STATUS.PRESENT.key,
+                main: '0',
+                detail: '0',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        if (mainValue === '12') {
+            if (rawDetailValue === '1') {
+                return {
+                    kind: 'absent',
+                    key: STATUS.ABSENT_EXCUSED.key,
+                    main: '12',
+                    detail: '1',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            if (rawDetailValue === '2') {
+                return {
+                    kind: 'absent',
+                    key: STATUS.ABSENT_UNEXCUSED.key,
+                    main: '12',
+                    detail: '2',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            return {
+                kind: 'absent',
+                key: 'unset',
+                main: '12',
+                detail: '',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        if (mainValue === '34') {
+            if (rawDetailValue === '4') {
+                return {
+                    kind: 'late',
+                    key: STATUS.LATE_EXCUSED.key,
+                    main: '34',
+                    detail: '4',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            if (rawDetailValue === '3') {
+                return {
+                    kind: 'late',
+                    key: STATUS.LATE_UNEXCUSED.key,
+                    main: '34',
+                    detail: '3',
+                    rawDetail: rawDetailValue
+                };
+            }
+
+            return {
+                kind: 'late',
+                key: 'unset',
+                main: '34',
+                detail: '',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        // fallback للواجهات التي قد تعرض التفصيل بدون قيمة رئيسية واضحة.
+        if (rawDetailValue === '0') {
+            return {
+                kind: 'present',
+                key: STATUS.PRESENT.key,
+                main: '0',
+                detail: '0',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '1') {
+            return {
+                kind: 'absent',
+                key: STATUS.ABSENT_EXCUSED.key,
+                main: '12',
+                detail: '1',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '2') {
+            return {
+                kind: 'absent',
+                key: STATUS.ABSENT_UNEXCUSED.key,
+                main: '12',
+                detail: '2',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '4') {
+            return {
+                kind: 'late',
+                key: STATUS.LATE_EXCUSED.key,
+                main: '34',
+                detail: '4',
+                rawDetail: rawDetailValue
+            };
+        }
+        if (rawDetailValue === '3') {
+            return {
+                kind: 'late',
+                key: STATUS.LATE_UNEXCUSED.key,
+                main: '34',
+                detail: '3',
+                rawDetail: rawDetailValue
+            };
+        }
+
+        return {
+            kind: 'unset',
+            key: 'unset',
+            main: '',
+            detail: '',
+            rawDetail: rawDetailValue
         };
     }
 
@@ -1023,6 +1198,7 @@
         updateStats();
         applyVisibility();
         if (['priority', 'unset-first', 'absent-first', 'late-first'].includes(state.sort)) applySort();
+        updateSaveAllUi();
     }
 
     function toast(message) {
@@ -1632,6 +1808,463 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         setTimeout(() => student.row.classList.remove('msa-focus-row'), 1800);
     }
 
+
+    function rowSaveSignature(student) {
+        if (!student?.row) return '';
+
+        // البصمة تعتمد على الاختيار الرئيسي + التفصيلي الخام.
+        // هذا يضمن اكتشاف غائب/متأخر ← حاضر حتى لو أبقت مدرستي السبب القديم checked.
+        const rawStatus = rawStudentStatus(student);
+
+        const checkedStars =
+            q('input[name="Stars"]:checked', student.row) ||
+            q('input[name$=".Stars"]:checked', student.row);
+
+        const starsField =
+            checkedStars ||
+            q('input[name="Stars"], select[name="Stars"], input[name$=".Stars"], select[name$=".Stars"]', student.row);
+
+        const stars = starsField?.value ?? '';
+        return String(rawStatus.main || '') + '|' +
+            String(rawStatus.detail || '') + '|' +
+            String(stars);
+    }
+
+    function resetSavedSignatures() {
+        state.savedSignatures = new Map();
+        state.saveFailures = [];
+
+        if (state.mode !== 'row-save') return;
+        for (const student of state.students) {
+            state.savedSignatures.set(student.index, rowSaveSignature(student));
+        }
+    }
+
+    function dirtyRowSaveStudents() {
+        if (state.mode !== 'row-save') return [];
+
+        return state.students.filter(student => {
+            const baseline = state.savedSignatures.get(student.index);
+            if (baseline == null) {
+                state.savedSignatures.set(student.index, rowSaveSignature(student));
+                return false;
+            }
+            return rowSaveSignature(student) !== baseline;
+        });
+    }
+
+    function updateSaveAllUi() {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const panel = q('[data-role="row-save-panel"]', root);
+        const saveBtn = q('[data-action="save-all"]', root);
+        const retryBtn = q('[data-action="retry-save"]', root);
+        const countEl = q('[data-role="save-count"]', root);
+
+        const visible = state.mode === 'row-save';
+        panel?.classList.toggle('is-visible', visible);
+        if (!visible) return;
+
+        const dirty = dirtyRowSaveStudents();
+        const failedIndexes = new Set((state.saveFailures || []).map(item => item.index));
+
+        for (const student of state.students) {
+            const isDirty = dirty.some(item => item.index === student.index);
+            student.row.classList.toggle('msa-save-dirty', isDirty);
+            student.row.classList.toggle('msa-save-failed', failedIndexes.has(student.index));
+        }
+
+        if (countEl) {
+            countEl.textContent = state.saveAllRunning
+                ? 'يرجى عدم تغيير الحالات أثناء الحفظ.'
+                : 'التغييرات غير المحفوظة: ' + dirty.length;
+        }
+
+        if (saveBtn) {
+            const armed = !state.saveAllRunning && Date.now() < Number(state.saveAllArmedUntil || 0);
+            saveBtn.disabled = state.saveAllRunning || dirty.length === 0;
+            saveBtn.textContent = state.saveAllRunning
+                ? '⏳ جاري الحفظ...'
+                : armed
+                    ? '✅ تأكيد الحفظ الآن (' + dirty.length + ')'
+                    : '💾 حفظ الكل' + (dirty.length ? ' (' + dirty.length + ')' : '');
+        }
+
+        if (retryBtn) {
+            const failures = Array.isArray(state.saveFailures) ? state.saveFailures.length : 0;
+            retryBtn.hidden = state.saveAllRunning || failures === 0;
+            retryBtn.disabled = state.saveAllRunning || failures === 0;
+            retryBtn.textContent = '↻ إعادة محاولة الفاشل (' + failures + ')';
+        }
+    }
+
+    function saveDebug(message, isError = false) {
+        state.saveDebugStep = String(message || '');
+        console[isError ? 'error' : 'info']('[Madrasati Smart Attendance][SaveAll]', state.saveDebugStep);
+        const root = q('#' + APP_ID);
+        const textEl = q('[data-role="save-progress-text"]', root || document);
+        const panel = q('[data-role="row-save-panel"]', root || document);
+        if (textEl) textEl.textContent = state.saveDebugStep;
+        panel?.classList.toggle('is-error', Boolean(isError));
+    }
+
+    function setSaveProgress(done, total, message, isError = false) {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const panel = q('[data-role="row-save-panel"]', root);
+        const bar = q('[data-role="save-progress-bar"]', root);
+        const textEl = q('[data-role="save-progress-text"]', root);
+
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        if (bar) bar.style.width = pct + '%';
+        if (textEl) textEl.textContent = message || (done + ' / ' + total);
+        panel?.classList.toggle('is-error', Boolean(isError));
+    }
+
+    function parseSavePayload(payload, httpOk = true, httpStatus = 200) {
+        const appStatus = payload?.result?.status;
+        const message = payload?.result?.msg || '';
+
+        return {
+            ok: Boolean(httpOk && appStatus === true),
+            message: message || (httpOk ? 'استجابة غير متوقعة من مدرستي.' : 'HTTP ' + httpStatus),
+            status: httpStatus
+        };
+    }
+
+    function rowFieldValue(student, name) {
+        const field = q('[name="' + escapeAttr(name) + '"]', student.row);
+        return field?.value ?? '';
+    }
+
+    function currentStarsValue(student) {
+        const checked =
+            q('input[type="radio"][name="Stars"]:checked', student.row) ||
+            q('input[type="radio"][name$=".Stars"]:checked', student.row);
+
+        if (checked) return checked.value ?? '0';
+
+        const field =
+            q('input[name="Stars"], select[name="Stars"]', student.row) ||
+            q('input[name$=".Stars"], select[name$=".Stars"]', student.row);
+
+        return field?.value ?? '0';
+    }
+
+    function buildRowSaveParams(student) {
+        const params = new URLSearchParams();
+
+        for (const input of qa('input[type="hidden"][name]', student.row)) {
+            if (!input.name) continue;
+            params.set(input.name, input.value ?? '');
+        }
+
+        const status = readStudentStatus(student);
+
+        const required = {
+            dateAttend: rowFieldValue(student, 'dateAttend'),
+            IdSchedule: rowFieldValue(student, 'IdSchedule'),
+            studentAttendDate: rowFieldValue(student, 'studentAttendDate'),
+            SchoolId: rowFieldValue(student, 'SchoolId'),
+            AttendStatusIdold: rowFieldValue(student, 'AttendStatusIdold'),
+            Id: rowFieldValue(student, 'Id'),
+            StudentId: rowFieldValue(student, 'StudentId') || student.studentId,
+            StudentName: rowFieldValue(student, 'StudentName') || student.name,
+            IsTalented: rowFieldValue(student, 'IsTalented') || 'False',
+            OldStar: rowFieldValue(student, 'OldStar') || '0',
+            AttendStatusId: status.detail,
+            Stars: currentStarsValue(student)
+        };
+
+        for (const [name, value] of Object.entries(required)) {
+            params.set(name, value ?? '');
+        }
+
+        return params;
+    }
+
+    function validateRowSaveParams(params) {
+        const required = [
+            'dateAttend',
+            'IdSchedule',
+            'studentAttendDate',
+            'SchoolId',
+            'Id',
+            'StudentId',
+            'StudentName',
+            'AttendStatusId'
+        ];
+
+        const missing = required.filter(name => !String(params.get(name) || '').trim());
+        return {
+            ok: missing.length === 0,
+            missing
+        };
+    }
+
+    function saveStudentViaPageAjax(student, timeoutMs = 12000) {
+        const params = buildRowSaveParams(student);
+        const valid = validateRowSaveParams(params);
+
+        if (!valid.ok) {
+            return Promise.resolve({
+                ok: false,
+                message: 'بيانات الحفظ ناقصة: ' + valid.missing.join(', ')
+            });
+        }
+
+        const jq = window.jQuery;
+        if (!jq?.ajax) {
+            return Promise.resolve({
+                ok: false,
+                message: 'لم يتم العثور على jQuery/AJAX الخاص بمدرستي في الصفحة.'
+            });
+        }
+
+        return new Promise(resolve => {
+            let settled = false;
+
+            const finish = result => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+
+            let request;
+            try {
+                request = jq.ajax({
+                    url: '/SchoolSchedule/AttendStudents/SaveAttendStudent',
+                    type: 'POST',
+                    method: 'POST',
+                    data: params.toString(),
+                    processData: false,
+                    contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+                    dataType: 'json',
+                    cache: false,
+                    timeout: timeoutMs
+                });
+            } catch (error) {
+                finish({
+                    ok: false,
+                    message: 'تعذر بدء طلب AJAX: ' + String(error?.message || error)
+                });
+                return;
+            }
+
+            request.done((payload, _textStatus, xhr) => {
+                finish(parseSavePayload(payload, true, xhr?.status || 200));
+            });
+
+            request.fail((xhr, textStatus, errorThrown) => {
+                let payload = xhr?.responseJSON || null;
+                if (!payload) {
+                    try { payload = JSON.parse(String(xhr?.responseText || '')); } catch (_) {}
+                }
+
+                if (payload?.result?.status === true) {
+                    finish(parseSavePayload(payload, true, xhr?.status || 200));
+                    return;
+                }
+
+                const reason =
+                    payload?.result?.msg ||
+                    (textStatus === 'timeout'
+                        ? 'انتهت مهلة انتظار رد مدرستي.'
+                        : String(errorThrown || textStatus || ('HTTP ' + (xhr?.status || 0))));
+
+                finish({
+                    ok: false,
+                    message: reason,
+                    status: xhr?.status || 0
+                });
+            });
+        });
+    }
+
+    function markStudentSaved(student) {
+        state.savedSignatures.set(student.index, rowSaveSignature(student));
+
+        const oldStatus = q('input[type="hidden"][name="AttendStatusIdold"]', student.row);
+        const oldStar = q('input[type="hidden"][name="OldStar"]', student.row);
+        const current = readStudentStatus(student);
+
+        if (oldStatus) oldStatus.value = current.detail || '';
+        if (oldStar) oldStar.value = currentStarsValue(student);
+
+        student.row.classList.remove('msa-save-dirty', 'msa-save-failed');
+    }
+
+    async function runSaveQueue(targets, retryMode = false) {
+        if (state.mode !== 'row-save' || state.saveAllRunning) return;
+
+        targets = [...new Map(
+            (targets || [])
+                .filter(Boolean)
+                .map(student => [student.index, student])
+        ).values()];
+
+        if (!targets.length) {
+            toast(retryMode ? 'لا توجد عمليات فاشلة لإعادة المحاولة.' : 'لا توجد تغييرات تحتاج إلى حفظ.');
+            return;
+        }
+
+        const invalid = targets.filter(student => !readStudentStatus(student).detail);
+        if (invalid.length) {
+            toast('يوجد ' + invalid.length + ' طالب بدون حالة مكتملة. أكمل الحالات أولًا.');
+            setFilter('unset');
+            return;
+        }
+
+        saveDebug('بدأ حفظ ' + targets.length + ' طالب بالتتابع.');
+        state.saveAllRunning = true;
+        state.saveAllArmedUntil = 0;
+        state.saveFailures = [];
+        const root = q('#' + APP_ID);
+        let success = 0;
+        const failures = [];
+
+        try {
+            saveDebug('جاري تجهيز عملية الحفظ...');
+            document.body.classList.add('msa-save-lock');
+            root?.classList.add('msa-is-saving');
+            updateSaveAllUi();
+            setSaveProgress(0, targets.length, 'تم تجهيز الحفظ، جاري إرسال أول طالب...');
+            saveDebug('تم تجهيز الحفظ، جاري إرسال أول طالب...');
+
+            console.info('[Madrasati Smart Attendance] بدء حفظ الكل', {
+                count: targets.length,
+                students: targets.map(s => ({ index: s.index, studentId: s.studentId, name: s.name }))
+            });
+
+            for (let i = 0; i < targets.length; i++) {
+                const student = targets[i];
+                setSaveProgress(
+                    i,
+                    targets.length,
+                    'جاري حفظ ' + (i + 1) + ' من ' + targets.length + ': ' + student.name
+                );
+
+                saveDebug('جاري حفظ ' + (i + 1) + ' من ' + targets.length + ': ' + student.name);
+                const result = await saveStudentViaPageAjax(student);
+                saveDebug('تمت معالجة ' + (i + 1) + ' من ' + targets.length + ': ' + (result.ok ? 'نجاح' : 'فشل'));
+
+                if (result.ok) {
+                    success++;
+                    markStudentSaved(student);
+                } else {
+                    failures.push({
+                        index: student.index,
+                        studentId: student.studentId,
+                        name: student.name,
+                        reason: result.message || 'فشل غير معروف'
+                    });
+                    student.row.classList.add('msa-save-failed');
+                }
+
+                setSaveProgress(
+                    i + 1,
+                    targets.length,
+                    'تمت معالجة ' + (i + 1) + ' من ' + targets.length +
+                        ' — نجح ' + success + (failures.length ? ' — فشل ' + failures.length : ''),
+                    failures.length > 0
+                );
+
+                if (i < targets.length - 1) {
+                    await new Promise(r => setTimeout(r, 120));
+                }
+            }
+        } catch (error) {
+            const message = 'تعطل حفظ الكل: ' + String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Save-all fatal error', error);
+            failures.push({
+                index: -1,
+                studentId: '',
+                name: 'خطأ داخلي',
+                reason: message
+            });
+            setSaveProgress(success, targets.length, message, true);
+            toast(message);
+        } finally {
+            state.saveAllRunning = false;
+            state.saveFailures = failures;
+            document.body.classList.remove('msa-save-lock');
+            root?.classList.remove('msa-is-saving');
+            updateSaveAllUi();
+        }
+
+        saveDebug('انتهى الحفظ — نجح: ' + success + '، فشل: ' + failures.length, failures.length > 0);
+
+        if (failures.length) {
+            setSaveProgress(
+                targets.length,
+                targets.length,
+                'اكتمل مع ملاحظات: نجح ' + success + ' — تعذر ' + failures.length + '.',
+                true
+            );
+            toast('اكتمل الحفظ: نجح ' + success + ' وتعذر ' + failures.length + '. استخدم «إعادة محاولة الفاشل».');
+            console.warn('[Madrasati Smart Attendance] عمليات حفظ فاشلة:', failures);
+        } else {
+            setSaveProgress(
+                targets.length,
+                targets.length,
+                '✓ تم حفظ ' + success + ' من ' + targets.length + ' بنجاح.'
+            );
+            toast('✓ تم حفظ ' + success + ' طالب بنجاح.');
+        }
+    }
+
+    function saveAllChanges() {
+        const targets = dirtyRowSaveStudents();
+
+        if (!targets.length) {
+            saveDebug('لا توجد تغييرات غير محفوظة.');
+            toast('لا توجد تغييرات تحتاج إلى حفظ.');
+            return;
+        }
+
+        if (Date.now() >= Number(state.saveAllArmedUntil || 0)) {
+            state.saveAllArmedUntil = Date.now() + 10000;
+            saveDebug(
+                'تم رصد ' + targets.length + ' طالب لديهم تغييرات غير محفوظة. ' +
+                'اضغط زر التأكيد الأخضر مرة ثانية خلال 10 ثوانٍ لبدء الحفظ.'
+            );
+            updateSaveAllUi();
+
+            setTimeout(() => {
+                if (!state.saveAllRunning && Date.now() >= Number(state.saveAllArmedUntil || 0)) {
+                    state.saveAllArmedUntil = 0;
+                    updateSaveAllUi();
+                    if (!state.saveDebugStep.startsWith('1/6')) {
+                        saveDebug('انتهت مهلة التأكيد. اضغط «حفظ الكل» للبدء من جديد.');
+                    }
+                }
+            }, 10200);
+            return;
+        }
+
+        state.saveAllArmedUntil = 0;
+        saveDebug('تم التأكيد داخل اللوحة — بدء التنفيذ الآن...');
+
+        runSaveQueue(targets, true).catch(error => {
+            const message = 'تعذر بدء حفظ الكل: ' + String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Save-all start error', error);
+            state.saveAllRunning = false;
+            document.body.classList.remove('msa-save-lock');
+            setSaveProgress(0, 1, message, true);
+            saveDebug(message, true);
+            toast(message);
+            updateSaveAllUi();
+        });
+    }
+
+    function retryFailedSaves() {
+        const failedIndexes = new Set((state.saveFailures || []).map(item => item.index));
+        const targets = state.students.filter(student => failedIndexes.has(student.index));
+        runSaveQueue(targets, true);
+    }
+
     function buildToolbar() {
         const root = document.createElement('section');
         root.id = APP_ID;
@@ -1733,6 +2366,18 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     <span class="msa-hint" data-role="visible-hint"></span>
                 </div>
 
+                <div class="msa-save-panel" data-role="row-save-panel">
+                    <div class="msa-save-actions">
+                        <button type="button" class="msa-save-all" data-action="save-all">💾 حفظ الكل</button>
+                        <button type="button" class="msa-retry-save" data-action="retry-save" hidden>↻ إعادة محاولة الفاشل</button>
+                    </div>
+                    <div class="msa-save-track" aria-hidden="true"><i data-role="save-progress-bar"></i></div>
+                    <div class="msa-save-meta">
+                        <strong data-role="save-progress-text">جاهز للحفظ المتسلسل</strong>
+                        <span data-role="save-count">التغييرات غير المحفوظة: 0</span>
+                    </div>
+                </div>
+
                 <div class="msa-row">
                     <span class="msa-hint" data-role="save-hint"></span>
                     <span class="msa-spacer"></span>
@@ -1779,8 +2424,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const saveHint = q('[data-role="save-hint"]', root);
 
         if (state.mode === 'row-save') {
-            if (modeLabel) modeLabel.textContent = 'وضع تعديل حضور محفوظ — كل صف له حفظ مستقل في مدرستي';
-            if (saveHint) saveHint.textContent = 'تنبيه: في هذا الوضع تغيّر الأدوات الحالات جماعيًا، لكن مدرستي قد تتطلب حفظ كل صف وفق آليتها الأصلية.';
+            if (modeLabel) modeLabel.textContent = 'وضع تعديل حضور محفوظ — حفظ فردي أصلي + حفظ الكل الذكي';
+            if (saveHint) saveHint.textContent = '«حفظ الكل» يحفظ الصفوف التي تغيرت فقط، بالتتابع، وينتظر رد مدرستي لكل طالب قبل الانتقال للذي يليه.';
         } else {
             if (modeLabel) modeLabel.textContent = 'وضع التحضير الجماعي الأولي';
             if (saveHint) saveHint.textContent = 'بعد المراجعة استخدم زر «حفظ» الأصلي في مدرستي.';
@@ -1801,6 +2446,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="undo"]', root).addEventListener('click', undoLast);
         q('[data-action="report"]', root).addEventListener('click', openReport);
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
+
+        q('[data-action="save-all"]', root)?.addEventListener('click', saveAllChanges);
+        q('[data-action="retry-save"]', root)?.addEventListener('click', retryFailedSaves);
 
         q('[data-action="toggle-panel"]', root).addEventListener('click', event => {
             state.collapsed = !state.collapsed;
@@ -1852,12 +2500,61 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             boundEventRoots.add(eventRoot);
             eventRoot.addEventListener('change', event => {
                 if (state.suspendUpdates) return;
-                if (
+                const attendanceChanged =
                     event.target.matches?.('input[type="radio"][name^="Attend["]') ||
-                    event.target.matches?.('input[type="radio"][name^="List["][name$=".AttendStatusId"]')
-                ) updateAll();
+                    event.target.matches?.('input[type="radio"][name^="List["][name$=".AttendStatusId"]');
+
+                if (attendanceChanged) updateAll();
+                else if (state.mode === 'row-save' && event.target.closest?.('tr')) updateSaveAllUi();
             });
         }
+    }
+
+
+    function bindNativeSaveTracking() {
+        if (document.documentElement.dataset.msaNativeSaveTracking === '1') return;
+
+        const jq = window.jQuery;
+        if (!jq?.fn?.jquery) return;
+
+        document.documentElement.dataset.msaNativeSaveTracking = '1';
+
+        jq(document).on('ajaxSuccess.msaSmartAttendance', (_event, xhr, settings) => {
+            const url = String(settings?.url || '');
+            if (!url.includes('/SchoolSchedule/AttendStudents/SaveAttendStudent')) return;
+
+            let payload = xhr?.responseJSON || null;
+            if (!payload) {
+                try { payload = JSON.parse(String(xhr?.responseText || '')); } catch (_) {}
+            }
+            if (payload?.result?.status !== true) return;
+
+            let params = null;
+            try {
+                if (typeof settings?.data === 'string') {
+                    params = new URLSearchParams(settings.data);
+                } else if (settings?.data && typeof settings.data === 'object') {
+                    params = new URLSearchParams();
+                    for (const [key, value] of Object.entries(settings.data)) {
+                        params.set(key, value ?? '');
+                    }
+                }
+            } catch (_) {}
+
+            const recordId = params?.get('Id') || '';
+            const studentId = params?.get('StudentId') || '';
+
+            const student = state.students.find(item => {
+                const rowId = rowFieldValue(item, 'Id');
+                return (recordId && rowId === recordId) ||
+                    (!recordId && studentId && String(item.studentId) === studentId);
+            });
+
+            if (!student) return;
+            markStudentSaved(student);
+            state.saveFailures = (state.saveFailures || []).filter(item => item.index !== student.index);
+            updateSaveAllUi();
+        });
     }
 
     function bindKeyboardShortcuts() {
@@ -1917,19 +2614,26 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             sort: 'original',
             scope: 'all',
             collapsed: false,
-            suspendUpdates: false
+            suspendUpdates: false,
+            saveAllRunning: false,
+            savedSignatures: new Map(),
+            saveFailures: [],
+            saveAllArmedUntil: 0,
+            saveDebugStep: ''
         };
 
+        resetSavedSignatures();
         injectStyle();
         const root = buildToolbar();
         insertToolbar(root);
         bindToolbar(root);
         bindKeyboardShortcuts();
+        bindNativeSaveTracking();
         updateModeUi(root);
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),

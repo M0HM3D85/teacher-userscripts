@@ -101,9 +101,9 @@
     {
       "id": "madrasati-smart-attendance",
       "name": "Madrasati Smart Attendance | التحضير الذكي لمدرستي",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "status": "stable",
-      "description": "مركز ذكي لإدارة حضور الحصة في مدرستي: تحضير جماعي، بطاقات إحصائية تفاعلية، نسخ قوائم، جاهزية للحفظ، بحث وفرز واستثناءات، تراجع متعدد، وتقرير لحظي مع واتساب وCSV وطباعة/PDF.",
+      "description": "مركز ذكي لإدارة حضور الحصة في مدرستي: تحضير جماعي، حفظ الكل المتسلسل للتغييرات، بطاقات إحصائية تفاعلية، بحث وفرز وتراجع، وتقرير لحظي مع واتساب وCSV وطباعة/PDF.",
       "sourcePath": "scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js",
       "additionalInfoPath": "scripts/madrasati-smart-attendance/README.md",
       "greasyFork": "https://greasyfork.org/scripts/595613",
