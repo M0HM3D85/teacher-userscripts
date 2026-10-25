@@ -2,8 +2,8 @@
 // @name         مكتبة البرومبتات الذكية | NotebookLM
 // @name:en      Smart Prompt Library for NotebookLM
 // @namespace    https://tampermonkey.net/
-// @version      1.1.2
-// @description  مكتبة قوالب برومبتات داخل صفحة المحادثة في NotebookLM، بحقول متغيرة ومعاينة ونسخ وبحث وحفظ.
+// @version      1.1.3
+// @description  مكتبة قوالب NotebookLM بمدخل مدمج قرب عنوان الدفتر وتعبئة المتغيرات والنسخ والحفظ.
 // @match        https://notebooklm.google.com/*
 // @match        https://notebook.google.com/*
 // @match        https://notebooklm.google/*
@@ -16,7 +16,7 @@
 // ==/UserScript==
 
 /*
- * Smart Prompt Library v1.1.2
+ * Smart Prompt Library v1.1.3
  * - Does not read notebook content, send requests, or submit prompts automatically.
  * - Prompts are stored only in this userscript's Tampermonkey storage.
  * - Use {{اسم_المتغير}} anywhere in a template to create a fillable field.
@@ -27,7 +27,7 @@
   // A page-visible non-sensitive marker helps distinguish an inactive userscript
   // from a DOM anchoring problem. In Console: document.documentElement.dataset.nlplStatus
   const markStatus = (status) => {
-    document.documentElement.dataset.nlplVersion = '1.1.2';
+    document.documentElement.dataset.nlplVersion = '1.1.3';
     document.documentElement.dataset.nlplStatus = status;
   };
   if (document.getElementById('splt-root')) {
@@ -36,8 +36,55 @@
     return;
   }
   markStatus('started');
-  console.info('[NotebookLM Prompt Library] v1.1.2 executing on', location.host);
+  console.info('[NotebookLM Prompt Library] v1.1.3 executing on', location.host);
 
+  // This bootstrap is independent of library storage and Chat DOM.
+  // The entry stays an inline sibling of NotebookLM's title field (never fixed).
+  let bootStage = 'header-entry';
+  const headerHost = document.createElement('span');
+  headerHost.id = 'splt-header-entry';
+  headerHost.setAttribute('role', 'group');
+  headerHost.style.cssText = 'display:inline-flex;flex:0 0 auto;align-items:center;max-width:190px;min-width:0;vertical-align:middle;margin-inline:8px;position:relative;z-index:1;';
+  const headerShadow = headerHost.attachShadow({ mode: 'open' });
+  headerShadow.innerHTML = `<style>
+    :host { display:inline-flex; flex:0 0 auto; vertical-align:middle; max-width:190px; }
+    button { display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:0;white-space:nowrap;padding:7px 10px;border-radius:9px;border:1px solid #c7d9df;background:#eef6f8;color:#174c5b;font:700 12px/1.35 Tahoma,Arial,sans-serif;direction:rtl;cursor:pointer; }
+    button:hover { background:#e2f0f3; }
+    button[aria-expanded="true"] { background:#d8edef;border-color:#87bec9; }
+  </style><button type="button" id="open-library" aria-expanded="false" aria-label="فتح مكتبة البرومبتات">📋 البرومبتات</button>`;
+  const headerButton = headerShadow.querySelector('#open-library');
+  let headerClick = () => console.warn('[NotebookLM Prompt Library] Library is not ready yet:', bootStage);
+  headerButton.addEventListener('click', () => headerClick());
+
+  function attachHeaderEntry() {
+    const input = document.querySelector('input.title-input');
+    let anchor = input;
+    if (anchor) {
+      // Group the title input with its adjacent wrapper, but do not climb to
+      // the full toolbar. Keeps our control beside the notebook title.
+      const initial = anchor.getBoundingClientRect();
+      for (let i = 0; i < 3 && anchor.parentElement; i++) {
+        const p = anchor.parentElement;
+        const r = p.getBoundingClientRect();
+        if (r.width > Math.max(790, initial.width * 2.2) || r.height > 86) break;
+        if (p.matches('header, mat-toolbar, nav')) break;
+        anchor = p;
+      }
+    } else {
+      // A true inline fallback, not a floating launcher.
+      anchor = document.querySelector('.panel-header-content, section.chat-panel, .panel-container');
+    }
+    if (!anchor?.parentElement) return false;
+    if (headerHost.parentNode !== anchor.parentNode || headerHost.previousSibling !== anchor) {
+      anchor.parentNode.insertBefore(headerHost, anchor.nextSibling);
+    }
+    return true;
+  }
+  attachHeaderEntry();
+  markStatus('header-ready');
+
+  try {
+    bootStage = 'library-storage';
   const DB_KEY = 'smartPromptLibrary:database:v1';
   const PLACEHOLDER = /\{\{\s*([^{}]+?)\s*\}\}/g;
   const FIELD_NAME = /^[\p{L}\p{N}_-]{1,50}$/u;
@@ -225,14 +272,20 @@
   let favoriteOnly = false;
   let importMode = 'merge';
   let toastTimer = null;
+  bootStage = 'library-element';
   const root = document.createElement('div');
   root.id = 'splt-root';
+  root.classList.add('splt-header-mode');
   // The host stays detached until a real notebook chat composer is found.
   // No fixed launcher, modal, overlay, or page-wide floating element is created.
   const shadow = root.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
     <style>
       :host { all: initial; box-sizing: border-box; display: block; flex: 0 0 auto; align-self: stretch; width: auto; min-width: 0; min-height: 40px; margin: 8px 12px; position: relative; z-index: 4; isolation: isolate; }
+      :host(.splt-header-mode) { display:none; min-height:0; margin:0 12px; }
+      :host(.splt-header-mode.splt-expanded) { display:block; }
+      :host(.splt-header-mode) .launch { display:none !important; }
+
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
       /* Inline accordion INSIDE the notebook chat, not a floating tool. */
@@ -313,7 +366,7 @@
       }
       @media (prefers-reduced-motion: no-preference) { .launch, .btn { transition: background-color .15s ease; } }
     </style>
-    <button id="splt-launch" class="launch" aria-expanded="false" aria-controls="splt-panel">📋 مكتبة البرومبتات — داخل المحادثة</button>
+    <button id="splt-launch" class="launch" aria-expanded="false" aria-controls="splt-panel">📋 مكتبة البرومبتات</button>
     <section id="splt-panel" class="panel" aria-label="مكتبة البرومبتات الذكية" hidden>
       <header class="head">
         <div class="brand"><strong>مكتبة البرومبتات الذكية</strong><small>قوالب جاهزة • تعبئة • نسخ مباشر</small></div>
@@ -386,8 +439,11 @@
   function toggleOpen(force) {
     opened = typeof force === 'boolean' ? force : !opened;
     panel.hidden = !opened;
+    root.classList.toggle('splt-expanded', opened);
+    headerButton.setAttribute('aria-expanded', String(opened));
+    if (opened) ensureMounted();
     launch.setAttribute('aria-expanded', String(opened));
-    launch.textContent = opened ? '📋 إخفاء مكتبة البرومبتات' : '📋 مكتبة البرومبتات — داخل المحادثة';
+    launch.textContent = opened ? '📋 إخفاء مكتبة البرومبتات' : '📋 مكتبة البرومبتات';
     if (opened) { renderList(); renderMain(); }
   }
   function renderList() {
@@ -764,7 +820,7 @@
    */
   let lastPanel = null;
   let mountTimer = null;
-  root.dataset.version = '1.1.2';
+  root.dataset.version = '1.1.3';
 
   function isUsablePanel(el) {
     if (!el?.isConnected) return false;
@@ -805,6 +861,7 @@
   }
 
   function ensureMounted() {
+    attachHeaderEntry();
     const chat = findChatPanel();
     if (!chat) {
       if (root.isConnected) root.remove();
@@ -815,12 +872,11 @@
     const anchor = getInsertionAnchor(chat);
     if (root.parentElement !== chat || root.nextSibling !== anchor) {
       chat.insertBefore(root, anchor);
-      console.info('[NotebookLM Prompt Library] Toolbar mounted directly into .chat-panel (v1.1.2).');
+      console.info('[NotebookLM Prompt Library] v1.1.3 UI attached to chat panel; entry at notebook title.');
     }
     lastPanel = chat;
     root.dataset.mount = 'chat-panel';
-    const r = root.getBoundingClientRect();
-    markStatus(r.height >= 35 ? 'mounted' : 'mounted-but-collapsed');
+    markStatus('mounted');
     return true;
   }
 
@@ -837,14 +893,17 @@
     // Never observe shadow UI changes; only re-anchor if NotebookLM rebuilds
     // the chat. Avoid mutation loops caused by our own insertBefore.
     if (!root.isConnected || !lastPanel?.isConnected || root.parentElement !== lastPanel ||
-      root.nextSibling !== getInsertionAnchor(lastPanel)) queueMount();
+      root.nextSibling !== getInsertionAnchor(lastPanel) || !headerHost.isConnected) queueMount();
   });
   mountObserver.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener('pageshow', queueMount);
   window.addEventListener('popstate', queueMount);
   setInterval(() => {
+    // NotebookLM may load the title field after the chat. Keep the inline
+    // entry beside the title once it becomes available.
+    attachHeaderEntry();
     if (!root.isConnected || !lastPanel?.isConnected || root.parentElement !== lastPanel ||
-      root.nextSibling !== getInsertionAnchor(lastPanel))
+      root.nextSibling !== getInsertionAnchor(lastPanel) || !headerHost.isConnected)
       queueMount();
   }, 3000);
 
@@ -856,9 +915,42 @@
       else toggleOpen(false);
     }
   });
-  try { GM_registerMenuCommand('📋 فتح المكتبة داخل المحادثة', () => { ensureMounted(); if (root.isConnected) toggleOpen(true); else window.alert('افتح دفترًا في NotebookLM لتظهر المكتبة داخل مساحة المحادثة.'); }); } catch (_) { /* optional */ }
-  persist();
-  renderList();
+  try { GM_registerMenuCommand('📋 فتح مكتبة البرومبتات', () => { ensureMounted(); if (root.isConnected) toggleOpen(true); else window.alert('افتح دفترًا في NotebookLM لتظهر مكتبة البرومبتات.'); }); } catch (_) { /* optional */ }
+  // A malformed saved library must not prevent the launcher and panel mounting.
+  bootStage = 'mount';
   try { ensureMounted(); }
   catch (err) { markStatus('mount-error'); console.error('[NotebookLM Prompt Library] Initial mount failed', err); }
+  bootStage = 'render';
+  try {
+    renderList();
+    markStatus(root.isConnected ? 'ready' : 'waiting-for-chat-panel');
+  } catch (err) {
+    markStatus('render-error');
+    console.error('[NotebookLM Prompt Library] Render failed', err);
+  }
+  bootStage = 'persist';
+  persist();
+  headerClick = () => {
+    try {
+      ensureMounted();
+      if (!root.isConnected) {
+        headerButton.title = 'صفحة الدفتر لم تكتمل بعد';
+        return;
+      }
+      toggleOpen();
+    } catch (err) {
+      markStatus('open-error');
+      headerButton.title = err.message || 'حدث خطأ';
+      console.error('[NotebookLM Prompt Library] Open failed', err);
+    }
+  };
+  bootStage = 'ready';
+  } catch (err) {
+    markStatus('init-error');
+    document.documentElement.dataset.nlplStage = bootStage;
+    // Persist no prompt data in the error marker; only the code path.
+    headerButton.textContent = '⚠️ المكتبة';
+    headerButton.title = 'فشل تجهيز المكتبة. افتح Console للاطلاع على الخطأ.';
+    console.error('[NotebookLM Prompt Library] Startup failed at ' + bootStage, err);
+  }
 })();
