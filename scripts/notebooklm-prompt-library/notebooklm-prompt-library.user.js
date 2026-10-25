@@ -2,7 +2,7 @@
 // @name         مكتبة البرومبتات الذكية | NotebookLM
 // @name:en      Smart Prompt Library for NotebookLM
 // @namespace    https://tampermonkey.net/
-// @version      1.1.3
+// @version      1.1.4
 // @description  مكتبة قوالب NotebookLM بمدخل مدمج قرب عنوان الدفتر وتعبئة المتغيرات والنسخ والحفظ.
 // @match        https://notebooklm.google.com/*
 // @match        https://notebook.google.com/*
@@ -16,7 +16,7 @@
 // ==/UserScript==
 
 /*
- * Smart Prompt Library v1.1.3
+ * Smart Prompt Library v1.1.4
  * - Does not read notebook content, send requests, or submit prompts automatically.
  * - Prompts are stored only in this userscript's Tampermonkey storage.
  * - Use {{اسم_المتغير}} anywhere in a template to create a fillable field.
@@ -27,7 +27,7 @@
   // A page-visible non-sensitive marker helps distinguish an inactive userscript
   // from a DOM anchoring problem. In Console: document.documentElement.dataset.nlplStatus
   const markStatus = (status) => {
-    document.documentElement.dataset.nlplVersion = '1.1.3';
+    document.documentElement.dataset.nlplVersion = '1.1.4';
     document.documentElement.dataset.nlplStatus = status;
   };
   if (document.getElementById('splt-root')) {
@@ -36,22 +36,109 @@
     return;
   }
   markStatus('started');
-  console.info('[NotebookLM Prompt Library] v1.1.3 executing on', location.host);
+  console.info('[NotebookLM Prompt Library] v1.1.4 executing on', location.host);
+
+  // Trusted Types-safe UI rendering: NotebookLM applies
+  // require-trusted-types-for 'script', blocking ShadowRoot.innerHTML and
+  // Element.innerHTML (even for Tampermonkey scripts). Build elements via
+  // createElement/text nodes and replaceChildren instead; no TT policy,
+  // unsafe bypass, eval, or HTML-injection sink is needed.
+  function htmlEntities(value) {
+    return String(value).replace(/&(?:#(x[\da-f]+|\d+)|amp|lt|gt|quot|apos|nbsp|#39);/gi, (entity, num) => {
+      if (num) {
+        const n = num[0].toLowerCase() === 'x' ? parseInt(num.slice(1), 16) : parseInt(num, 10);
+        return n > 0 && n <= 0x10FFFF && (n < 0xD800 || n > 0xDFFF)
+          ? String.fromCodePoint(n) : '\uFFFD';
+      }
+      return ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&nbsp;': '\u00A0', '&#39;': "'" })[entity.toLowerCase()] || entity;
+    });
+  }
+  function setMarkup(target, markup) {
+    const src = String(markup ?? '');
+    const frag = document.createDocumentFragment();
+    const stack = [frag];
+    const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+      'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+    let pos = 0;
+    while (pos < src.length) {
+      const parent = stack[stack.length - 1];
+      // CSS is literal text, not markup. Handle style blocks directly.
+      if (parent.nodeType === 1 && parent.localName === 'style') {
+        const end = src.toLowerCase().indexOf('</style', pos);
+        const stop = end < 0 ? src.length : end;
+        if (stop > pos) parent.appendChild(document.createTextNode(src.slice(pos, stop)));
+        pos = stop;
+        if (end < 0) break;
+      }
+      if (src.startsWith('<!--', pos)) {
+        const end = src.indexOf('-->', pos + 4);
+        pos = end < 0 ? src.length : end + 3;
+        continue;
+      }
+      if (src.startsWith('</', pos)) {
+        const close = /^<\/\s*([a-z][\w:-]*)\s*>/i.exec(src.slice(pos));
+        if (close) {
+          const name = close[1].toLowerCase();
+          for (let j = stack.length - 1; j > 0; j--) {
+            if (stack[j].localName === name) { stack.length = j; break; }
+          }
+          pos += close[0].length;
+          continue;
+        }
+      }
+      if (src[pos] === '<') {
+        const open = /^<([a-z][\w:-]*)\b/i.exec(src.slice(pos));
+        if (open) {
+          // Find the closing '>' without mistaking one inside an attribute.
+          let end = pos + open[0].length, quote = '';
+          while (end < src.length) {
+            const ch = src[end];
+            if (quote) { if (ch === quote) quote = ''; }
+            else if (ch === '"' || ch === "'") quote = ch;
+            else if (ch === '>') break;
+            end++;
+          }
+          if (end === src.length) break;
+          const name = open[1].toLowerCase();
+          const attrs = src.slice(pos + open[0].length, end).replace(/\s*\/\s*$/, '');
+          pos = end + 1;
+          if (['script', 'iframe', 'object', 'embed', 'base', 'link', 'meta'].includes(name)) continue;
+          const el = document.createElement(name);
+          const attrPattern = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s\"'=<>\x60]+)))?/g;
+          let match;
+          while ((match = attrPattern.exec(attrs))) {
+            const key = match[1];
+            if (/^on/i.test(key) || key.toLowerCase() === 'srcdoc') continue;
+            el.setAttribute(key, htmlEntities(match[2] ?? match[3] ?? match[4] ?? ''));
+          }
+          parent.appendChild(el);
+          if (!voidTags.has(name)) stack.push(el);
+          continue;
+        }
+      }
+      const next = src.indexOf('<', pos + 1);
+      const end = next < 0 ? src.length : next;
+      parent.appendChild(document.createTextNode(htmlEntities(src.slice(pos, end))));
+      pos = end;
+    }
+    target.replaceChildren(frag);
+  }
 
   // This bootstrap is independent of library storage and Chat DOM.
   // The entry stays an inline sibling of NotebookLM's title field (never fixed).
   let bootStage = 'header-entry';
+  document.documentElement.dataset.nlplStage = 'header-entry';
   const headerHost = document.createElement('span');
   headerHost.id = 'splt-header-entry';
   headerHost.setAttribute('role', 'group');
   headerHost.style.cssText = 'display:inline-flex;flex:0 0 auto;align-items:center;max-width:190px;min-width:0;vertical-align:middle;margin-inline:8px;position:relative;z-index:1;';
   const headerShadow = headerHost.attachShadow({ mode: 'open' });
-  headerShadow.innerHTML = `<style>
+  setMarkup(headerShadow, `<style>
     :host { display:inline-flex; flex:0 0 auto; vertical-align:middle; max-width:190px; }
     button { display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:0;white-space:nowrap;padding:7px 10px;border-radius:9px;border:1px solid #c7d9df;background:#eef6f8;color:#174c5b;font:700 12px/1.35 Tahoma,Arial,sans-serif;direction:rtl;cursor:pointer; }
     button:hover { background:#e2f0f3; }
     button[aria-expanded="true"] { background:#d8edef;border-color:#87bec9; }
-  </style><button type="button" id="open-library" aria-expanded="false" aria-label="فتح مكتبة البرومبتات">📋 البرومبتات</button>`;
+  </style><button type="button" id="open-library" aria-expanded="false" aria-label="فتح مكتبة البرومبتات">📋 البرومبتات</button>`);
   const headerButton = headerShadow.querySelector('#open-library');
   let headerClick = () => console.warn('[NotebookLM Prompt Library] Library is not ready yet:', bootStage);
   headerButton.addEventListener('click', () => headerClick());
@@ -82,6 +169,7 @@
   }
   attachHeaderEntry();
   markStatus('header-ready');
+  document.documentElement.dataset.nlplStage = 'header-ready';
 
   try {
     bootStage = 'library-storage';
@@ -279,7 +367,7 @@
   // The host stays detached until a real notebook chat composer is found.
   // No fixed launcher, modal, overlay, or page-wide floating element is created.
   const shadow = root.attachShadow({ mode: 'open' });
-  shadow.innerHTML = `
+  setMarkup(shadow, `
     <style>
       :host { all: initial; box-sizing: border-box; display: block; flex: 0 0 auto; align-self: stretch; width: auto; min-width: 0; min-height: 40px; margin: 8px 12px; position: relative; z-index: 4; isolation: isolate; }
       :host(.splt-header-mode) { display:none; min-height:0; margin:0 12px; }
@@ -394,7 +482,7 @@
       <div class="footerhint">محفوظة تلقائيًا • نسخ فقط دون إرسال • Alt + Shift + L</div>
       <div id="splt-toast" class="toast" role="status" aria-live="polite" hidden></div>
       <input id="splt-file" type="file" accept=".json,application/json" hidden>
-    </section>`;
+    </section>`);
   const $ = (sel) => shadow.querySelector(sel);
   const launch = $('#splt-launch');
   const panel = $('#splt-panel');
@@ -449,8 +537,8 @@
   function renderList() {
     const cats = [...new Set(db.prompts.map(p => p.category))].sort((a,b) => a.localeCompare(b,'ar'));
     if (filterCategory !== 'الكل' && !cats.includes(filterCategory)) filterCategory = 'الكل';
-    $('#splt-category').innerHTML = `<option value="الكل">جميع التصنيفات</option>` +
-      cats.map(c => `<option value="${escapeHTML(c)}" ${filterCategory === c ? 'selected' : ''}>${escapeHTML(c)}</option>`).join('');
+    setMarkup($('#splt-category'), `<option value="الكل">جميع التصنيفات</option>` +
+      cats.map(c => `<option value="${escapeHTML(c)}" ${filterCategory === c ? 'selected' : ''}>${escapeHTML(c)}</option>`).join(''));
     $('#splt-favonly').checked = favoriteOnly;
     const term = filterText.trim().toLocaleLowerCase('ar');
     const filtered = [...db.prompts].filter(p =>
@@ -459,13 +547,13 @@
       (!term || `${p.title} ${p.category} ${p.description} ${p.body}`.toLocaleLowerCase('ar').includes(term))
     ).sort((a,b) => Number(b.favorite) - Number(a.favorite) ||
       (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-    $('#splt-items').innerHTML = filtered.length ? filtered.map(p => `
+    setMarkup($('#splt-items'), filtered.length ? filtered.map(p => `
       <div class="item ${selected()?.id === p.id ? 'selected' : ''}">
         <button class="item-open" data-action="select" data-id="${escapeHTML(p.id)}" title="${escapeHTML(p.title)}">
           <strong>${escapeHTML(p.title)}</strong><small>${escapeHTML(p.category)} · ${extractKeys(p.body).length} حقول</small>
         </button>
         <button class="star ${p.favorite ? 'isfav' : ''}" data-action="favorite" data-id="${escapeHTML(p.id)}" aria-label="${p.favorite ? 'إزالة من' : 'إضافة إلى'} المفضلة" title="المفضلة">${p.favorite ? '★' : '☆'}</button>
-      </div>`).join('') : '<div class="empty">لا توجد قوالب مطابقة.<div><button class="btn small" data-action="new">إنشاء قالب</button></div></div>';
+      </div>`).join('') : '<div class="empty">لا توجد قوالب مطابقة.<div><button class="btn small" data-action="new">إنشاء قالب</button></div></div>');
   }
   function fieldInput(p, key) {
     const meta = fieldMeta(p, key);
@@ -485,11 +573,11 @@
   function renderDetails() {
     const p = selected();
     if (!p) {
-      main.innerHTML = '<div class="empty"><h2>مكتبتك جاهزة</h2><p>أنشئ قالبًا جديدًا أو استورد نسخة احتياطية.</p><button class="btn primary" data-action="restore-starter">إضافة قالب أسئلة الفورمز</button></div>';
+      setMarkup(main, '<div class="empty"><h2>مكتبتك جاهزة</h2><p>أنشئ قالبًا جديدًا أو استورد نسخة احتياطية.</p><button class="btn primary" data-action="restore-starter">إضافة قالب أسئلة الفورمز</button></div>');
       return;
     }
     const keys = extractKeys(p.body);
-    main.innerHTML = `
+    setMarkup(main, `
       <div class="mainhead">
         <div class="titleblock"><h2>${escapeHTML(p.title)}</h2><p class="muted">${escapeHTML(p.description)}</p><span class="tag">${escapeHTML(p.category)}</span></div>
         <div class="actions">
@@ -508,7 +596,7 @@
       <section class="output" aria-label="معاينة البرومبت">
         <div class="outputhead"><strong>معاينة مباشرة للنص النهائي</strong><span id="splt-count"></span></div>
         <pre id="splt-preview"></pre>
-      </section>`;
+      </section>`);
     refreshPreview();
   }
   function refreshPreview() {
@@ -547,7 +635,7 @@
   }
   function renderEditor() {
     const d = editing;
-    main.innerHTML = `
+    setMarkup(main, `
       <div class="mainhead"><div class="titleblock"><h2>${db.prompts.some(p => p.id === d.id) ? 'تعديل البرومبت' : 'قالب جديد'}</h2><p class="muted">أي نص على الشكل <code>{{اسم_الحقل}}</code> يتحول إلى خانة تعبئة تلقائيًا.</p></div>
         <div class="actions"><button class="btn primary" data-action="save-draft">حفظ القالب</button><button class="btn" data-action="cancel-draft">إلغاء</button></div>
       </div>
@@ -560,13 +648,13 @@
       <div class="insert-line"><input id="splt-new-field" class="input" placeholder="اسم_المتغير (مثال: اسم_الدرس)"><button class="btn" data-action="insert-var">+ إدراج خانة</button></div>
       <h3>إعدادات الخانات <small class="muted">(تُستخرج من النص تلقائيًا)</small></h3>
       <div id="splt-field-editor"></div>
-      <div class="actions" style="padding-bottom:16px"><button class="btn primary" data-action="save-draft">حفظ القالب</button><button class="btn" data-action="cancel-draft">إلغاء</button></div>`;
+      <div class="actions" style="padding-bottom:16px"><button class="btn primary" data-action="save-draft">حفظ القالب</button><button class="btn" data-action="cancel-draft">إلغاء</button></div>`);
     renderFieldEditor();
   }
   function renderFieldEditor() {
     if (!editing) return;
     const keys = extractKeys(editing.body);
-    $('#splt-field-editor').innerHTML = keys.length ? keys.map(key => {
+    setMarkup($('#splt-field-editor'), keys.length ? keys.map(key => {
       const m = fieldMeta(editing, key);
       return `<div class="var-config" data-field="${escapeHTML(key)}">
         <div>المتغير: <code>{{${escapeHTML(key)}}}</code></div>
@@ -580,7 +668,7 @@
         </div>
         <label class="checklabel"><input type="checkbox" data-action="var-required" data-key="${escapeHTML(key)}" ${m.required ? 'checked' : ''}> خانة مطلوبة قبل النسخ</label>
       </div>`;
-    }).join('') : '<p class="muted">اكتب {{اسم_المتغير}} في نص البرومبت، وستظهر إعدادات الحقل هنا.</p>';
+    }).join('') : '<p class="muted">اكتب {{اسم_المتغير}} في نص البرومبت، وستظهر إعدادات الحقل هنا.</p>');
   }
   function renderMain() { editing ? renderEditor() : renderDetails(); }
   async function copyPrompt() {
@@ -820,7 +908,7 @@
    */
   let lastPanel = null;
   let mountTimer = null;
-  root.dataset.version = '1.1.3';
+  root.dataset.version = '1.1.4';
 
   function isUsablePanel(el) {
     if (!el?.isConnected) return false;
@@ -872,7 +960,7 @@
     const anchor = getInsertionAnchor(chat);
     if (root.parentElement !== chat || root.nextSibling !== anchor) {
       chat.insertBefore(root, anchor);
-      console.info('[NotebookLM Prompt Library] v1.1.3 UI attached to chat panel; entry at notebook title.');
+      console.info('[NotebookLM Prompt Library] v1.1.4 UI attached to chat panel; entry at notebook title.');
     }
     lastPanel = chat;
     root.dataset.mount = 'chat-panel';
