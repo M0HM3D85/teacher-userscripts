@@ -741,7 +741,7 @@
   /*
    * NotebookLM October 2026 DOM: the *chat* textarea has the aria-label
    * "مربّع طلب البحث". Treating every "بحث" field as a search box prevented
-   * mounting in v1.1.1. Prefer the element inside section.chat-panel and
+   * mounting in v1.1.0. Prefer the element inside section.chat-panel and
    * insert immediately before its div.input-group, inside .query-box.
    * Keep a scored fallback for translated/updated NotebookLM interfaces.
    */
