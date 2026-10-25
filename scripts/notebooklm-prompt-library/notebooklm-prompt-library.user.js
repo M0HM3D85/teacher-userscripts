@@ -2,7 +2,7 @@
 // @name         مكتبة البرومبتات الذكية | NotebookLM
 // @name:en      Smart Prompt Library for NotebookLM
 // @namespace    https://tampermonkey.net/
-// @version      1.1.0
+// @version      1.1.1
 // @description  مكتبة قوالب برومبتات داخل صفحة المحادثة في NotebookLM، بحقول متغيرة ومعاينة ونسخ وبحث وحفظ.
 // @match        https://notebooklm.google.com/*
 // @match        https://notebook.google.com/*
@@ -16,7 +16,7 @@
 // ==/UserScript==
 
 /*
- * Smart Prompt Library v1.1.0
+ * Smart Prompt Library v1.1.1
  * - Does not read notebook content, send requests, or submit prompts automatically.
  * - Prompts are stored only in this userscript's Tampermonkey storage.
  * - Use {{اسم_المتغير}} anywhere in a template to create a fillable field.
@@ -739,12 +739,16 @@
   });
 
   /*
-   * Detect NotebookLM's real chat composer and insert the library directly
-   * before its containing box as an in-flow sibling. This intentionally
-   * does not rely on fragile Angular/Material-generated class names.
+   * NotebookLM October 2026 DOM: the *chat* textarea has the aria-label
+   * "مربّع طلب البحث". Treating every "بحث" field as a search box prevented
+   * mounting in v1.1.1. Prefer the element inside section.chat-panel and
+   * insert immediately before its div.input-group, inside .query-box.
+   * Keep a scored fallback for translated/updated NotebookLM interfaces.
    */
   let lastComposerWrap = null;
   let mountTimer = null;
+  root.dataset.version = '1.1.1';
+
   const isVisible = (el) => {
     if (!el || !el.isConnected || el.closest('#splt-root')) return false;
     const r = el.getBoundingClientRect();
@@ -754,20 +758,23 @@
   function composerScore(el) {
     if (!isVisible(el)) return -1;
     const r = el.getBoundingClientRect();
-    const name = [el.getAttribute('placeholder'), el.getAttribute('data-placeholder'),
+    const label = [el.getAttribute('placeholder'), el.getAttribute('data-placeholder'),
       el.getAttribute('aria-label'), el.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
-    if (/search|بحث|rename|تسمية|عنوان|عنوان الملاحظة|title/.test(name)) return -1;
-    let score = 0;
-    const chatHint = /ask|type|prompt|message|question|chat|اسأل|سؤال|اكتب|الكتابة|ابدأ|اطرح|رسالة|محادثة|دردشة/.test(name);
-    const nearby = el.parentElement?.parentElement;
+    const panel = el.closest('section.chat-panel, .chat-panel');
+    // NotebookLM describes its chat input as "مربّع طلب البحث" in Arabic.
+    // This must not be rejected merely because it includes the word "بحث".
+    if (!panel && /search|بحث|rename|تسمية|عنوان|title/.test(label)) return -1;
+    if (!panel && /rename|تسمية|عنوان|title/.test(label)) return -1;
+    const nearby = el.closest('.input-group, .query-box, form') || el.parentElement?.parentElement;
     const sendButton = nearby?.querySelector('button[aria-label*="Send"],button[aria-label*="إرسال"],button[type="submit"]');
-    // Do not attach to NotebookLM note editors or unrelated text fields.
-    if (!chatHint && !sendButton) return -1;
-    if (chatHint) score += 80;
+    const chatHint = /ask|type|prompt|message|question|chat|اسأل|سؤال|اكتب|الكتابة|ابدأ|اطرح|رسالة|محادثة|دردشة|مربّع طلب البحث/.test(label);
+    if (!panel && !chatHint && !sendButton) return -1;
+    let score = panel ? 180 : 0;
+    if (el.matches('textarea.query-box-input')) score += 140;
+    if (chatHint) score += 75;
     if (el.matches('textarea, [contenteditable="true"]')) score += 16;
     if (r.width >= 230) score += 15;
     if (r.height <= 180) score += 8;
-    // NotebookLM's chat area is usually the central column.
     const midpoint = r.left + r.width / 2;
     if (midpoint > innerWidth * .24 && midpoint < innerWidth * .77) score += 25;
     if (r.top > innerHeight * .40) score += 9;
@@ -775,18 +782,28 @@
     return score;
   }
   function findComposer() {
-    const all = [...document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')];
-    const ranked = all.map(el => ({ el, score: composerScore(el) })).filter(o => o.score >= 34)
-      .sort((a,b) => b.score - a.score);
+    // Use the actual DOM selectors confirmed by the 2026-10-25 report.
+    const confirmed = document.querySelector('section.chat-panel textarea.query-box-input, .chat-panel textarea.query-box-input');
+    if (isVisible(confirmed)) return confirmed;
+    const inChat = [...document.querySelectorAll('section.chat-panel textarea, .chat-panel textarea, section.chat-panel [contenteditable="true"], .chat-panel [role="textbox"]')];
+    const all = inChat.length ? inChat : [...document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')];
+    const ranked = all.map(el => ({ el, score: composerScore(el) }))
+      .filter(o => o.score >= 34).sort((a,b) => b.score - a.score);
     return ranked[0]?.el || null;
   }
   function findComposerWrapper(el) {
     if (!el) return null;
+    const panel = el.closest('section.chat-panel, .chat-panel');
+    // Preferred anchor: real prompt-entry bar, not the sources search field.
+    const inputGroup = el.closest('.input-group');
+    if (panel && inputGroup && panel.contains(inputGroup)) return inputGroup;
+    const query = el.closest('query-box, .query-box');
+    if (panel && query && panel.contains(query)) {
+      const group = query.querySelector('.input-group');
+      if (group && group.contains(el)) return group;
+    }
     const inputWidth = el.getBoundingClientRect().width;
-    // Walk outward until the whole prompt-entry bar (input + send button)
-    // is selected, but never climb into the conversation/messages area.
-    let node = el;
-    let best = null;
+    let node = el, best = null;
     for (let level = 0; level < 7 && node?.parentElement; level++) {
       node = node.parentElement;
       if (node === document.body || node === document.documentElement) break;
@@ -795,7 +812,6 @@
       if (rect.height > 245) break;
       if (node.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]').length > 1) break;
       best = node;
-      // Prefer a container whose parent lays out its children vertically.
       const parent = node.parentElement;
       const style = parent && getComputedStyle(parent);
       if (style && ((style.display.includes('flex') && style.flexDirection === 'column') ||
@@ -812,24 +828,27 @@
       return;
     }
     if (lastComposerWrap === wrap && root.parentElement === wrap.parentElement && root.nextSibling === wrap) return;
-    // A child of the chat column, so resizing/scrolling remains native.
     wrap.parentElement.insertBefore(root, wrap);
     lastComposerWrap = wrap;
+    root.dataset.mount = wrap.className?.toString().slice(0, 120) || wrap.tagName.toLowerCase();
+    console.info('[NotebookLM Prompt Library] Mounted v1.1.1 inside NotebookLM chat.');
   }
   function queueMount() {
     if (mountTimer !== null) return;
     mountTimer = setTimeout(() => { mountTimer = null; ensureMounted(); }, 250);
   }
   const mountObserver = new MutationObserver(() => {
-    // NotebookLM is an SPA; reattach after navigation or DOM replacement.
-    if (!root.isConnected || !lastComposerWrap?.isConnected || root.nextSibling !== lastComposerWrap) queueMount();
+    if (!root.isConnected || !lastComposerWrap?.isConnected ||
+      root.parentElement !== lastComposerWrap?.parentElement ||
+      root.nextSibling !== lastComposerWrap) queueMount();
   });
   mountObserver.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener('pageshow', queueMount);
   window.addEventListener('popstate', queueMount);
-  // Short fallback polling also catches route transitions which reuse nodes.
+  // Detect SPA transitions and Angular rebuilds without polling on every mutation.
   setInterval(() => {
-    if (!root.isConnected || !lastComposerWrap?.isConnected) ensureMounted();
+    if (!root.isConnected || !lastComposerWrap?.isConnected ||
+      root.parentElement !== lastComposerWrap.parentElement) ensureMounted();
   }, 2500);
 
   document.addEventListener('keydown', (event) => {
