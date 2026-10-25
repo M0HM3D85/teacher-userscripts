@@ -2,7 +2,7 @@
 // @name         مكتبة البرومبتات الذكية | NotebookLM
 // @name:en      Smart Prompt Library for NotebookLM
 // @namespace    https://tampermonkey.net/
-// @version      1.1.1
+// @version      1.1.2
 // @description  مكتبة قوالب برومبتات داخل صفحة المحادثة في NotebookLM، بحقول متغيرة ومعاينة ونسخ وبحث وحفظ.
 // @match        https://notebooklm.google.com/*
 // @match        https://notebook.google.com/*
@@ -16,14 +16,27 @@
 // ==/UserScript==
 
 /*
- * Smart Prompt Library v1.1.1
+ * Smart Prompt Library v1.1.2
  * - Does not read notebook content, send requests, or submit prompts automatically.
  * - Prompts are stored only in this userscript's Tampermonkey storage.
  * - Use {{اسم_المتغير}} anywhere in a template to create a fillable field.
  */
 (() => {
   'use strict';
-  if (window.top !== window.self || document.getElementById('splt-root')) return;
+  if (window.top !== window.self) return;
+  // A page-visible non-sensitive marker helps distinguish an inactive userscript
+  // from a DOM anchoring problem. In Console: document.documentElement.dataset.nlplStatus
+  const markStatus = (status) => {
+    document.documentElement.dataset.nlplVersion = '1.1.2';
+    document.documentElement.dataset.nlplStatus = status;
+  };
+  if (document.getElementById('splt-root')) {
+    markStatus('duplicate-script-instance');
+    console.warn('[NotebookLM Prompt Library] Another instance is present. Disable previous installed versions.');
+    return;
+  }
+  markStatus('started');
+  console.info('[NotebookLM Prompt Library] v1.1.2 executing on', location.host);
 
   const DB_KEY = 'smartPromptLibrary:database:v1';
   const PLACEHOLDER = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -219,7 +232,7 @@
   const shadow = root.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
     <style>
-      :host { all: initial; display: block; flex: 0 0 auto; width: 100%; min-width: 0; margin: 8px 0; position: relative; isolation: isolate; }
+      :host { all: initial; box-sizing: border-box; display: block; flex: 0 0 auto; align-self: stretch; width: auto; min-width: 0; min-height: 40px; margin: 8px 12px; position: relative; z-index: 4; isolation: isolate; }
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
       /* Inline accordion INSIDE the notebook chat, not a floating tool. */
@@ -739,117 +752,101 @@
   });
 
   /*
-   * NotebookLM October 2026 DOM: the *chat* textarea has the aria-label
-   * "مربّع طلب البحث". Treating every "بحث" field as a search box prevented
-   * mounting in v1.1.0. Prefer the element inside section.chat-panel and
-   * insert immediately before its div.input-group, inside .query-box.
-   * Keep a scored fallback for translated/updated NotebookLM interfaces.
+   * DOM diagnostic, 2026-10-25:
+   *   section.chat-panel: x=432, width=761, height=847
+   *   div.chat-panel-content: height=742, scrollable
+   *   textarea.query-box-input: accessible label "مربّع طلب البحث"
+   * The earlier versions relied on locating that textarea and mounting INSIDE
+   * the query-box hierarchy. The actual NotebookLM composer has a constrained
+   * height and may clip or reject siblings inserted there. Mount as a DIRECT
+   * FLEX CHILD of section.chat-panel immediately after the chat scroll region.
+   * This anchor does not depend on textarea name, language, or state.
    */
-  let lastComposerWrap = null;
+  let lastPanel = null;
   let mountTimer = null;
-  root.dataset.version = '1.1.1';
+  root.dataset.version = '1.1.2';
 
-  const isVisible = (el) => {
-    if (!el || !el.isConnected || el.closest('#splt-root')) return false;
+  function isUsablePanel(el) {
+    if (!el?.isConnected) return false;
     const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    return r.width >= 120 && r.height >= 12 && cs.visibility !== 'hidden' && cs.display !== 'none';
-  };
-  function composerScore(el) {
-    if (!isVisible(el)) return -1;
-    const r = el.getBoundingClientRect();
-    const label = [el.getAttribute('placeholder'), el.getAttribute('data-placeholder'),
-      el.getAttribute('aria-label'), el.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
-    const panel = el.closest('section.chat-panel, .chat-panel');
-    // NotebookLM describes its chat input as "مربّع طلب البحث" in Arabic.
-    // This must not be rejected merely because it includes the word "بحث".
-    if (!panel && /search|بحث|rename|تسمية|عنوان|title/.test(label)) return -1;
-    if (!panel && /rename|تسمية|عنوان|title/.test(label)) return -1;
-    const nearby = el.closest('.input-group, .query-box, form') || el.parentElement?.parentElement;
-    const sendButton = nearby?.querySelector('button[aria-label*="Send"],button[aria-label*="إرسال"],button[type="submit"]');
-    const chatHint = /ask|type|prompt|message|question|chat|اسأل|سؤال|اكتب|الكتابة|ابدأ|اطرح|رسالة|محادثة|دردشة|مربّع طلب البحث/.test(label);
-    if (!panel && !chatHint && !sendButton) return -1;
-    let score = panel ? 180 : 0;
-    if (el.matches('textarea.query-box-input')) score += 140;
-    if (chatHint) score += 75;
-    if (el.matches('textarea, [contenteditable="true"]')) score += 16;
-    if (r.width >= 230) score += 15;
-    if (r.height <= 180) score += 8;
-    const midpoint = r.left + r.width / 2;
-    if (midpoint > innerWidth * .24 && midpoint < innerWidth * .77) score += 25;
-    if (r.top > innerHeight * .40) score += 9;
-    if (sendButton) score += 18;
-    return score;
+    const style = getComputedStyle(el);
+    return r.width >= 180 && r.height >= 150 &&
+      style.display !== 'none' && style.visibility !== 'hidden';
   }
-  function findComposer() {
-    // Use the actual DOM selectors confirmed by the 2026-10-25 report.
-    const confirmed = document.querySelector('section.chat-panel textarea.query-box-input, .chat-panel textarea.query-box-input');
-    if (isVisible(confirmed)) return confirmed;
-    const inChat = [...document.querySelectorAll('section.chat-panel textarea, .chat-panel textarea, section.chat-panel [contenteditable="true"], .chat-panel [role="textbox"]')];
-    const all = inChat.length ? inChat : [...document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')];
-    const ranked = all.map(el => ({ el, score: composerScore(el) }))
-      .filter(o => o.score >= 34).sort((a,b) => b.score - a.score);
-    return ranked[0]?.el || null;
+
+  function findChatPanel() {
+    const panels = [...document.querySelectorAll('section.chat-panel, .chat-panel')];
+    // The real NotebookLM page uses one section.chat-panel. For newer versions,
+    // prefer the section that includes chat scroll content or a prompt input.
+    return panels.filter(isUsablePanel).sort((a,b) => {
+      const score = p => (p.matches('section.chat-panel') ? 40 : 0) +
+        (p.querySelector('.chat-panel-content') ? 25 : 0) +
+        (p.querySelector('textarea.query-box-input') ? 20 : 0);
+      return score(b) - score(a);
+    })[0] || null;
   }
-  function findComposerWrapper(el) {
-    if (!el) return null;
-    const panel = el.closest('section.chat-panel, .chat-panel');
-    // Preferred anchor: real prompt-entry bar, not the sources search field.
-    const inputGroup = el.closest('.input-group');
-    if (panel && inputGroup && panel.contains(inputGroup)) return inputGroup;
-    const query = el.closest('query-box, .query-box');
-    if (panel && query && panel.contains(query)) {
-      const group = query.querySelector('.input-group');
-      if (group && group.contains(el)) return group;
+
+  function getInsertionAnchor(panel) {
+    const chatContent = panel.querySelector('.chat-panel-content');
+    if (chatContent) {
+      let direct = chatContent;
+      while (direct.parentElement && direct.parentElement !== panel) direct = direct.parentElement;
+      if (direct.parentElement === panel) return direct.nextSibling === root ? root.nextSibling : direct.nextSibling;
     }
-    const inputWidth = el.getBoundingClientRect().width;
-    let node = el, best = null;
-    for (let level = 0; level < 7 && node?.parentElement; level++) {
-      node = node.parentElement;
-      if (node === document.body || node === document.documentElement) break;
-      const rect = node.getBoundingClientRect();
-      if (rect.width < Math.max(180, inputWidth * .85) || rect.height < 35) continue;
-      if (rect.height > 245) break;
-      if (node.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]').length > 1) break;
-      best = node;
-      const parent = node.parentElement;
-      const style = parent && getComputedStyle(parent);
-      if (style && ((style.display.includes('flex') && style.flexDirection === 'column') ||
-        style.display.includes('grid'))) break;
+    // If NotebookLM renames chat-panel-content, still mount the toolbar inside
+    // chat-panel, before the composer, instead of failing or moving outside it.
+    const composer = panel.querySelector('textarea.query-box-input, textarea, [contenteditable="true"]');
+    if (composer) {
+      let direct = composer;
+      while (direct.parentElement && direct.parentElement !== panel) direct = direct.parentElement;
+      if (direct.parentElement === panel) return direct;
     }
-    return best || el.parentElement;
+    return panel.firstChild === root ? root.nextSibling : panel.firstChild;
   }
+
   function ensureMounted() {
-    const composer = findComposer();
-    const wrap = findComposerWrapper(composer);
-    if (!wrap?.parentElement) {
+    const chat = findChatPanel();
+    if (!chat) {
       if (root.isConnected) root.remove();
-      lastComposerWrap = null;
-      return;
+      lastPanel = null;
+      markStatus('waiting-for-chat-panel');
+      return false;
     }
-    if (lastComposerWrap === wrap && root.parentElement === wrap.parentElement && root.nextSibling === wrap) return;
-    wrap.parentElement.insertBefore(root, wrap);
-    lastComposerWrap = wrap;
-    root.dataset.mount = wrap.className?.toString().slice(0, 120) || wrap.tagName.toLowerCase();
-    console.info('[NotebookLM Prompt Library] Mounted v1.1.1 inside NotebookLM chat.');
+    const anchor = getInsertionAnchor(chat);
+    if (root.parentElement !== chat || root.nextSibling !== anchor) {
+      chat.insertBefore(root, anchor);
+      console.info('[NotebookLM Prompt Library] Toolbar mounted directly into .chat-panel (v1.1.2).');
+    }
+    lastPanel = chat;
+    root.dataset.mount = 'chat-panel';
+    const r = root.getBoundingClientRect();
+    markStatus(r.height >= 35 ? 'mounted' : 'mounted-but-collapsed');
+    return true;
   }
+
   function queueMount() {
     if (mountTimer !== null) return;
-    mountTimer = setTimeout(() => { mountTimer = null; ensureMounted(); }, 250);
+    mountTimer = setTimeout(() => {
+      mountTimer = null;
+      try { ensureMounted(); }
+      catch (err) { markStatus('mount-error'); console.error('[NotebookLM Prompt Library] Mount error', err); }
+    }, 180);
   }
+
   const mountObserver = new MutationObserver(() => {
-    if (!root.isConnected || !lastComposerWrap?.isConnected ||
-      root.parentElement !== lastComposerWrap?.parentElement ||
-      root.nextSibling !== lastComposerWrap) queueMount();
+    // Never observe shadow UI changes; only re-anchor if NotebookLM rebuilds
+    // the chat. Avoid mutation loops caused by our own insertBefore.
+    if (!root.isConnected || !lastPanel?.isConnected || root.parentElement !== lastPanel ||
+      root.nextSibling !== getInsertionAnchor(lastPanel)) queueMount();
   });
   mountObserver.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener('pageshow', queueMount);
   window.addEventListener('popstate', queueMount);
-  // Detect SPA transitions and Angular rebuilds without polling on every mutation.
   setInterval(() => {
-    if (!root.isConnected || !lastComposerWrap?.isConnected ||
-      root.parentElement !== lastComposerWrap.parentElement) ensureMounted();
-  }, 2500);
+    if (!root.isConnected || !lastPanel?.isConnected || root.parentElement !== lastPanel ||
+      root.nextSibling !== getInsertionAnchor(lastPanel))
+      queueMount();
+  }, 3000);
 
   document.addEventListener('keydown', (event) => {
     if (event.altKey && event.shiftKey && event.code === 'KeyL') {
@@ -862,5 +859,6 @@
   try { GM_registerMenuCommand('📋 فتح المكتبة داخل المحادثة', () => { ensureMounted(); if (root.isConnected) toggleOpen(true); else window.alert('افتح دفترًا في NotebookLM لتظهر المكتبة داخل مساحة المحادثة.'); }); } catch (_) { /* optional */ }
   persist();
   renderList();
-  ensureMounted();
+  try { ensureMounted(); }
+  catch (err) { markStatus('mount-error'); console.error('[NotebookLM Prompt Library] Initial mount failed', err); }
 })();
