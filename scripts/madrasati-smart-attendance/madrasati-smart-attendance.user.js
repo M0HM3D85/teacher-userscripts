@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta16
+// @version      0.3.5-beta17
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta16-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta16-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta17-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta17-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta16',
+        version: '0.3.5-beta17',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -4984,7 +4984,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         const report = {
             diagnostic: 'Madrasati Smart Attendance Live Diagnostic',
-            version: CONFIG.version,
+            version: SCRIPT_META.version,
             startedAt: new Date().toISOString(),
             page: {
                 pathname: location.pathname,
@@ -6165,7 +6165,25 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             if (!attendanceImport.diagnosticConfirmationPending || attendanceImport.diagnosticRunning) return;
             attendanceImport.diagnosticConfirmationPending = false;
             updateAttendanceImportUi();
-            await runAttendanceSelfDiagnostic();
+            try {
+                await runAttendanceSelfDiagnostic();
+            } catch (error) {
+                // حارس أخير لأي استثناء يقع قبل دخول try الخاص بالتشخيص.
+                attendanceImport.diagnosticRunning = false;
+                attendanceImport.diagnosticConfirmationPending = false;
+                attendanceImport.lastDiagnostic = {
+                    diagnostic: 'Madrasati Smart Attendance Live Diagnostic',
+                    version: SCRIPT_META.version,
+                    finishedAt: new Date().toISOString(),
+                    counts: {},
+                    result: {
+                        rootCause: 'diagnostic-startup-exception',
+                        detail: String(error?.stack || error?.message || error)
+                    }
+                };
+                traceAttendanceDiagnostic('❌ فشل بدء التشخيص: ' + String(error?.message || error), 'error');
+                updateAttendanceImportUi();
+            }
         });
         q('[data-action="cancel-attendance-diagnostic"]', root)?.addEventListener('click', () => {
             if (!attendanceImport.diagnosticConfirmationPending) return;
@@ -6389,7 +6407,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta16] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta17] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
