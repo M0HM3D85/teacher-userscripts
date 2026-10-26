@@ -325,6 +325,107 @@
     font-size:10px;
     font-weight:800;
 }
+#${APP_ID} .msa-import-registry {
+    display:flex;
+    align-items:center;
+    gap:7px;
+    flex-wrap:wrap;
+    margin-top:7px;
+    padding-top:7px;
+    border-top:1px dashed #e2e8f0;
+    font-size:10px;
+    color:#64748b;
+}
+#${APP_ID} .msa-import-review-actions {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:7px;
+}
+#${APP_ID} .msa-import-review-btn {
+    min-height:30px !important;
+    padding:4px 8px !important;
+    font-size:10px !important;
+    font-weight:850;
+}
+#${APP_ID} .msa-import-review-btn.is-warning { background:#fff7ed; border-color:#fdba74; color:#9a3412; }
+#${APP_ID} .msa-import-review-btn.is-danger { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+#${APP_ID} .msa-import-review-btn.is-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+#${APP_ID} .msa-import-review-btn.is-ok { background:#f0fdf4; border-color:#bbebc9; color:#166534; }
+
+#${APP_ID} .msa-import-review-overlay {
+    position:fixed;
+    inset:0;
+    z-index:2147483000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:18px;
+    background:rgba(15,23,42,.55);
+}
+#${APP_ID} .msa-import-review-dialog {
+    width:min(980px,96vw);
+    max-height:88vh;
+    display:flex;
+    flex-direction:column;
+    background:#fff;
+    border-radius:16px;
+    box-shadow:0 20px 70px rgba(15,23,42,.25);
+    overflow:hidden;
+}
+#${APP_ID} .msa-import-review-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:13px 15px;
+    border-bottom:1px solid #e5e7eb;
+    background:#f8fafc;
+}
+#${APP_ID} .msa-import-review-head strong { font-size:14px; color:#1f2937; }
+#${APP_ID} .msa-import-review-body {
+    overflow:auto;
+    padding:12px 14px 16px;
+}
+#${APP_ID} .msa-import-review-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:11px;
+}
+#${APP_ID} .msa-import-review-table th,
+#${APP_ID} .msa-import-review-table td {
+    padding:8px 7px;
+    border-bottom:1px solid #e5e7eb;
+    text-align:right;
+    vertical-align:top;
+}
+#${APP_ID} .msa-import-review-table th {
+    position:sticky;
+    top:0;
+    background:#f8fafc;
+    z-index:1;
+    color:#475569;
+}
+#${APP_ID} .msa-import-review-empty { padding:22px; text-align:center; color:#64748b; }
+
+tr.msa-import-review-row, .msa-import-review-row {
+    outline:2px solid rgba(245,158,11,.45) !important;
+    outline-offset:-2px;
+}
+tr.msa-import-missing-row, .msa-import-missing-row {
+    outline:2px solid rgba(220,38,38,.35) !important;
+    outline-offset:-2px;
+}
+tr.msa-import-late-row, .msa-import-late-row {
+    box-shadow:inset 4px 0 0 #0ea5e9 !important;
+}
+tr.msa-import-flash, .msa-import-flash {
+    animation:msaImportFlash 1.8s ease;
+}
+@keyframes msaImportFlash {
+    0%,100% { box-shadow:inherit; }
+    35% { box-shadow:0 0 0 4px rgba(37,99,235,.35) !important; }
+}
 #${APP_ID} .msa-body { padding: 14px 16px 15px; }
 #${APP_ID}.is-collapsed .msa-body { display: none; }
 #${APP_ID}.msa-new-platform [data-action="unset-present"],
@@ -3691,6 +3792,200 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         return items.slice(0, limit).map(mapper).filter(Boolean);
     }
 
+
+    function clearImportRowMarkers() {
+        for (const student of state.students || []) {
+            student.row?.classList?.remove(
+                'msa-import-review-row',
+                'msa-import-missing-row',
+                'msa-import-late-row',
+                'msa-import-flash'
+            );
+        }
+    }
+
+    function markImportRows(match) {
+        clearImportRowMarkers();
+        const students = match?.students;
+        if (!students) return;
+
+        for (const entry of students.review || []) {
+            entry.student?.row?.classList?.add('msa-import-review-row');
+        }
+        for (const student of students.unmatchedPage || []) {
+            student.row?.classList?.add('msa-import-missing-row');
+        }
+        for (const item of students.ambiguous || []) {
+            item.student?.row?.classList?.add('msa-import-review-row');
+        }
+        for (const entry of students.convertedLate || []) {
+            entry.student?.row?.classList?.add('msa-import-late-row');
+        }
+    }
+
+    function reviewCategoryItems(kind) {
+        const match = attendanceImport.currentMatch;
+        const s = match?.students;
+        if (!s) return [];
+
+        if (kind === 'review') return s.review || [];
+        if (kind === 'unmatched-page') return s.unmatchedPage || [];
+        if (kind === 'unmatched-file') return s.unmatchedFile || [];
+        if (kind === 'ambiguous') return s.ambiguous || [];
+        if (kind === 'late-converted') return s.convertedLate || [];
+        return [];
+    }
+
+    function reviewCategoryTitle(kind) {
+        if (kind === 'review') return 'حالات تحتاج مراجعة';
+        if (kind === 'unmatched-page') return 'طلاب موجودون في مدرستي ولا يوجد لهم سجل مطابق في ملف الحصة';
+        if (kind === 'unmatched-file') return 'سجلات موجودة في ملف الحصة ولا يوجد لها طالب مطابق في صفحة مدرستي';
+        if (kind === 'ambiguous') return 'مطابقات مبهمة';
+        if (kind === 'late-converted') return 'طلاب متأخرون في الملف وسيعاملون كحاضرين في مدرستي';
+        return 'تفاصيل المطابقة';
+    }
+
+    function closeImportReview() {
+        q('[data-role="import-review-overlay"]', q('#' + APP_ID))?.remove();
+    }
+
+    function gotoImportStudent(index) {
+        const student = state.students.find(item => String(item.index) === String(index));
+        if (!student?.row) return;
+        closeImportReview();
+        student.row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        student.row.classList.add('msa-import-flash');
+        setTimeout(() => student.row?.classList?.remove('msa-import-flash'), 2200);
+    }
+
+    function importReviewRowsHtml(kind, items) {
+        if (!items.length) {
+            return '<div class="msa-import-review-empty">لا توجد عناصر في هذه الفئة.</div>';
+        }
+
+        const goButton = student =>
+            student?.index == null
+                ? ''
+                : '<button type="button" data-review-goto="' + escapeHtml(student.index) + '">اذهب للطالب</button>';
+
+        if (kind === 'review') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>سجل الملف</th><th>الحالة</th><th>سبب المراجعة</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml(item.record?.studentName || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.label || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.reason || 'تحتاج مراجعة يدوية.') + '</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'unmatched-page') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الطالب في مدرستي</th><th>السبب</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((student, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(student.name || '') + '</td>' +
+                    '<td>' + escapeHtml(student.reason || 'لا يوجد سجل مطابق في الملف.') + '</td>' +
+                    '<td>' + goButton(student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'unmatched-file') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الطالب في الملف</th><th>البريد</th><th>الحالة</th><th>صف المصدر</th>' +
+                '</tr></thead><tbody>' +
+                items.map((record, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(record.studentName || '') + '</td>' +
+                    '<td>' + escapeHtml(record.email || '—') + '</td>' +
+                    '<td>' + escapeHtml(record.status || '') + '</td>' +
+                    '<td>' + escapeHtml(record.sourceRow || '') + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'ambiguous') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>السجلات المحتملة</th><th>السبب</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml((item.candidates || []).map(x => x.studentName).join('، ')) + '</td>' +
+                    '<td>' + escapeHtml(item.reason || 'مطابقة مبهمة.') + '</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'late-converted') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>الحالة في الملف</th><th>الحالة التي ستطبق</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.originalLabel || item.record?.status || 'متأخر') + '</td>' +
+                    '<td>حاضر</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        return '';
+    }
+
+    function openImportReview(kind) {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const items = reviewCategoryItems(kind);
+        closeImportReview();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>' + escapeHtml(reviewCategoryTitle(kind)) + ' (' + items.length + ')</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' + importReviewRowsHtml(kind, items) + '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+            const goto = event.target.closest?.('[data-review-goto]');
+            if (goto) gotoImportStudent(goto.dataset.reviewGoto);
+        });
+    }
+
+    async function refreshAttendanceRegistry(force = true) {
+        attendanceImport.registryError = '';
+        try {
+            const registry = await fetchAttendanceRegistry(force);
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            refreshAttendanceImportMatch(true);
+            toast('تم تحديث دليل طلاب مدرستي: ' + registry.students.length + ' طالب.');
+            return registry;
+        } catch (error) {
+            attendanceImport.registryError = String(error?.message || error);
+            updateAttendanceImportUi();
+            toast('تعذر تحديث دليل طلاب مدرستي؛ ستستمر المطابقة الاحتياطية بالاسم.');
+            return null;
+        }
+    }
+
     function updateAttendanceImportUi(root = q('#' + APP_ID)) {
         if (!root) return;
         ensureAttendanceImportLoaded();
@@ -3698,6 +3993,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const statusBox = q('[data-role="import-status"]', root);
         const details = q('[data-role="import-details"]', root);
         const refreshBtn = q('[data-action="refresh-import-match"]', root);
+        const registryBtn = q('[data-action="refresh-import-registry"]', root);
         const applyBtn = q('[data-action="apply-import-attendance"]', root);
         const clearBtn = q('[data-action="clear-import-attendance"]', root);
 
@@ -3707,8 +4003,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         details.hidden = true;
         details.innerHTML = '';
 
+        if (registryBtn) {
+            registryBtn.disabled = attendanceImport.registryLoading;
+            registryBtn.textContent = attendanceImport.registryLoading ? 'جاري تحديث الدليل...' : 'تحديث دليل الطلاب';
+        }
+
         const dataset = attendanceImport.dataset;
         if (!dataset) {
+            clearImportRowMarkers();
             statusBox.textContent = 'لم يتم استيراد سجل حضور بعد. يدعم Excel وCSV ويبحث عن الأعمدة الأساسية تلقائيًا.';
             if (refreshBtn) refreshBtn.disabled = true;
             if (applyBtn) applyBtn.disabled = true;
@@ -3725,14 +4027,27 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             ' — ' + dataset.recordCount.toLocaleString('en-US') + ' سجل' +
             ' — ' + dataset.lessonCount.toLocaleString('en-US') + ' حصة';
 
+        const registry = attendanceImport.registry;
+        const registryText = attendanceImport.registryLoading
+            ? 'جاري بناء دليل طلاب مدرستي...'
+            : registry?.students?.length
+                ? 'دليل مدرستي: ' + registry.students.length + ' طالب — البريد هو مفتاح الربط الأساسي.'
+                : attendanceImport.registryError
+                    ? 'دليل مدرستي غير متاح: ' + attendanceImport.registryError
+                    : 'دليل مدرستي غير محمل؛ يمكن التحديث يدويًا أو ستستخدم المطابقة بالاسم كاحتياط.';
+
         const match = attendanceImport.currentMatch;
         if (!match) {
+            clearImportRowMarkers();
             statusBox.textContent = fileSummary + ' — جارٍ مطابقة الحصة الحالية.';
+            details.hidden = false;
+            details.innerHTML = '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
             if (applyBtn) applyBtn.disabled = true;
             return;
         }
 
         if (match.lesson.status !== 'matched') {
+            clearImportRowMarkers();
             statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
             statusBox.textContent = fileSummary + ' — ' + match.lesson.message;
             if (applyBtn) applyBtn.disabled = true;
@@ -3743,57 +4058,67 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 '<b>هوية الحصة المقروءة من مدرستي:</b> ' +
                 '<span class="msa-import-chip">' + escapeHtml(id.date || 'تاريخ غير معروف') + '</span>' +
                 '<span class="msa-import-chip">' + escapeHtml(id.classroom || 'فصل غير معروف') + '</span>' +
-                '<span class="msa-import-chip">الحصة ' + escapeHtml(id.period || '?') + '</span>';
+                '<span class="msa-import-chip">الحصة ' + escapeHtml(id.period || '?') + '</span>' +
+                '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
             return;
         }
 
         const s = match.students;
-        const c = match.importedCounts;
+        const counts = match.importedCounts;
         const saveOk = saveAvailability().available;
+
+        markImportRows(match);
 
         statusBox.classList.add('is-match');
         statusBox.textContent =
             fileSummary +
             ' — ✅ تمت مطابقة الحصة: ' +
             match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period +
-            '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length + '.';
-
-        const unsupportedNames = sampleNames(
-            s.review,
-            item => item.student.name + ' (' + item.attendance.label + ')'
-        );
-        const missingPageNames = sampleNames(s.unmatchedPage, item => item.name);
-        const missingFileNames = sampleNames(s.unmatchedFile, item => item.studentName);
+            '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length +
+            (s.emailMatched.length ? ' — بالبريد: ' + s.emailMatched.length : '') + '.';
 
         const lines = [];
         lines.push(
             '<div><b>سجل الحصة:</b> ' +
-            '<span class="msa-import-chip">حاضر ' + c.present + '</span>' +
-            '<span class="msa-import-chip">غائب بعذر ' + c.absentExcused + '</span>' +
-            '<span class="msa-import-chip">غائب بدون عذر ' + c.absentUnexcused + '</span>' +
-            (c.late ? '<span class="msa-import-chip">متأخر ' + c.late + '</span>' : '') +
-            (c.leave ? '<span class="msa-import-chip">مستأذن ' + c.leave + '</span>' : '') +
-            '</div>'
-        );
-        lines.push(
-            '<div><b>المطابقة:</b> ' +
-            '<span class="msa-import-chip">قابل للتطبيق ' + s.supported.length + '</span>' +
-            '<span class="msa-import-chip">مراجعة ' + s.review.length + '</span>' +
-            '<span class="msa-import-chip">غير موجود بالملف ' + s.unmatchedPage.length + '</span>' +
-            '<span class="msa-import-chip">غير موجود بمدرستي ' + s.unmatchedFile.length + '</span>' +
+            '<span class="msa-import-chip">حاضر ' + counts.present + '</span>' +
+            '<span class="msa-import-chip">غائب بعذر ' + counts.absentExcused + '</span>' +
+            '<span class="msa-import-chip">غائب بدون عذر ' + counts.absentUnexcused + '</span>' +
+            (counts.late ? '<span class="msa-import-chip">متأخر ' + counts.late + ' → حاضر</span>' : '') +
+            (counts.leave ? '<span class="msa-import-chip">مستأذن ' + counts.leave + '</span>' : '') +
             '</div>'
         );
 
+        lines.push(
+            '<div><b>المطابقة:</b> ' +
+            '<span class="msa-import-chip">قابل للتطبيق ' + s.supported.length + '</span>' +
+            '<span class="msa-import-chip">بالبريد ' + s.emailMatched.length + '</span>' +
+            '<span class="msa-import-chip">مراجعة ' + s.review.length + '</span>' +
+            '<span class="msa-import-chip">غير موجود بالملف ' + s.unmatchedPage.length + '</span>' +
+            '<span class="msa-import-chip">غير موجود بمدرستي ' + s.unmatchedFile.length + '</span>' +
+            (s.ambiguous.length ? '<span class="msa-import-chip">مبهم ' + s.ambiguous.length + '</span>' : '') +
+            '</div>'
+        );
+
+        const reviewButtons = [];
+        if (s.review.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="review">⚠️ مراجعة ' + s.review.length + ' — عرض</button>');
+        if (s.unmatchedPage.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-danger" data-import-review="unmatched-page">❌ في مدرستي وليس الملف ' + s.unmatchedPage.length + ' — عرض</button>');
+        if (s.unmatchedFile.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="unmatched-file">ℹ️ في الملف وليس مدرستي ' + s.unmatchedFile.length + ' — عرض</button>');
+        if (s.ambiguous.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="ambiguous">⚠️ مطابقة مبهمة ' + s.ambiguous.length + ' — عرض</button>');
+        if (s.convertedLate.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-ok" data-import-review="late-converted">⏱ متأخر → حاضر ' + s.convertedLate.length + ' — عرض</button>');
+        if (reviewButtons.length) lines.push('<div class="msa-import-review-actions">' + reviewButtons.join('') + '</div>');
+
         if (match.lesson.warning) lines.push('<div>ℹ️ ' + escapeHtml(match.lesson.warning) + '</div>');
+        if (s.convertedLate.length) {
+            lines.push('<div>ℹ️ حسب الإعداد المعتمد: كل طالب حالته «متأخر» في الملف سيُسجل «حاضر» لأن واجهة مدرستي الحديثة لا تدعم التأخر.</div>');
+        }
         if (!saveOk) lines.push('<div>🔒 يمكن مراجعة المطابقة، لكن تطبيق الملف معطل لأن حفظ الحصة غير متاح حاليًا في مدرستي.</div>');
-        if (unsupportedNames.length) lines.push('<div>⚠️ يحتاج مراجعة: ' + escapeHtml(unsupportedNames.join('، ')) + (s.review.length > unsupportedNames.length ? '…' : '') + '</div>');
-        if (missingPageNames.length) lines.push('<div>⚠️ طلاب في مدرستي بلا سجل مطابق: ' + escapeHtml(missingPageNames.join('، ')) + (s.unmatchedPage.length > missingPageNames.length ? '…' : '') + '</div>');
-        if (missingFileNames.length) lines.push('<div>ℹ️ سجلات في الملف بلا طالب مطابق في الصفحة: ' + escapeHtml(missingFileNames.join('، ')) + (s.unmatchedFile.length > missingFileNames.length ? '…' : '') + '</div>');
+        lines.push('<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>');
 
         if (attendanceImport.lastApply?.lessonKey === match.group.key) {
             lines.push(
                 '<div>آخر تطبيق: ' +
                 attendanceImport.lastApply.success + ' نجح' +
+                (attendanceImport.lastApply.convertedLate ? ' — منها ' + attendanceImport.lastApply.convertedLate + ' متأخر ← حاضر' : '') +
                 (attendanceImport.lastApply.failed ? '، ' + attendanceImport.lastApply.failed + ' تعذر تطبيقه' : '') +
                 ' — ' + escapeHtml(attendanceImport.lastApply.at) +
                 '</div>'
@@ -3847,6 +4172,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             attendanceImport.lastError = '';
             attendanceImport.lastApply = null;
 
+            try {
+                await fetchAttendanceRegistry(false);
+            } catch (registryError) {
+                attendanceImport.registryError = String(registryError?.message || registryError);
+            }
+
             refreshAttendanceImportMatch(true);
 
             let message =
@@ -3878,6 +4209,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         attendanceImport.currentMatch = null;
         attendanceImport.lastSignature = '';
         attendanceImport.lastApply = null;
+        closeImportReview();
+        clearImportRowMarkers();
         updateAttendanceImportUi();
         toast('تم مسح سجل الحضور المستورد.');
     }
@@ -3913,6 +4246,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         const confirmation =
             'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
+            (s.convertedLate.length
+                ? '\n\nسيتم تحويل ' + s.convertedLate.length + ' طالب من «متأخر» في الملف إلى «حاضر» في مدرستي.'
+                : '') +
             (warnings.length ? '\n\nتنبيه: ' + warnings.join('، ') + '.' : '') +
             '\n\nلن يتم الحفظ تلقائيًا. ستراجع النتيجة ثم تضغط زر الحفظ بنفسك.';
 
@@ -3939,6 +4275,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             lessonKey: match.group.key,
             success,
             failed,
+            convertedLate: s.convertedLate.length,
             at: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
         };
 
@@ -3947,6 +4284,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const c = stats();
         toast(
             'تم تطبيق ' + success + ' حالة من الملف' +
+            (s.convertedLate.length ? '، ومنها ' + s.convertedLate.length + ' متأخر ← حاضر' : '') +
             (failed ? '، وتعذر تطبيق ' + failed : '') +
             '. راجع الإحصاءات قبل الحفظ. الحاضر: ' + c.present + '، الغائب: ' + c.absent + '.'
         );
@@ -3982,6 +4320,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         </div>
                         <div class="msa-import-actions">
                             <button type="button" data-action="import-attendance">استيراد ملف</button>
+                            <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
                             <button type="button" data-action="refresh-import-match" disabled>مطابقة الحصة</button>
                             <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>تطبيق حضور الملف</button>
                             <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
@@ -4305,9 +4644,19 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             event.target.value = '';
             if (file) await importAttendanceFile(file);
         });
-        q('[data-action="refresh-import-match"]', root)?.addEventListener('click', () => {
+        q('[data-action="refresh-import-registry"]', root)?.addEventListener('click', async () => {
+            await refreshAttendanceRegistry(true);
+        });
+        q('[data-action="refresh-import-match"]', root)?.addEventListener('click', async () => {
+            if (!attendanceImport.registry?.students?.length) {
+                await refreshAttendanceRegistry(false);
+            }
             refreshAttendanceImportMatch(true);
             toast('تمت إعادة فحص مطابقة الحصة الحالية مع الملف.');
+        });
+        root.addEventListener('click', event => {
+            const reviewButton = event.target.closest?.('[data-import-review]');
+            if (reviewButton) openImportReview(reviewButton.dataset.importReview);
         });
         q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
         q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
@@ -4513,8 +4862,21 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
         refreshAttendanceImportMatch(true);
 
+        if (attendanceImport.dataset && !attendanceImport.registryLoading) {
+            fetchAttendanceRegistry(false)
+                .then(() => {
+                    attendanceImport.currentMatch = null;
+                    attendanceImport.lastSignature = '';
+                    refreshAttendanceImportMatch(true);
+                })
+                .catch(error => {
+                    attendanceImport.registryError = String(error?.message || error);
+                    updateAttendanceImportUi();
+                });
+        }
+
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta1] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
