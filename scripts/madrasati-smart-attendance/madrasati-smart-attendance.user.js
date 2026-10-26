@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.4-beta2
-// @description  نسخة اختبارية: بحث أسماء مرن، تقارير مناسبة لواجهة مدرستي الجديدة، وتنبيه واضح عند تعديل حضور محفوظ.
+// @version      0.3.4-beta4
+// @description  نسخة اختبارية: زر حفظ علوي مرتبط بحفظ مدرستي الأصلي، بحث أسماء مرن، وتقارير متوافقة مع واجهة التحضير الجديدة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta4-top-save/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta4-top-save/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.4-beta2',
+        version: '0.3.4-beta4',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -2448,6 +2448,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     <small data-role="mode-label">أدوات مساعدة داخل صفحة التحضير</small>
                 </div>
                 <div class="msa-head-actions">
+                    <button type="button" class="msa-primary" data-action="native-save-top">💾 حفظ</button>
                     <button type="button" class="msa-report-btn" data-action="report">📋 تقرير الحصة</button>
                     <button type="button" data-action="toggle-panel">طي الأدوات</button>
                 </div>
@@ -2591,6 +2592,33 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         document.body.prepend(root);
     }
 
+    function nativeSaveButton() {
+        const form = state.form || q('#SaveAttendStudents') || q('#UpdateAttendStudents');
+        if (!form) return null;
+
+        return (
+            q('button[name="SendAttend"]', form) ||
+            q('button[type="submit"].btn-primary', form) ||
+            q('input[type="submit"]', form)
+        );
+    }
+
+    function triggerNativeSave() {
+        const button = nativeSaveButton();
+        if (!button) {
+            toast('لم يتم العثور على زر الحفظ الأصلي في مدرستي.');
+            return;
+        }
+
+        if (button.disabled) {
+            toast('زر الحفظ الأصلي غير متاح حاليًا.');
+            return;
+        }
+
+        button.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setTimeout(() => button.click(), 120);
+    }
+
     function updateModeUi(root) {
         const modeLabel = q('[data-role="mode-label"]', root);
         const saveHint = q('[data-role="save-hint"]', root);
@@ -2603,6 +2631,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             searchInput.placeholder = state.mode === 'batch-update'
                 ? 'ابحث بأي جزء من الاسم وبأي ترتيب...'
                 : 'ابحث بالاسم بأي ترتيب أو برقم الطالب...';
+        }
+
+        const topSave = q('[data-action="native-save-top"]', root);
+        if (topSave) {
+            const nativeSave = nativeSaveButton();
+            topSave.disabled = !nativeSave || nativeSave.disabled;
+            topSave.title = state.mode === 'batch-update'
+                ? 'ينفذ زر الحفظ الأصلي في مدرستي، بما في ذلك شاشة سبب التعديل.'
+                : 'ينفذ زر الحفظ الأصلي في مدرستي، بما في ذلك شاشة تأكيد الرصد.';
         }
 
         const bulkStatus = q('[data-role="bulk-status"]', root);
@@ -2650,6 +2687,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="clear"]', root).addEventListener('click', bulkClear);
         q('[data-action="undo"]', root).addEventListener('click', undoLast);
         q('[data-action="report"]', root).addEventListener('click', openReport);
+        q('[data-action="native-save-top"]', root)?.addEventListener('click', triggerNativeSave);
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
 
         q('[data-action="save-all"]', root)?.addEventListener('click', saveAllChanges);
@@ -2847,7 +2885,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.4-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.4-beta4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
