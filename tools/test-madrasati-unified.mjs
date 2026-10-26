@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const source = readFileSync('scripts/madrasati-teaching-tasks-intelligence/madrasati-teaching-tasks-intelligence.user.js', 'utf8');
-const version = '2.0.0-beta3';
+const version = '2.0.0-beta4';
 const assertIncludes = (needle, label = needle) => assert(source.includes(needle), 'Missing: ' + label);
 
-assert.match(source, /^\/\/ @version\s+2\.0\.0-beta3\s*$/m);
+assert.match(source, /^\/\/ @version\s+2\.0\.0-beta4\s*$/m);
 assert.equal((source.match(/^\/\/ ==UserScript==/gm) || []).length, 1, 'Exactly one userscript header');
 for (const route of ['/Teacher/Assignments/*','/Projects/Projects/*','/SchoolManagment/Actions/MyStudents*']) assertIncludes(route);
 assert.equal((source.match(/^\/\/ @require\s+/gm) || []).length, 1, 'No other script dependency');
@@ -14,7 +14,7 @@ assert(!source.includes('@require      https://cdn.jsdelivr.net/gh/'), 'Do not d
 for (const name of ['MadrasatiAssignmentIntelligence =','MadrasatiAssignmentIntelligenceEnhanced =','MadrasatiProjectsIntelligence =','MadrasatiTeachingTasksIntelligence =']) assertIncludes(name);
 for (const name of ['const classFromBlock =','const readImportFile =','const ensureImportModal =','const filteredIndexAssignments =','const postProjectRows =']) assertIncludes(name);
 assertIncludes('const VERSION = \'1.1.7\'', 'Stable assignment core preserved');
-assert.equal((source.match(/const VERSION = '2\.0\.0-beta3'/g)||[]).length, 2, 'Both visible module versions match unified version');
+assert.equal((source.match(/const VERSION = '2\.0\.0-beta4'/g)||[]).length, 2, 'Both visible module versions match unified version');
 new vm.Script(source, { filename: 'madrasati-unified.user.js' });
 
 // Read helper functions directly from the actual project module; no reimplementation.
@@ -97,7 +97,23 @@ assert.equal(results[0].status,'ready','Confirmed unique ID must not be blocked 
 assert(els.get('MAIP-import-preview')?.innerHTML.includes('فصل مدرستي'),'Preview must show platform class separately');
 assert(els.get('MAIP-import-preview')?.innerHTML.includes('تنبيه الفصل'),'Preview must expose class warning');
 assert.equal(els.get('MAIP-import-modal')?.hidden,false,'Import modal must open');
+
 assert(els.get('MAIP-import-preview')?.innerHTML.includes('جاهز للتغيير'),'Import review must render');
+
+// Screenshot regression: 73 students loaded, 72 spreadsheet rows, all IDs matched.
+// The class field may render differently; a unique ID must not be blocked because of it.
+const projectStudents=Array.from({length:73},(_,i)=>row(
+  String(1000000001+i),'اسم مدرستي '+(i+1),null,i%2?'الثالث المتوسط أ':'الثالث المتوسط ب'
+));
+app.state.students=projectStudents;
+const bulkCsv='اسم الطالب,رقم الطالب,الفصل,الحالة,الدرجة,ملاحظات\\n'
+ +projectStudents.slice(0,72).map((r,i)=>['اسم ملف '+(i+1),r.studentId,'الثالث المتوسط ب','تم التسليم','20','14'].join(',')).join('\\n');
+await app.readImportFile({name:'72-project-grades.csv',text:async()=>bulkCsv});
+assert.equal(app.state.importPreview?.rows.length,72,'All imported rows must be present');
+assert.equal(app.state.students.length,73,'Total platform roster must stay at 73');
+assert.equal(app.state.importPreview.rows.filter(r=>r.status==='ready').length,72,'All 72 unique ID matches should be applicable');
+assert.equal(app.state.importPreview.rows.filter(r=>r.classWarning).length,36,'Class discrepancies should show warnings, not rejection');
+assert(els.get('MAIP-import-preview')?.innerHTML.includes('تنبيه الفصل'),'Warnings must be visible on bulk preview');
 // Assignment search: read the filtering implementation from the real bundled module.
 const searchStart=source.indexOf('  const filteredIndexAssignments = () => {');
 const searchEnd=source.indexOf('  const summarizeIndexAssignments =',searchStart);
