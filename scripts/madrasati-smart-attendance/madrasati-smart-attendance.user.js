@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-bulk-apply-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-bulk-apply-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -126,7 +126,7 @@
         registryLoading: false,
         registryError: '',
         identityBridge: null,
-        // واجهة الإصدار النهائي لا تحتفظ بسجلات اختبار أو تشخيص.
+        // بيانات تشغيل المستورد محفوظة محليًا دون سجلات اختبارات.
     };
 
     let state = {
