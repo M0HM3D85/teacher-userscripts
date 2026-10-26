@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta5
+// @version      0.3.5-beta6
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta5-native-click/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta5-native-click/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta6-exact-native-flow/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta6-exact-native-flow/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta5',
+        version: '0.3.5-beta6',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -1196,70 +1196,77 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         if (!radio) return null;
 
         if (radio.id) {
-            const byFor =
-                q('label[for="' + escapeAttr(radio.id) + '"]', studentControlRoot(radio)) ||
-                q('label[for="' + escapeAttr(radio.id) + '"]');
-            if (byFor) return byFor;
-        }
-
-        return radio.closest?.('label') ||
-            radio.parentElement?.querySelector?.('label') ||
-            null;
-    }
-
-    function studentControlRoot(radio) {
-        return radio?.closest?.('tr, .student-row, .row, .card, li, form') || document;
-    }
-
-    function notifyAttendanceRadio(radio) {
-        if (!radio) return;
-
-        radio.dispatchEvent(new Event('input', { bubbles: true }));
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
-
-        const jq = window.jQuery;
-        if (jq?.fn?.jquery) {
+            const root = radio.closest?.('tr, .student-row, .row, .card, li, form') || document;
             try {
-                jq(radio).triggerHandler('input');
-                jq(radio).triggerHandler('change');
+                const label =
+                    q('label[for="' + escapeAttr(radio.id) + '"]', root) ||
+                    q('label[for="' + escapeAttr(radio.id) + '"]');
+                if (label) return label;
             } catch (_) {}
         }
+
+        return radio.closest?.('label') || null;
+    }
+
+    function nativeMainStatusLabel(student, statusDef) {
+        if (!student?.row || !statusDef) return null;
+
+        if (statusDef.main === '12') {
+            return q('label.check-btn-absence', student.row) ||
+                q('label[for="' + escapeAttr('option2-' + student.index) + '"]', student.row);
+        }
+
+        if (statusDef.main === '0') {
+            return q('label.check-btn-attend', student.row) ||
+                q('label[for="' + escapeAttr('option1-' + student.index) + '"]', student.row);
+        }
+
+        return attendanceRadioLabel(findStudentStatusRadio(student, 'main', statusDef.main));
+    }
+
+    function clickNativeMainStatus(student, statusDef) {
+        const radio = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!radio || radio.disabled) return false;
+        if (radio.checked) return true;
+
+        const label = nativeMainStatusLabel(student, statusDef);
+        if (label) {
+            try { label.click(); } catch (_) {}
+        } else {
+            try { radio.click(); } catch (_) {}
+        }
+
+        return true;
+    }
+
+    function clickNativeDetailStatus(student, statusDef) {
+        const radio = findStudentStatusRadio(student, 'detail', statusDef.detail);
+        if (!radio || radio.disabled) return false;
+        if (radio.checked) return true;
+
+        // الفحص اليدوي أظهر أن اختيار العذر يتم مباشرة على input نفسه.
+        try { radio.click(); } catch (_) {}
+        return true;
     }
 
     function dispatchRadio(radio) {
         if (!radio || radio.disabled) return false;
         if (radio.checked) return true;
 
-        // مدرستي تعرض أحيانًا input مخفيًا ويكون التفاعل الحقيقي عبر label.
-        // نحاول ضغط نفس العنصر المرئي الذي يضغطه المستخدم أولاً.
-        const label = attendanceRadioLabel(radio);
-        if (label && !label.matches?.('[aria-disabled="true"], .disabled')) {
-            try { label.click(); } catch (_) {}
-        }
-
-        if (!radio.checked) {
-            try { radio.click(); } catch (_) {}
-        }
-
-        if (!radio.checked) {
-            radio.checked = true;
-            notifyAttendanceRadio(radio);
-        } else {
-            // نضمن وصول change حتى لو كان label هو الذي غيّر checked.
-            notifyAttendanceRadio(radio);
-        }
-
+        // يستخدم فقط للوظائف العامة القديمة؛ لا نرسل input/change يدويًا
+        // لأن مدرستي نفسها تطلق الأحداث عند click().
+        try { radio.click(); } catch (_) {}
         return radio.checked;
     }
 
-    async function waitForAttendanceState(student, predicate, timeoutMs = 1200) {
+    async function waitForAttendanceState(student, predicate, timeoutMs = 1600) {
         const started = Date.now();
         let last = readStudentStatus(student);
 
         while (Date.now() - started <= timeoutMs) {
             last = readStudentStatus(student);
             if (predicate(last)) return { ok: true, status: last };
-            await new Promise(resolve => setTimeout(resolve, 40));
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
 
         return { ok: false, status: last };
@@ -1321,61 +1328,76 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             return { ok: false, reason: 'main-radio-unavailable' };
         }
 
-        dispatchRadio(main);
-
-        // ننتظر مدرستي نفسها حتى تعالج اختيار «غائب» وتحدّث سبب الغياب.
-        const mainWait = await waitForAttendanceState(
-            student,
-            current =>
-                current.key === statusDef.key ||
-                current.main === statusDef.main,
-            1200
-        );
-
-        if (mainWait.status?.key === statusDef.key) {
-            return { ok: true, reason: 'main-handler-completed' };
+        // 1) نفس ما حدث في الفحص اليدوي: الضغط على label الحالة الرئيسية فقط.
+        if (!clickNativeMainStatus(student, statusDef)) {
+            return { ok: false, reason: 'main-native-click-failed' };
         }
 
-        // بعد أن تصبح الحالة الرئيسية صحيحة نختار سبب الغياب المطلوب.
+        // 2) ننتظر حتى تصبح القيمة الرئيسية فعلًا 12 للغائب أو 0 للحاضر.
+        const mainChanged = await waitForAttendanceState(
+            student,
+            current => current.main === statusDef.main,
+            1600
+        );
+
+        if (!mainChanged.ok) {
+            return {
+                ok: false,
+                reason: 'main-did-not-change-after-native-label-click',
+                actualKey: mainChanged.status?.key || '',
+                actualMain: mainChanged.status?.main || '',
+                actualDetail: mainChanged.status?.detail || ''
+            };
+        }
+
+        // إذا كانت مدرستي ضبطت «بدون عذر» تلقائيًا وصار الهدف صحيحًا، لا نلمس شيئًا آخر.
+        if (mainChanged.status?.key === statusDef.key) {
+            return { ok: true, reason: 'native-main-click-completed-target' };
+        }
+
+        // 3) للغياب بعذر فقط غالبًا نحتاج تغيير التفصيل من الافتراضي 2 إلى 1.
         let detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
 
         if (!detail || detail.disabled) {
-            const detailReady = await waitForAttendanceState(
+            const ready = await waitForAttendanceState(
                 student,
                 () => {
                     detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
                     return !!detail && !detail.disabled;
                 },
-                1200
+                1600
             );
 
-            if (!detailReady.ok && (!detail || detail.disabled)) {
-                const current = readStudentStatus(student);
+            if (!ready.ok && (!detail || detail.disabled)) {
                 return {
                     ok: false,
-                    reason: 'detail-radio-unavailable-after-main',
-                    actualKey: current.key,
-                    actualMain: current.main,
-                    actualDetail: current.detail
+                    reason: 'detail-not-ready-after-main-click',
+                    actualKey: ready.status?.key || '',
+                    actualMain: ready.status?.main || '',
+                    actualDetail: ready.status?.detail || ''
                 };
             }
         }
 
-        dispatchRadio(detail);
+        // 4) نفس الفحص اليدوي: الضغط المباشر على input العذر، دون أحداث إضافية مصطنعة.
+        if (!clickNativeDetailStatus(student, statusDef)) {
+            return { ok: false, reason: 'detail-native-click-failed' };
+        }
 
+        // 5) نجاح صارم: يجب أن تصبح الحالة النهائية المطلوبة فعلًا.
         const verified = await waitForAttendanceState(
             student,
             current => current.key === statusDef.key,
-            1200
+            1600
         );
 
         if (verified.ok) {
-            return { ok: true, reason: 'verified-after-native-click' };
+            return { ok: true, reason: 'verified-exact-native-flow' };
         }
 
         return {
             ok: false,
-            reason: 'verification-failed-after-native-click',
+            reason: 'final-state-not-reached',
             actualKey: verified.status?.key || '',
             actualMain: verified.status?.main || '',
             actualDetail: verified.status?.detail || ''
@@ -5094,7 +5116,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta5] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta6] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
