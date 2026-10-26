@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-bulk-apply-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-bulk-apply-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -5707,6 +5707,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (s.review.length) warnings.push(s.review.length + ' حالة تحتاج مراجعة ولن تطبق');
         if (s.unmatchedPage.length) warnings.push(s.unmatchedPage.length + ' طالب في مدرستي بلا سجل مطابق');
         if (s.unmatchedFile.length) warnings.push(s.unmatchedFile.length + ' سجل في الملف بلا طالب مطابق');
+        attendanceImport.applyProgress = '';
+        attendanceImport.diagnosticConfirmationPending = false;
         attendanceImport.applyConfirmationMessage =
             'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
             (s.convertedLate.length ? ' سيتم تحويل ' + s.convertedLate.length + ' طالب متأخر إلى حاضر.' : '') +
