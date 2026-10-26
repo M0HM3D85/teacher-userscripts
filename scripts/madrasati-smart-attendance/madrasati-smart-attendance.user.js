@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta3
+// @version      0.3.5-beta4
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta3-apply-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta3-apply-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta4-status-normalization/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta4-status-normalization/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta3',
+        version: '0.3.5-beta4',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -3336,42 +3336,43 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         return { student: null, method: '', candidates: all };
     }
 
+    function normalizedTextMatches(value, aliases, mode = 'includes') {
+        const source = normalizeArabic(value || '');
+        if (!source) return false;
+
+        return (aliases || []).some(alias => {
+            const normalizedAlias = normalizeArabic(alias || '');
+            if (!normalizedAlias) return false;
+            return mode === 'exact'
+                ? source === normalizedAlias
+                : source.includes(normalizedAlias);
+        });
+    }
+
     function normalizeImportedAttendance(record) {
-        const status = normalizeArabic(record.status || '');
-        const excuse = normalizeArabic(record.excuse || '');
+        const rawStatus = cleanText(record.status || '');
+        const rawExcuse = cleanText(record.excuse || '');
         const reason = cleanText(record.reason || '');
-        const combined = cleanText(status + ' ' + excuse);
 
         const hasExcuse = (
-            (combined.includes('بعذر') && !combined.includes('بدون عذر')) ||
-            combined.includes('مع عذر') ||
-            excuse === 'نعم' ||
-            excuse === 'yes' ||
-            excuse === 'excused'
+            (normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بعذر', 'مع عذر']) &&
+                !normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بدون عذر'])) ||
+            normalizedTextMatches(rawExcuse, ['نعم', 'yes', 'excused'], 'exact')
         );
 
         const hasNoExcuse = (
-            combined.includes('بدون عذر') ||
-            combined.includes('غير معذور') ||
-            excuse === 'لا' ||
-            excuse === 'no' ||
-            excuse === 'unexcused'
+            normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بدون عذر', 'غير معذور']) ||
+            normalizedTextMatches(rawExcuse, ['لا', 'no', 'unexcused'], 'exact')
         );
 
         if (
-            status.includes('حاضر') ||
-            status === 'حضور' ||
-            status === 'present' ||
-            status === 'attended'
+            normalizedTextMatches(rawStatus, ['حاضر', 'حضور', 'present', 'attended'])
         ) {
             return { kind: 'supported', targetKey: STATUS.PRESENT.key, label: 'حاضر' };
         }
 
         if (
-            status.includes('غائب') ||
-            status.includes('غياب') ||
-            status === 'absent' ||
-            status === 'absence'
+            normalizedTextMatches(rawStatus, ['غائب', 'غياب', 'absent', 'absence'])
         ) {
             if (hasExcuse) {
                 return { kind: 'supported', targetKey: STATUS.ABSENT_EXCUSED.key, label: 'غائب بعذر' };
@@ -3388,10 +3389,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         if (
-            status.includes('متاخر') ||
-            status.includes('تاخر') ||
-            status === 'late' ||
-            status === 'tardy'
+            normalizedTextMatches(rawStatus, ['متأخر', 'تأخر', 'late', 'tardy'])
         ) {
             const targetKey = hasExcuse ? STATUS.LATE_EXCUSED.key : hasNoExcuse ? STATUS.LATE_UNEXCUSED.key : '';
             if (isNewPlatformMode()) {
@@ -3408,7 +3406,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             return { kind: 'review', targetKey: '', label: 'متأخر — العذر غير محدد' };
         }
 
-        if (status.includes('مستاذن') || status.includes('استئذان') || status.includes('مستاذن')) {
+        if (
+            normalizedTextMatches(rawStatus, ['مستأذن', 'استئذان', 'مستاذن'])
+        ) {
             return {
                 kind: 'unsupported',
                 targetKey: '',
@@ -3417,7 +3417,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             };
         }
 
-        if (status.includes('هروب')) {
+        if (normalizedTextMatches(rawStatus, ['هروب'])) {
             return {
                 kind: 'unsupported',
                 targetKey: '',
@@ -3429,7 +3429,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         return {
             kind: 'review',
             targetKey: '',
-            label: cleanText(record.status || '') || 'حالة غير معروفة',
+            label: rawStatus || 'حالة غير معروفة',
             reason: 'لم يتعرف السكربت على حالة الحضور في الملف.'
         };
     }
@@ -5011,7 +5011,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
