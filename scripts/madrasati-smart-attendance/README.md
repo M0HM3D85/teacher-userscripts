@@ -1,6 +1,6 @@
 # Madrasati Smart Attendance | التحضير الذكي لمدرستي
 
-**الإصدار المستقر: v0.3.5**
+**الإصدار الحالي:** `0.3.5`
 
 أدوات تحضير الحضور مباشرة داخل صفحة مدرستي، بواجهة عربية مختصرة ومندمجة في الصفحة **لا تبقى ثابتة أثناء التمرير** ولا تحجب صفوف الطلاب. تحافظ على طريقة الحفظ الأصلية في مدرستي.
 
@@ -44,6 +44,6 @@
 
 ## المطور والحقوق
 
-**Mohammed Almalki (M0HM3D85)** — © 2026 جميع الحقوق محفوظة.  
+**Mohammed Almalki (M0HM3D85)** — © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.  
 **All Rights Reserved**  
 [الدعم](https://github.com/M0HM3D85/teacher-userscripts/issues) · [GreasyFork](https://greasyfork.org/en/users/1636459-m0hm3d85) · [X](https://x.com/M0HM3D85)
