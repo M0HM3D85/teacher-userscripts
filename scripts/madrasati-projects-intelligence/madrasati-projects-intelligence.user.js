@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.2
+// @version      1.5.3
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.2
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.3
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.5.2
+// Madrasati Projects & Activities Intelligence — v1.5.3
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.2';
+  const VERSION = '1.5.3';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -117,6 +117,33 @@
   `.replace(/\. MAIP/g, '.MAIP');
 
 
+
+  const importModalCss = `
+    #${APP}-import-modal.${APP}-modal{position:fixed;inset:0;z-index:2147483645;background:rgba(15,23,42,.57);display:flex;align-items:center;justify-content:center;padding:16px;direction:rtl;font-family:Tahoma,Arial,sans-serif}
+    #${APP}-import-modal[hidden]{display:none!important}
+    #${APP}-import-modal .${APP}-dialog{box-sizing:border-box;width:min(1320px,97vw);max-height:94vh;overflow:auto;background:#fff;color:#172033;border-radius:16px;box-shadow:0 18px 75px rgba(0,0,0,.28);padding:18px}
+    #${APP}-import-modal .${APP}-dialog *{box-sizing:border-box}
+    #${APP}-import-modal .${APP}-dialog-head{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid #e2e8f0;padding-bottom:12px}
+    #${APP}-import-modal .${APP}-drop{border:2px dashed #b9c9de;padding:22px;border-radius:12px;background:#f8fbff;position:relative;text-align:center}
+    #${APP}-import-modal .${APP}-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+    #${APP}-import-modal .${APP}-drop b,#${APP}-import-modal .${APP}-drop span{display:block}
+    #${APP}-import-modal .${APP}-drop span{font-size:12px;color:#64748b;margin-top:5px}
+    #${APP}-import-modal .${APP}-note{font-size:12px;background:#f8fafc;border:1px solid #e2e8f0;padding:10px;border-radius:10px;margin:10px 0}
+    #${APP}-import-modal .${APP}-toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:10px 0}
+    #${APP}-import-modal .${APP}-btn{padding:9px 12px;border:1px solid #0d6efd;background:#0d6efd;color:white;border-radius:8px;cursor:pointer;font:700 12px Tahoma,Arial}
+    #${APP}-import-modal .${APP}-btn.gray,#${APP}-import-modal .${APP}-btn.alt{color:#0d6efd;background:#fff}
+    #${APP}-import-modal .${APP}-btn:disabled{opacity:.45;cursor:not-allowed}
+    #${APP}-import-modal .${APP}-tablewrap{overflow:auto;border:1px solid #e2e8f0;border-radius:10px}
+    #${APP}-import-modal .${APP}-table{width:100%;border-collapse:collapse;font-size:11px;min-width:980px}
+    #${APP}-import-modal .${APP}-table th,#${APP}-import-modal .${APP}-table td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
+    #${APP}-import-modal .${APP}-table th{background:#f1f5f9;position:sticky;top:0;z-index:2}
+    #${APP}-import-modal .${APP}-pill{border-radius:25px;padding:4px 8px;font-size:10px}
+    #${APP}-import-modal .${APP}-ok{background:#dcfce7;color:#166534}
+    #${APP}-import-modal .${APP}-bad{background:#fee2e2;color:#991b1b}
+    #${APP}-import-modal .${APP}-sub,#${APP}-import-modal .${APP}-count{font-size:11px;color:#64748b}
+    @media(max-width:700px){#${APP}-import-modal{padding:5px}#${APP}-import-modal .${APP}-dialog{max-height:97vh;width:100%;padding:10px}}
+  `;
+
   const parityCss = `
     #${APP}-panel{box-shadow:0 4px 18px rgba(15,23,42,.06);border-color:#dbe3ee}
     #${APP}-panel .${APP}-head{background:linear-gradient(135deg,#f8fafc,#eef6ff)}
@@ -187,7 +214,7 @@
       status.textContent = busy ? (label || 'جارٍ المعالجة…') : 'جاهز';
       status.classList.toggle('busy', busy);
     }
-    document.querySelectorAll(`#${APP}-panel button`).forEach(btn => btn.disabled = busy && !btn.dataset.allowbusy);
+    document.querySelectorAll(`#${APP}-panel button, #${APP}-import-modal button`).forEach(btn => btn.disabled = !!busy && !btn.dataset.allowbusy);
   };
 
   const findMount = () => {
@@ -549,7 +576,7 @@
       <div class="${APP}-gradeview" data-view="students"><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>التسليم</th><th>الرصد</th><th>الدرجة</th><th>النسبة</th><th>التقدير</th><th>الملاحظة</th></tr></thead><tbody id="${APP}-students-tbody"></tbody></table></div></div>
       <div class="${APP}-gradeview" data-view="analytics" id="${APP}-analytics-host"></div>
       <div class="${APP}-gradeview" data-view="report" id="${APP}-report-host"></div>
-      <div id="${APP}-import" class="${APP}-import ${state.importExpanded?'show':''}"><div class="${APP}-drop"><input id="${APP}-file" type="file" accept=".xlsx,.xls,.csv,text/csv"><b>استيراد درجات النشاط / المشروع</b><span>Excel أو CSV — المطابقة برقم الطالب أولًا ثم الاسم الفريد</span></div><div id="${APP}-import-preview" style="margin-top:10px"></div></div>`;
+      <div class="${APP}-note" id="${APP}-import-hint">لا تُغيَّر الدرجات من عرض التحليل. اضغط «استيراد درجات» لفتح نافذة الاستيراد والمراجعة قبل الحفظ.</div>`;
     [['class','className'],['submission','submission'],['grading','grading'],['level','level'],['sort','sort']].forEach(([id,key])=>{
       const el=document.getElementById(`${APP}-${id}`);if(!el)return;
       el.value=state.filter[key];
@@ -559,7 +586,7 @@
     document.getElementById(`${APP}-clear-search`)?.addEventListener('click',()=>{state.filter.query='';const i=document.getElementById(`${APP}-search`);if(i){i.value='';i.focus();}updateGradeViews();});
     document.getElementById(`${APP}-quick-reset`)?.addEventListener('click',resetFilters);
     document.querySelectorAll(`#${APP}-panel .${APP}-tab`).forEach(b=>b.addEventListener('click',()=>setGradeView(b.dataset.view)));
-    document.getElementById(`${APP}-file`)?.addEventListener('change',e=>readImportFile(e.target.files?.[0]));
+
     updateGradeViews();setGradeView(state.view);
     if(state.importPreview&&state.importExpanded)renderImportPreview();
   };
@@ -584,10 +611,44 @@
     renderGradeBody();
   };
 
-  const openImport = () => {
-    const box = document.getElementById(`${APP}-import`);
-    if (box) { box.classList.toggle('show'); state.importExpanded = box.classList.contains('show'); if (state.importExpanded && state.importPreview) renderImportPreview(); }
-  };
+  const ensureImportModal = function ensureImportModal(){
+ let modal=document.getElementById(`${APP}-import-modal`);
+ if(modal)return modal;
+ modal=document.createElement('section');
+ modal.id=`${APP}-import-modal`;
+ modal.className=`${APP}-modal`;
+ modal.hidden=true;
+ modal.setAttribute('role','dialog');
+ modal.setAttribute('aria-modal','true');
+ modal.setAttribute('aria-label','استيراد درجات الأنشطة والمشاريع');
+ modal.innerHTML=`<div class="${APP}-dialog" dir="rtl">
+   <div class="${APP}-dialog-head">
+    <div><div class="${APP}-title">استيراد درجات Excel / CSV</div><div class="${APP}-sub">مطابقة آمنة · معاينة مفصلة · نسخة احتياطية · تحقق من الحفظ</div></div>
+    <button id="${APP}-modal-close" class="${APP}-btn gray" type="button" aria-label="إغلاق نافذة الاستيراد">إغلاق ×</button>
+   </div>
+   <div class="${APP}-note"><b>قبل الحفظ:</b> الأولوية لرقم الطالب المؤكد، ثم الاسم والفصل عند عدم وجود رقم مطابق. يُرفض الاسم المكرر والتعارض المؤكد بين الهويات. جميع درجات الصفر تُعرض صراحة في المعاينة.</div>
+   <div class="${APP}-drop" style="margin:14px 0"><input id="${APP}-file" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><b>اختر ملف الدرجات أو اسحبه هنا</b><span>Excel أو CSV — لن يُحفظ شيء قبل المعاينة والتأكيد</span></div>
+   <div id="${APP}-import-preview" aria-live="polite"></div>
+ </div>`;
+ document.body.appendChild(modal);
+ const close=()=>{if(state.loading)return;modal.hidden=true;state.importExpanded=false;};
+ document.getElementById(`${APP}-modal-close`)?.addEventListener('click',close);
+ modal.addEventListener('click',e=>{if(e.target===modal)close();});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});
+ document.getElementById(`${APP}-file`)?.addEventListener('change',async e=>{
+   await readImportFile(e.target.files?.[0]);
+   e.target.value='';
+ });
+ return modal;
+};
+
+  const openImport = function newOpenImport() {
+ if(state.loading)return;
+ const modal=ensureImportModal();
+ modal.hidden=false;state.importExpanded=true;
+ if(state.importPreview)renderImportPreview();
+ document.getElementById(`${APP}-file`)?.focus();
+};
 
   const parseCsv = text => {
     const rows = [];
@@ -685,10 +746,13 @@
    let student=null,method='',reason='',status='ready';
    if(idMatches.length===1) {
     student=idMatches[0];method='رقم الطالب';
-    if(name&&studentNameKey(student.name).split(' ').length>=3
-     &&studentNameKey(student.name)!==nameKey
-     &&!(nameMatches.length===1&&nameMatches[0].studentId===student.studentId)){
-     status='identity_conflict';reason='رقم الطالب يطابق سجلًا باسم مختلف؛ يلزم المراجعة';
+    // مثل استيراد الواجبات: هوية الطالب ذات الرقم الفريد موثوقة.
+    // لا نرفضها لمجرد اختلاف الاسم المستخرج من بطاقة HTML.
+    // نوقفها فقط عندما يثبت الاسم الفريد أنه يعود لطالب آخر داخل نفس المشروع.
+    if(nameMatches.length===1 && nameMatches[0].studentId!==student.studentId){
+     status='identity_conflict';reason='رقم الطالب والاسم يشيران إلى طالبين مختلفين مسجلين في المشروع';
+    }else if(name&&studentNameKey(student.name)!==nameKey){
+     method='رقم الطالب مؤكد · اختلاف عرض الاسم';
     }
    } else if(idMatches.length>1) {
     status='ambiguous';reason='معرف الطالب غير فريد في بيانات مدرستي';
@@ -725,7 +789,7 @@
   state.importFeedback=false;
   state.importPreview={fileName:file.name,sheetName,rows:preview,numericFeedbackCount:numberNotes};
   state.importExpanded=true;
-  document.getElementById(`${APP}-import`)?.classList.add('show');
+  ensureImportModal().hidden=false;
   renderImportPreview();
   if(!preview.some(x=>x.status==='ready'))toast('لم أجد صفوفًا صالحة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  }catch(e){toast(String(e?.message||e),'error');}
@@ -1243,6 +1307,7 @@
   };
 
   injectStyle();
+  {const st=document.createElement('style');st.id=`${APP}-import-modal-styles`;st.textContent=importModalCss;document.head.appendChild(st);}
   if (isGrade) renderGrade();
   else if (isPublished) renderPublished();
   else if (isIndex) renderIndex();
