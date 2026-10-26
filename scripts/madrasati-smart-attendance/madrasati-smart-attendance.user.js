@@ -1713,6 +1713,45 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function reportSections(includePresent = true) {
+        if (isNewPlatformMode()) {
+            const sections = [];
+            if (includePresent) sections.push([STATUS.PRESENT.key, 'حاضر']);
+            sections.push(
+                [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
+                [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر']
+            );
+            return sections;
+        }
+
+        const sections = [];
+        if (includePresent) sections.push([STATUS.PRESENT.key, 'حاضر']);
+        sections.push(
+            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
+            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
+            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
+            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
+            ['unset', 'غير محدد']
+        );
+        return sections;
+    }
+
+    function reportStatusLabel(status) {
+        if (!isNewPlatformMode()) return statusLabel(status);
+        if (status.key === STATUS.PRESENT.key) return STATUS.PRESENT.label;
+        if (status.key === STATUS.ABSENT_EXCUSED.key) return STATUS.ABSENT_EXCUSED.label;
+        if (status.key === STATUS.ABSENT_UNEXCUSED.key) return STATUS.ABSENT_UNEXCUSED.label;
+        return 'حالة سابقة';
+    }
+
+    function reportSummaryText(counts) {
+        if (isNewPlatformMode()) {
+            return `الإجمالي: ${counts.total} | حاضر: ${counts.present} | غائب: ${counts.absent}`;
+        }
+
+        return `الإجمالي: ${counts.total} | حاضر: ${counts.present} | غائب: ${counts.absent} | متأخر: ${counts.late} | غير محدد: ${counts.unset}`;
+    }
+
     function reportData() {
         const groups = {
             present: [],
@@ -1744,15 +1783,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         if (data.meta.time) lines.push(`الوقت: ${data.meta.time}`);
         if (data.meta.date) lines.push(`التاريخ: ${[data.meta.day, data.meta.date].filter(Boolean).join(' — ')}`);
         if (data.meta.hijriDate) lines.push(`التاريخ الهجري: ${data.meta.hijriDate}`);
-        lines.push(`الإجمالي: ${c.total} | حاضر: ${c.present} | غائب: ${c.absent} | متأخر: ${c.late} | غير محدد: ${c.unset}`);
+        lines.push(reportSummaryText(c));
 
-        const sections = [
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(false);
 
         for (const [key, label] of sections) {
             const list = data.groups[key];
@@ -1790,7 +1823,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 i + 1,
                 student.name,
                 student.studentId,
-                statusLabel(readStudentStatus(student))
+                reportStatusLabel(readStudentStatus(student))
             ]);
         });
 
@@ -1810,14 +1843,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
     function reportHtmlBody() {
         const data = reportData();
-        const sections = [
-            [STATUS.PRESENT.key, 'حاضر'],
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(true);
 
         const groupsHtml = sections.map(([key, label]) => {
             const list = data.groups[key] || [];
@@ -1847,9 +1873,11 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 <div><span>الإجمالي</span><b>${c.total}</b></div>
                 <div><span>حاضر</span><b>${c.present}</b></div>
                 <div><span>غائب</span><b>${c.absent}</b></div>
-                <div><span>متأخر</span><b>${c.late}</b></div>
-                <div><span>غير محدد</span><b>${c.unset}</b></div>
-                <div><span>مكتمل</span><b>${c.selected}/${c.total}</b></div>
+                ${isNewPlatformMode()
+                    ? ''
+                    : `<div><span>متأخر</span><b>${c.late}</b></div>
+                       <div><span>غير محدد</span><b>${c.unset}</b></div>
+                       <div><span>مكتمل</span><b>${c.selected}/${c.total}</b></div>`}
             </div>
             <div class="msa-report-groups">${groupsHtml}</div>`;
     }
@@ -1864,7 +1892,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <title>تقرير حضور الحصة</title>
 <style>
-body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl}h1{font-size:22px;margin:0 0 8px}.meta{font-size:12px;color:#64748b;margin-bottom:14px}.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:14px 0}.summary div{border:1px solid #dfe5ea;border-radius:8px;padding:8px;text-align:center}.summary b{display:block;font-size:20px}.groups{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.group{border:1px solid #dfe5ea;border-radius:9px;padding:10px;break-inside:avoid}.group h3{font-size:14px;margin:0 0 6px}.group ol{margin:0;padding-inline-start:22px}.group li{font-size:12px;margin:3px 0}.footer{margin-top:18px;padding-top:8px;border-top:1px solid #ddd;font-size:10px;color:#64748b}@media print{body{margin:12mm}.no-print{display:none}.summary{grid-template-columns:repeat(6,1fr)}}
+body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl}h1{font-size:22px;margin:0 0 8px}.meta{font-size:12px;color:#64748b;margin-bottom:14px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:14px 0}.summary div{border:1px solid #dfe5ea;border-radius:8px;padding:8px;text-align:center}.summary b{display:block;font-size:20px}.groups{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.group{border:1px solid #dfe5ea;border-radius:9px;padding:10px;break-inside:avoid}.group h3{font-size:14px;margin:0 0 6px}.group ol{margin:0;padding-inline-start:22px}.group li{font-size:12px;margin:3px 0}.footer{margin-top:18px;padding-top:8px;border-top:1px solid #ddd;font-size:10px;color:#64748b}@media print{body{margin:12mm}.no-print{display:none}.summary{grid-template-columns:repeat(auto-fit,minmax(100px,1fr))}}
 </style></head><body>`);
 
         const data = reportData();
@@ -1878,16 +1906,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             data.meta.hijriDate ? `الهجري: ${data.meta.hijriDate}` : ''
         ].filter(Boolean).map(escapeHtml).join(' &nbsp; | &nbsp; ');
         win.document.write(`<div class="meta">${printMeta}${printMeta ? '<br>' : ''}تم الإنشاء: ${escapeHtml(data.meta.generatedAt)}</div>`);
-        win.document.write(`<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div><div>متأخر<b>${c.late}</b></div><div>غير محدد<b>${c.unset}</b></div><div>مكتمل<b>${c.selected}/${c.total}</b></div></div>`);
+        const printSummary = isNewPlatformMode()
+            ? `<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div></div>`
+            : `<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div><div>متأخر<b>${c.late}</b></div><div>غير محدد<b>${c.unset}</b></div><div>مكتمل<b>${c.selected}/${c.total}</b></div></div>`;
+        win.document.write(printSummary);
 
-        const sections = [
-            [STATUS.PRESENT.key, 'حاضر'],
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(true);
         win.document.write('<div class="groups">');
         for (const [key, label] of sections) {
             const list = data.groups[key] || [];
