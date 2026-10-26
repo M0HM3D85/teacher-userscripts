@@ -101,7 +101,7 @@
     {
       "id": "madrasati-teaching-tasks-intelligence",
       "name": "Madrasati Teaching Tasks Intelligence | مدير الواجبات والأنشطة والمشاريع الذكي",
-      "version": "2.0.0-beta1",
+      "version": "2.0.0-beta2",
       "status": "beta",
       "description": "سكربت مدرستي الموحد للواجبات والأنشطة والمشاريع: بحث وإحصائيات ورسوم، تصفية الطلاب والواجبات، تقارير PDF/Excel/CSV، واستيراد درجات بنافذة مراجعة ومطابقة موثوقة؛ يجمع النواة المستقرة والوحدتين في ملف واحد.",
       "sourcePath": "scripts/madrasati-teaching-tasks-intelligence/madrasati-teaching-tasks-intelligence.user.js",
