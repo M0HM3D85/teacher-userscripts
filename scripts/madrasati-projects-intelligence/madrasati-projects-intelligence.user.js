@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.7
+// @version      1.5.8
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.7';
+  const VERSION = '1.5.8';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -789,7 +789,7 @@
      else if(status==='ready'){status='identity_conflict';reason='الفصل في الملف يختلف عن الفصل المسجل للطالب في المشروع';}
    }
    // لا نسمح بتكرار أي طالب، حتى إن كانت درجته الأولى مطابقة مسبقًا.
-   if(student){
+   if(student && status!=='identity_conflict'){
      const key=studentIdKey(student.studentId),prior=matchedIds.get(key);
      if(prior){
        status='duplicate';reason=`الطالب مكرر في صفوف Excel (الصف ${prior.sourceRow})`;
