@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.0
-// @description  لوحة مشاريع وأنشطة موحدة على نمط مدير الواجبات: بحث مباشر، إحصائيات، تحليلات رسومية، تقارير PDF/Excel/CSV، وفرز ورصد واستيراد درجات.
+// @version      1.5.1
+// @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/Projects/Projects/*
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.0
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.1
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.5.0
+// Madrasati Projects & Activities Intelligence — v1.5.1
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -88,6 +88,7 @@
     publishedItems: [], publishedQuery: '', publishedScanned: false, publishedDeepScanned: false,
     deepByProject: new Map(), deepByUrl: new Map(), deepScanned: false, deepBusy: false,
     importPreview: null,
+    importFeedback: false,
     activityTitle: '',
     totalExpected: 0,
     lastRefresh: null
@@ -280,37 +281,53 @@
     return map;
   };
 
-  const findVisualBlock = (doc, studentId) => {
-    const sid = String(studentId || '');
-    if (!sid) return null;
-    const checkbox = doc.getElementById(`checkStudent-${sid}`)
-      || [...doc.querySelectorAll('input[id^="checkStudent-"]')].find(el => String(el.value || '') === sid);
-    if (!checkbox) return null;
-    let node = checkbox;
-    for (let depth = 0; depth < 15 && node; depth++, node = node.parentElement) {
-      const text = clean(node.innerText || node.textContent || '');
-      const checks = node.querySelectorAll('input[id^="checkStudent-"]').length;
-      if (checks === 1 && /الفصل\s+المدرسي\s*:/i.test(text)) return node;
-    }
-    return null;
-  };
+  const studentNameKey = function(value){
+ return norm(value).replace(/[\u200b-\u200d\u2060\ufeff]/g,'').replace(/[\u060c\u061b\u061f.,:()ـ\-\/_]+/g,' ').replace(/^(?:اسم\s*الطالب|الطالب|الطالبه)\s*/,'').replace(/\s+/g,' ').trim();
+};
 
-  const classFromBlock = block => {
-    const text = clean(block?.innerText || block?.textContent || '');
-    return text.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+(?:الدرجة|الإجابة|ملاحظ|الحل|استعراض|$))/i)?.[1]?.trim()
-      || text.match(/الفصل\s+المدرسي\s*:\s*([^|\n]+)/i)?.[1]?.trim()
-      || '';
-  };
+    const studentIdKey = function(value){
+ const v=clean(value).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\s+/g,'');
+ return /^\d+$/.test(v)?v.replace(/^0+(?=\d)/,''):v.toLowerCase();
+};
 
-  const nameFromBlock = (block, fields) => {
-    const explicit = clean(fields.fullName || fields.Name || '');
-    if (explicit) return explicit;
-    const text = clean(block?.innerText || block?.textContent || '');
-    const before = clean(text.split(/الفصل\s+المدرسي\s*:/i)[0]);
-    return before.slice(0, 160) || `طالب ${clean(fields.StudentId)}`;
-  };
+    const studentNameFromSelect = function(studentId){
+ const key=studentIdKey(studentId);
+ if(!key)return '';
+ const select=document.getElementById('studentsFilter');
+ const opt=[...(select?.options||[])].find(o=>studentIdKey(o.value)===key);
+ const text=clean(opt?.textContent||'').replace(/^(?:اسم\s*الطالب|الطالب)\s*[:：-]?\s*/,'');
+ return studentNameKey(text).split(' ').length>=3?text:'';
+};
 
-  const parseStudentsHtml = html => {
+    const findVisualBlock = function(doc,studentId) {
+ const sid=String(studentId||'');
+ if(!sid)return null;
+ const checkbox=doc.getElementById(`checkStudent-${sid}`)||[...doc.querySelectorAll('input[id^="checkStudent-"]')].find(el=>String(el.value||'')===sid);
+ if(!checkbox)return null;
+ let fallback=null,node=checkbox;
+ for(let depth=0;depth<15&&node;depth++,node=node.parentElement){
+   const checks=node.querySelectorAll?.('input[id^="checkStudent-"]').length||0;
+   const txt=clean(node.textContent||'');
+   if(checks===1&&txt.length>=8&&txt.length<1300)fallback=node;
+   if(checks===1&&/الفصل\s+المدرسي\s*:/i.test(txt))return node;
+ }
+ return fallback;
+};
+
+    const nameFromBlock = function(block,fields,studentId) {
+ const optionName=studentNameFromSelect(studentId);
+ const vals=[
+  fields.fullName,fields.FullName,fields.Name,fields.StudentName,fields.studentName,fields.StudentFullName,
+  optionName
+ ].map(clean).filter(Boolean);
+ for(const v of vals)if(studentNameKey(v).split(' ').length>=3&&v.length<180)return v;
+ const text=String(block?.textContent||block?.innerText||'').replace(/\u00a0/g,' ');
+ const before=clean(text.split(/الفصل\s+المدرسي\s*:/i)[0]).replace(/^(?:اسم\s*الطالب|الطالب|الطالبه)\s*[:：-]?\s*/,'').replace(/^(?:اختيار|تحديد)\s*(?:الطالب)?\s*/,'');
+ const picked=before.slice(0,180);
+ return studentNameKey(picked).split(' ').length>=3?picked:`طالب ${clean(studentId||fields.StudentId)}`;
+};
+
+    const parseStudentsHtml = html => {
     const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
     const groups = groupsFromDoc(doc);
     const rows = [];
@@ -323,7 +340,7 @@
       rows.push({
         index,
         studentId,
-        name: nameFromBlock(block, fields),
+        name: nameFromBlock(block, fields, studentId),
         className: classFromBlock(block),
         grade,
         totalGrade,
@@ -584,87 +601,153 @@
     return rows;
   };
 
-  const detectColumns = headers => {
-    const nh = headers.map(norm);
-    const find = patterns => nh.findIndex(h => patterns.some(p => p.test(h)));
-    return {
-      studentId: find([/student\s*id/,/studentid/,/رقم\s*الطالب/,/معرف\s*الطالب/,/^id$/]),
-      name: find([/اسم\s*الطالب/,/^الطالب$/,/(?:student|full)\s*name/,/^name$/]),
-      grade: find([/^الدرجه$/,/^درجة$/,/الدرجه\s*المحصله/,/score/,/grade/,/mark/]),
-      feedback: find([/ملاحظ/,/تعليق/,/feedback/,/comment/])
-    };
+  const detectColumns = function(headers) {
+ const nh=headers.map(norm);
+ const find=patterns=>nh.findIndex(h=>patterns.some(p=>p.test(h)));
+ return {
+  studentId:find([/student\s*id/,/studentid/,/رقم\s*الطالب/,/معرف\s*الطالب/,/^id$/]),
+  name:find([/اسم\s*الطالب/,/^الطالب$/,/(?:student|full)\s*name/,/^name$/]),
+  grade:find([/^الدرجه$/,/^درجه$/,/الدرجه\s*المحصله/,/score/,/grade/,/mark/]),
+  feedback:find([/ملاحظ/,/تعليق/,/feedback/,/comment/]),
+  className:find([/^الفصل$/, /الفصل\s*المدرسي/, /class\s*name/, /^class$/])
+ };
+};
+
+    const readImportFile = async function(file) {
+ if(!file)return;
+ setBusy(true,'جارٍ فحص الملف ومطابقة الطلاب…');
+ try {
+  if(!state.students.length)throw new Error('قائمة طلاب المشروع فارغة. اضغط «تحديث التحليل» أولًا.');
+  let aoa=[],sheetName='';
+  const ext=file.name.split('.').pop().toLowerCase();
+  if(ext==='csv') {aoa=parseCsv(await file.text());sheetName='CSV';}
+  else {
+   if(!globalThis.XLSX)throw new Error('مكتبة Excel غير متاحة.');
+   const book=XLSX.read(await file.arrayBuffer(),{type:'array',raw:false});
+   for(const shName of book.SheetNames) {
+    const rows=XLSX.utils.sheet_to_json(book.Sheets[shName],{header:1,defval:'',raw:false});
+    const headerIndex=rows.slice(0,15).findIndex(row=>{
+     const c=detectColumns((row||[]).map(clean));
+     return c.grade>=0&&(c.name>=0||c.studentId>=0);
+    });
+    if(headerIndex>=0){aoa=rows.slice(headerIndex);sheetName=shName;break;}
+   }
+  }
+  if(aoa.length<2)throw new Error('لم أجد ورقة تحتوي على أعمدة «اسم الطالب» و«الدرجة». راجع ترتيب الأعمدة.');
+  const headers=aoa[0].map(clean),cols=detectColumns(headers);
+  if(cols.grade<0)throw new Error('تعذر العثور على عمود الدرجة.');
+  if(cols.name<0&&cols.studentId<0)throw new Error('يلزم عمود اسم الطالب أو رقم الطالب.');
+
+  const idMap=new Map(),nameMap=new Map();
+  const add=(map,key,student)=>{
+   if(!key)return;
+   if(!map.has(key))map.set(key,[]);
+   if(!map.get(key).some(s=>s.studentId===student.studentId))map.get(key).push(student);
   };
+  state.students.forEach(student=>{
+   const f=student.rawFields||{};
+   const identifiers=[student.studentId,f.StudentNationalId,f.NationalId,f.NationalID,f.IdentityNumber,f.StudentNumber,f.CivilId,f.StudentIdentityNumber];
+   identifiers.forEach(v=>add(idMap,studentIdKey(v),student));
+   [student.name,studentNameFromSelect(student.studentId),f.FullName,f.fullName,f.StudentName,f.Name].forEach(v=>add(nameMap,studentNameKey(v),student));
+  });
 
-  const readImportFile = async file => {
-    if (!file) return;
-    setBusy(true, 'جاري قراءة الملف…');
-    try {
-      let aoa = [];
-      const ext = file.name.split('.').pop().toLowerCase();
-      if (ext === 'csv') aoa = parseCsv(await file.text());
-      else {
-        if (!globalThis.XLSX) throw new Error('مكتبة Excel غير متاحة.');
-        const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: false });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-      }
-      if (aoa.length < 2) throw new Error('الملف فارغ أو لا يحتوي بيانات كافية.');
-      const headers = aoa[0].map(clean);
-      const cols = detectColumns(headers);
-      if (cols.grade < 0) throw new Error('لم أتعرف على عمود الدرجة. استخدم عنوان «الدرجة» أو Grade/Score.');
-      if (cols.studentId < 0 && cols.name < 0) throw new Error('يلزم عمود رقم الطالب أو اسم الطالب للمطابقة.');
+  const preview=[],matchedIds=new Map();
+  for(let i=1;i<aoa.length;i++){
+   const row=aoa[i]||[];
+   if(!row.some(x=>clean(x)))continue;
+   const sid=cols.studentId>=0?clean(row[cols.studentId]):'';
+   const name=cols.name>=0?clean(row[cols.name]):'';
+   const className=cols.className>=0?clean(row[cols.className]):'';
+   const grade=num(row[cols.grade]);
+   const feedback=cols.feedback>=0?clean(row[cols.feedback]):'';
+   const idMatches=idMap.get(studentIdKey(sid))||[];
+   const nameKey=studentNameKey(name);
+   let nameMatches=nameMap.get(nameKey)||[];
+   if(nameMatches.length>1&&className){
+    const cls=nameMatches.filter(x=>norm(x.className)===norm(className));
+    if(cls.length===1)nameMatches=cls;
+   }
+   // لا نستخدم تطابقًا جزئيًا إلا إذا كان الاسم طويلًا ومميزًا بين جميع طلاب المشروع.
+   if(!nameMatches.length&&nameKey.split(' ').length>=4&&nameKey.length>=17){
+    nameMatches=state.students.filter(x=>{
+     const k=studentNameKey(x.name);
+     return k.includes(nameKey)&&(k.length-nameKey.length)<=65;
+    });
+   }
+   let student=null,method='',reason='',status='ready';
+   if(idMatches.length===1) {
+    student=idMatches[0];method='رقم الطالب';
+    if(name&&studentNameKey(student.name).split(' ').length>=3
+     &&studentNameKey(student.name)!==nameKey
+     &&!(nameMatches.length===1&&nameMatches[0].studentId===student.studentId)){
+     status='identity_conflict';reason='رقم الطالب يطابق سجلًا باسم مختلف؛ يلزم المراجعة';
+    }
+   } else if(idMatches.length>1) {
+    status='ambiguous';reason='معرف الطالب غير فريد في بيانات مدرستي';
+   } else if(nameMatches.length===1) {
+    student=nameMatches[0];method=sid?'اسم فريد (رقم مختلف النظام)':'الاسم الفريد';
+   } else if(nameMatches.length>1) {
+    status='ambiguous';reason='الاسم متكرر؛ لا يمكن اختيار الطالب تلقائيًا';
+   } else {
+    status='unmatched';reason='لم يتطابق الاسم أو رقم الطالب مع سجلات المشروع';
+   }
+   if(status==='ready'&&!Number.isFinite(grade)){
+    status='invalid';reason='الدرجة ليست رقمًا صالحًا';
+   }else if(status==='ready'&&grade<0){
+    status='invalid';reason='درجة سالبة';
+   }else if(status==='ready'&&Number.isFinite(student?.totalGrade)&&student.totalGrade>=0&&grade>student.totalGrade){
+    status='invalid';reason=`درجة الملف ${fmt(grade)} أعلى من الدرجة القصوى في مدرستي ${fmt(student.totalGrade)}`;
+   }else if(status==='ready'&&(!Number.isFinite(student?.totalGrade)||student.totalGrade<=0)){
+    status='invalid';reason='الدرجة الكلية في مدرستي غير معروفة؛ لن يتم الحفظ دون تحقق';
+   }
+   if(student&&status==='ready'){
+    const prior=matchedIds.get(String(student.studentId));
+    if(prior){
+     status='duplicate';reason=`هذا الطالب مكرر في صفوف الملف (الصف ${prior.sourceRow})`;
+     prior.status='duplicate';prior.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;
+    }else matchedIds.set(String(student.studentId),{sourceRow:i+1,mark:preview.length});
+   }
+   preview.push({sourceRow:i+1,sid,name,className,grade,feedback,student,method,status,reason});
+  }
+  const numberNotes=preview.filter(x=>/^\d+(?:[.,]\d+)?$/.test(x.feedback)).length;
+  state.importFeedback=false;
+  state.importPreview={fileName:file.name,sheetName,rows:preview,numericFeedbackCount:numberNotes};
+  state.importExpanded=true;
+  document.getElementById(`${APP}-import`)?.classList.add('show');
+  renderImportPreview();
+  if(!preview.some(x=>x.status==='ready'))toast('لم أجد صفوفًا صالحة للحفظ. راجع أسباب الرفض في المعاينة.','error');
+ }catch(e){toast(String(e?.message||e),'error');}
+ finally{setBusy(false);}
+};
 
-      const byId = new Map(state.students.map(s => [String(s.studentId), s]));
-      const byName = new Map();
-      state.students.forEach(s => {
-        const k = norm(s.name);
-        if (!k) return;
-        if (!byName.has(k)) byName.set(k, []);
-        byName.get(k).push(s);
-      });
+    const renderImportPreview = function(){
+ const host=document.getElementById(`${APP}-import-preview`);
+ if(!host||!state.importPreview)return;
+ const rows=state.importPreview.rows;
+ const ready=rows.filter(r=>r.status==='ready'),bad=rows.length-ready.length;
+ const unmatched=rows.filter(r=>r.status==='unmatched').length;
+ const invalid=rows.filter(r=>r.status==='invalid').length;
+ const ambiguous=rows.filter(r=>['ambiguous','duplicate','identity_conflict'].includes(r.status)).length;
+ const fileGrades=rows.map(r=>r.grade).filter(Number.isFinite);
+ const maxFile=fileGrades.length?Math.max(...fileGrades):null;
+ const platformLimits=[...new Set(state.students.map(s=>s.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
+ const cap=platformLimits.length===1?fmt(platformLimits[0]):platformLimits.length?platformLimits.map(x=>fmt(x)).slice(0,5).join(' / '):'غير متاح';
+ const notesWarning=state.importPreview.numericFeedbackCount?`<div class="${APP}-note">تنبيه: يوجد ${state.importPreview.numericFeedbackCount} صفًا يحتوي رقمًا في عمود الملاحظات (مثل 14). <b>لن تُنقل الملاحظات تلقائيًا</b> إلا إذا فعّلت الخيار أدناه.</div>`:'';
+ host.innerHTML=`
+ <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الصفوف: ${rows.length} · <b>جاهز: ${ready.length}</b> · يحتاج مراجعة: ${bad} · غير مطابق: ${unmatched} · درجة غير صالحة: ${invalid} · ملتبس: ${ambiguous}</div>
+ <div class="${APP}-note">أعلى درجة في الملف: <b>${maxFile===null?'—':fmt(maxFile)}</b> · الدرجة الكلية في مدرستي: <b>${esc(cap)}</b> · الطلاب المحملون: ${state.students.length}.</div>
+ ${notesWarning}
+ <label class="${APP}-note" style="display:block;cursor:pointer"><input id="${APP}-import-feedback" type="checkbox" ${state.importFeedback?'checked':''}> استيراد الملاحظات أيضًا (اختياري، غير مفعّل افتراضيًا). إن لم تُفعّل هذا الخيار ستبقى ملاحظات مدرستي كما هي.</label>
+ <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt" ${ready.length?'':'disabled'}>تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn" ${ready.length?'':'disabled'}>حفظ ${ready.length} درجة على مدرستي</button></div>
+ <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>صف الملف</th><th>الطالب</th><th>الرقم</th><th>الفصل</th><th>المطابقة</th><th>الدرجة</th><th>درجة مدرستي القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
+ ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.student?.name||r.name||'—')}</td><td>${esc(r.sid||'—')}</td><td>${esc(r.className||r.student?.className||'—')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز</span>`:`<span class="${APP}-pill ${APP}-bad">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
+ </tbody></table></div>`;
+ document.getElementById(`${APP}-import-feedback`)?.addEventListener('change',e=>{state.importFeedback=!!e.target.checked;});
+ document.getElementById(`${APP}-patch`)?.addEventListener('click',patchVisibleImport);
+ document.getElementById(`${APP}-save`)?.addEventListener('click',saveImport);
+};
 
-      const preview = [];
-      for (let i = 1; i < aoa.length; i++) {
-        const row = aoa[i] || [];
-        if (!row.some(x => clean(x))) continue;
-        const sid = cols.studentId >= 0 ? clean(row[cols.studentId]) : '';
-        const name = cols.name >= 0 ? clean(row[cols.name]) : '';
-        const grade = num(row[cols.grade]);
-        const feedback = cols.feedback >= 0 ? clean(row[cols.feedback]) : '';
-        let student = sid ? byId.get(sid) : null;
-        let method = student ? 'رقم الطالب' : '';
-        if (!student && name) {
-          const matches = byName.get(norm(name)) || [];
-          if (matches.length === 1) { student = matches[0]; method = 'الاسم'; }
-        }
-        let status = 'ready', reason = '';
-        if (!student) { status = 'unmatched'; reason = 'لم تتم المطابقة'; }
-        else if (!Number.isFinite(grade)) { status = 'invalid'; reason = 'درجة غير صالحة'; }
-        else if (Number.isFinite(student.totalGrade) && (grade < 0 || grade > student.totalGrade)) { status = 'invalid'; reason = `الدرجة يجب أن تكون بين 0 و ${fmt(student.totalGrade)}`; }
-        preview.push({ sourceRow: i + 1, sid, name, grade, feedback, student, method, status, reason });
-      }
-      state.importPreview = { fileName: file.name, rows: preview };
-      state.importExpanded = true;
-      document.getElementById(`${APP}-import`)?.classList.add('show');
-      renderImportPreview();
-    } catch (e) { toast(String(e?.message || e), 'error'); }
-    finally { setBusy(false); }
-  };
-
-  const renderImportPreview = () => {
-    const host = document.getElementById(`${APP}-import-preview`);
-    if (!host || !state.importPreview) return;
-    const rows = state.importPreview.rows;
-    const ready = rows.filter(r => r.status === 'ready');
-    const bad = rows.length - ready.length;
-    host.innerHTML = `<div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> — جاهز: ${ready.length} — يحتاج مراجعة: ${bad}</div>
-      <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt">تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn">حفظ ${ready.length} درجة على مدرستي</button></div>
-      <div class="${APP}-tablewrap" style="max-height:330px"><table class="${APP}-table"><thead><tr><th>صف الملف</th><th>الطالب</th><th>المطابقة</th><th>الدرجة الجديدة</th><th>الدرجة الحالية</th><th>الحالة</th></tr></thead><tbody>${rows.slice(0, 300).map(r => `<tr><td>${r.sourceRow}</td><td>${esc(r.student?.name || r.name || r.sid || '—')}</td><td>${esc(r.method || '—')}</td><td>${Number.isFinite(r.grade) ? fmt(r.grade) : '—'}</td><td>${Number.isFinite(r.student?.grade) ? fmt(r.student.grade) : '—'}</td><td>${r.status === 'ready' ? `<span class="${APP}-pill ${APP}-ok">جاهز</span>` : `<span class="${APP}-pill ${APP}-bad">${esc(r.reason)}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
-    document.getElementById(`${APP}-patch`)?.addEventListener('click', patchVisibleImport);
-    document.getElementById(`${APP}-save`)?.addEventListener('click', saveImport);
-  };
-
-  const patchVisibleImport = () => {
+    const patchVisibleImport = () => {
     const ready = state.importPreview?.rows?.filter(r => r.status === 'ready') || [];
     let count = 0;
     ready.forEach(r => {
@@ -685,7 +768,7 @@
         gradeInput.value = r.grade;
         gradeInput.dispatchEvent(new Event('input', { bubbles: true }));
         gradeInput.dispatchEvent(new Event('change', { bubbles: true }));
-        if (feedback && r.feedback) feedback.value = r.feedback;
+        if (feedback && state.importFeedback && r.feedback) feedback.value = r.feedback;
         count++;
       }
     });
@@ -742,35 +825,51 @@
     return response.text();
   };
 
-  const saveImport = async () => {
-    const ready = state.importPreview?.rows?.filter(r => r.status === 'ready') || [];
-    if (!ready.length) return toast('لا توجد درجات جاهزة للحفظ.', 'error');
-    if (!confirm(`سيتم حفظ ${ready.length} درجة في النشاط «${state.activityTitle}».\nسيتم تنزيل نسخة احتياطية قبل الحفظ.\n\nمتابعة؟`)) return;
+  const saveImport = async function(){
+ const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
+ if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
+ if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
+ const noteLabel=state.importFeedback?'مع الملاحظات':'مع الحفاظ على ملاحظات مدرستي';
+ if(!confirm(`سيتم حفظ ${ready.length} درجة في المشروع «${state.activityTitle}» (${noteLabel}).\nسيتم تنزيل نسخة احتياطية قبل الحفظ، ثم التحقق من الدرجات من مدرستي.\n\nمتابعة؟`))return;
+ const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:state.importFeedback?r.feedback:r.student.feedback}));
+ downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,rows:backup});
+ setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
+ let posted=0;
+ try{
+  const changes=ready.map(r=>({...r.student,grade:r.grade,feedback:state.importFeedback?(r.feedback||r.student.feedback||''):(r.student.feedback||''),rawFields:{...r.student.rawFields,Grade:String(r.grade),feedBack:state.importFeedback?(r.feedback||r.student.feedback||''):(r.student.feedback||'')}}));
+  for(let i=0;i<changes.length;i+=10){
+   const batch=changes.slice(i,i+10);
+   await postProjectRows(batch);
+   posted+=batch.length;
+   // تحقّق من أول دفعة قبل إرسال بقية الملف لتقليل أثر اختلاف نموذج الحفظ بين الواجبات والمشاريع.
+   if(i===0){
+    const firstFetch=await fetchAllStudents();
+    const firstMap=new Map(firstFetch.map(r=>[String(r.studentId),r]));
+    const miss=batch.filter(r=>!Number.isFinite(firstMap.get(String(r.studentId))?.grade)||Math.abs(firstMap.get(String(r.studentId)).grade-r.grade)>1e-4);
+    state.students=firstFetch;
+    if(miss.length)throw new Error(`أرسلت أول ${batch.length} سجلات، لكن مدرستي لم يؤكد ${miss.length} درجة. أوقفت بقية الدفعات تلقائيًا. راجع نتائج المشروع ولا تكرر الحفظ قبل التأكد.`);
+   }
+   const status=document.getElementById(`${APP}-status`);
+   if(status)status.textContent=`أُرسل ${posted} من ${changes.length} درجة…`;
+  }
+  const after=await fetchAllStudents(),map=new Map(after.map(r=>[String(r.studentId),r]));
+  const mismatch=ready.filter(r=>!Number.isFinite(map.get(String(r.student.studentId))?.grade)||Math.abs(map.get(String(r.student.studentId)).grade-r.grade)>1e-4);
+  state.students=after;
+  if(mismatch.length){
+   renderGradeBody();
+   toast(`أُرسلت ${posted} درجة، لكن ${mismatch.length} لم تتأكد بعد قراءة مدرستي. لم يُعلن نجاح الحفظ.`, 'error');
+  }else{
+   state.importPreview=null;
+   renderGradeBody();
+   toast(`تم حفظ والتحقق من ${ready.length} درجة في مدرستي بنجاح.`, 'success');
+  }
+ }catch(e){
+  renderGradeBody();
+  toast(`توقف الحفظ بعد إرسال ${posted} درجة: ${String(e?.message||e)}`,'error');
+ }finally{setBusy(false);}
+};
 
-    const backup = ready.map(r => ({ studentId: r.student.studentId, name: r.student.name, oldGrade: r.student.grade, oldFeedback: r.student.feedback, newGrade: r.grade, newFeedback: r.feedback }));
-    downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, { activity: state.activityTitle, at: new Date().toISOString(), rows: backup });
-
-    setBusy(true, 'جاري حفظ الدرجات…');
-    try {
-      const changes = ready.map(r => ({ ...r.student, grade: r.grade, feedback: r.feedback || r.student.feedback || '', rawFields: { ...r.student.rawFields, Grade: String(r.grade), feedBack: r.feedback || r.student.feedback || '' } }));
-      for (let i = 0; i < changes.length; i += 10) await postProjectRows(changes.slice(i, i + 10));
-      const after = await fetchAllStudents();
-      const map = new Map(after.map(r => [String(r.studentId), r]));
-      const mismatch = ready.filter(r => {
-        const actual = map.get(String(r.student.studentId))?.grade;
-        return !Number.isFinite(actual) || Math.abs(actual - r.grade) > 1e-4;
-      });
-      state.students = after;
-      state.importPreview = null;
-      renderGradeBody();
-      if (mismatch.length) toast(`تم الحفظ، لكن تعذر تأكيد ${mismatch.length} درجة بعد التحقق.`, 'error');
-      else toast(`تم حفظ والتحقق من ${ready.length} درجة بنجاح.`, 'success');
-    } catch (e) { toast(String(e?.message || e), 'error'); }
-    finally { setBusy(false); }
-  };
-
-
-  const cleanFile = name => clean(name).replace(/[\\/:*?"<>|]/g,'-').slice(0,90) || 'تقرير';
+    const cleanFile = name => clean(name).replace(/[\\/:*?"<>|]/g,'-').slice(0,90) || 'تقرير';
   const printHtml = (title,inner) => {
     const w=window.open('','_blank','width=1100,height=800');
     if(!w)return toast('يرجى السماح بنوافذ الطباعة المنبثقة.','error');
