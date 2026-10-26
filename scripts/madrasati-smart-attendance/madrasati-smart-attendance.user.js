@@ -4605,7 +4605,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const dataset = attendanceImport.dataset;
         if (!dataset) {
             clearImportRowMarkers();
-            statusBox.textContent = 'لم يتم استيراد سجل حضور بعد. يدعم Excel وCSV ويبحث عن الأعمدة الأساسية تلقائيًا.';
+            statusBox.textContent = 'لا يوجد ملف حضور مستورد. استخدم «استيراد» لإضافة Excel أو CSV.';
             if (refreshBtn) refreshBtn.disabled = true;
             if (applyBtn) applyBtn.disabled = true;
             if (clearBtn) clearBtn.hidden = true;
@@ -4633,7 +4633,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const match = attendanceImport.currentMatch;
         if (!match) {
             clearImportRowMarkers();
-            statusBox.textContent = fileSummary + ' — جارٍ مطابقة الحصة الحالية.';
+            statusBox.textContent = '📄 ' + dataset.fileName + ' — جارٍ تحديد الحصة...';
+            statusBox.title = fileSummary;
             details.hidden = false;
             details.innerHTML = '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
             if (applyBtn) applyBtn.disabled = true;
@@ -4643,7 +4644,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (match.lesson.status !== 'matched') {
             clearImportRowMarkers();
             statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
-            statusBox.textContent = fileSummary + ' — ' + match.lesson.message;
+            statusBox.textContent = '⚠️ ' + match.lesson.message;
+            statusBox.title = fileSummary;
+            if (issueCount) issueCount.textContent = '• تحقق من الحصة';
             if (applyBtn) applyBtn.disabled = true;
 
             details.hidden = false;
@@ -4663,15 +4666,27 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         markImportRows(match);
 
-        statusBox.classList.add('is-match');
+        const totalIssues = s.review.length + s.unmatchedPage.length +
+            s.unmatchedFile.length + s.ambiguous.length;
+        statusBox.classList.add(totalIssues ? 'is-warning' : 'is-match');
         statusBox.textContent =
-            fileSummary +
-            ' — ✅ تمت مطابقة الحصة: ' +
-            match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period +
-            '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length +
-            ' — هوية مؤكدة بالبريد: ' + s.emailMatched.length + '.';
+            (totalIssues ? '⚠️' : '✅') + ' مطابقة الطلاب ' +
+            s.matchedCount + '/' + state.students.length +
+            ' — سجل الملف: ' + counts.present + ' حاضر، ' +
+            counts.absentExcused + ' غائب بعذر، ' +
+            counts.absentUnexcused + ' غائب بدون عذر' +
+            (counts.late ? '، ' + counts.late + ' متأخر' : '') +
+            (counts.leave ? '، ' + counts.leave + ' مستأذن' : '') +
+            (totalIssues ? ' — ' + totalIssues + ' حالة تحتاج انتباهًا' : '');
+        statusBox.title = fileSummary + ' | ' + match.group.date + ' — ' +
+            match.group.classroom + ' — الحصة ' + match.group.period;
+        if (issueCount) issueCount.textContent = totalIssues ? '⚠️ ' + totalIssues : '';
 
         const lines = [];
+        lines.push('<div><b>الملف:</b> ' + escapeHtml(fileSummary) + '</div>');
+        lines.push('<div><b>الحصة:</b> ' +
+            escapeHtml(match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period) +
+            '</div>');
         lines.push(
             '<div><b>سجل الحصة:</b> ' +
             '<span class="msa-import-chip">حاضر ' + counts.present + '</span>' +
@@ -4682,39 +4697,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '</div>'
         );
 
-        const bridgeStats = s.bridgeStats || {};
-        lines.push(
-            '<div><b>مسار الربط:</b> ' +
-            '<span class="msa-import-chip">سجلات الحصة ' + (bridgeStats.lessonRecords ?? match.group.records.length) + '</span>' +
-            '<span class="msa-import-chip">بريد في الملف ' + (bridgeStats.recordsWithEmail ?? 0) + '</span>' +
-            '<span class="msa-import-chip">البريد مؤكد بالدليل ' + (bridgeStats.emailFoundInRegistry ?? 0) + '</span>' +
-            '<span class="msa-import-chip">هوية متعلمة ' + (bridgeStats.matchedByLearnedEmail ?? 0) + '</span>' +
-            '<span class="msa-import-chip">اسم Excel مباشر ' + (bridgeStats.matchedByExcelExact ?? 0) + '</span>' +
-            '<span class="msa-import-chip">اسم Excel بعد التطبيع ' +
-                ((bridgeStats.matchedByExcelCanonical ?? 0) + (bridgeStats.matchedByExcelCompact ?? 0) + (bridgeStats.matchedByExcelSignature ?? 0)) +
-            '</span>' +
-            '<span class="msa-import-chip">تشابه آمن ' + (bridgeStats.matchedByExcelSimilarity ?? 0) + '</span>' +
-            '</div>'
-        );
-
-        lines.push(
-            '<div><b>المطابقة النهائية:</b> ' +
-            '<span class="msa-import-chip">قابل للتطبيق ' + s.supported.length + '</span>' +
-            '<span class="msa-import-chip">ربط بالبريد ' + s.emailMatched.length + '</span>' +
-            '<span class="msa-import-chip">مراجعة ' + s.review.length + '</span>' +
-            '<span class="msa-import-chip">في مدرستي وليس الملف ' + s.unmatchedPage.length + '</span>' +
-            '<span class="msa-import-chip">في الملف وليس الحصة ' + s.unmatchedFile.length + '</span>' +
-            (s.ambiguous.length ? '<span class="msa-import-chip">مبهم ' + s.ambiguous.length + '</span>' : '') +
-            '</div>'
-        );
-
         if (s.bridgeFailures?.length || s.ambiguous?.length) {
             lines.push(
                 '<div style="margin-top:6px;color:#9a3412">' +
                 '⚠️ تعثر الربط النهائي: ' +
                 (s.bridgeFailures?.length || 0) + ' غير محسوم' +
                 (s.ambiguous?.length ? ' — ' + s.ambiguous.length + ' مبهم' : '') +
-                '. البريد يستخدم لإثبات الهوية، والاسم الكامل من Excel هو مفتاح صف التحضير.' +
+                '. راجع الأسماء غير المطابقة قبل تطبيق الملف.' +
                 '</div>'
             );
         }
@@ -4733,7 +4722,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             lines.push('<div>ℹ️ حسب الإعداد المعتمد: كل طالب حالته «متأخر» في الملف سيُسجل «حاضر» لأن واجهة مدرستي الحديثة لا تدعم التأخر.</div>');
         }
         if (!saveOk) lines.push('<div>🔒 يمكن مراجعة المطابقة، لكن تطبيق الملف معطل لأن حفظ الحصة غير متاح حاليًا في مدرستي.</div>');
-        lines.push('<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>');
+        if (attendanceImport.registryLoading || attendanceImport.registryError) {
+            lines.push('<div class="msa-import-registry">' + escapeHtml(registryText) + '</div>');
+        }
 
         if (attendanceImport.lastApply?.lessonKey === match.group.key) {
             if (detailsWrap && attendanceImport.lastApply.failed) detailsWrap.open = true;
