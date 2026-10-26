@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta2
+// @version      0.3.5-beta3
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta2-identity-review/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta2-identity-review/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta3-apply-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta3-apply-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta2',
+        version: '0.3.5-beta3',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -1208,31 +1208,95 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         return radio.checked;
     }
 
+    function findStudentStatusRadio(student, kind, value) {
+        const idx = student.index;
+        const name = kind === 'main'
+            ? `Attend[${idx}]`
+            : `List[${idx}].AttendStatusId`;
+
+        return (
+            q(
+                `input[type="radio"][name="${escapeAttr(name)}"][value="${escapeAttr(value)}"]`,
+                student.row
+            ) ||
+            q(`input[type="radio"][name="${escapeAttr(name)}"][value="${escapeAttr(value)}"]`)
+        );
+    }
+
     function setStudentStatus(student, statusDef) {
         const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
         if (isNewPlatform && statusDef?.main === '34') return false;
+        if (!student || !statusDef) return false;
 
-        const idx = student.index;
+        const current = readStudentStatus(student);
+        if (current.key === statusDef.key) return true;
 
-        const main =
-            q(
-                `input[type="radio"][name="${escapeAttr(`Attend[${idx}]`)}"][value="${escapeAttr(statusDef.main)}"]`,
-                student.row
-            ) ||
-            q(`input[type="radio"][name="${escapeAttr(`Attend[${idx}]`)}"][value="${escapeAttr(statusDef.main)}"]`);
+        const main = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!main || main.disabled) return false;
 
-        const detail =
-            q(
-                `input[type="radio"][name="${escapeAttr(`List[${idx}].AttendStatusId`)}"][value="${escapeAttr(statusDef.detail)}"]`,
-                student.row
-            ) ||
-            q(`input[type="radio"][name="${escapeAttr(`List[${idx}].AttendStatusId`)}"][value="${escapeAttr(statusDef.detail)}"]`);
+        // مهم في واجهة مدرستي الجديدة:
+        // سبب الغياب قد يكون disabled قبل اختيار «غائب»، لذلك يجب الضغط على الحالة الرئيسية أولاً.
+        dispatchRadio(main);
 
-        if (!main || !detail || main.disabled || detail.disabled) return false;
+        // بعض الحالات (خصوصًا حاضر وغياب بدون عذر) تضبط التفصيل تلقائيًا بعد الضغط الرئيسي.
+        let afterMain = readStudentStatus(student);
+        if (afterMain.key === statusDef.key) return true;
+
+        const detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+        if (!detail || detail.disabled) return false;
+
+        dispatchRadio(detail);
+        return readStudentStatus(student).key === statusDef.key;
+    }
+
+    async function setStudentStatusReliable(student, statusDef) {
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+        if (isNewPlatform && statusDef?.main === '34') {
+            return { ok: false, reason: 'late-not-supported' };
+        }
+        if (!student || !statusDef) return { ok: false, reason: 'missing-data' };
+
+        const already = readStudentStatus(student);
+        if (already.key === statusDef.key) return { ok: true, reason: 'already-set' };
+
+        const main = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!main || main.disabled) {
+            return { ok: false, reason: 'main-radio-unavailable' };
+        }
 
         dispatchRadio(main);
-        dispatchRadio(detail);
-        return main.checked && detail.checked;
+
+        // نعطي معالج مدرستي فرصة لإظهار/تمكين سبب الغياب وتعيين «بدون عذر» الافتراضي.
+        const delays = [0, 35, 90, 180];
+
+        for (const delay of delays) {
+            if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+
+            const current = readStudentStatus(student);
+            if (current.key === statusDef.key) {
+                return { ok: true, reason: 'main-handler-completed' };
+            }
+
+            const detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+            if (detail && !detail.disabled) {
+                dispatchRadio(detail);
+                await new Promise(resolve => setTimeout(resolve, 20));
+
+                const verified = readStudentStatus(student);
+                if (verified.key === statusDef.key) {
+                    return { ok: true, reason: 'detail-selected' };
+                }
+            }
+        }
+
+        const finalStatus = readStudentStatus(student);
+        return {
+            ok: false,
+            reason: 'verification-failed',
+            actualKey: finalStatus.key,
+            actualMain: finalStatus.main,
+            actualDetail: finalStatus.detail
+        };
     }
 
     function clearStudentStatus(student) {
@@ -3941,6 +4005,42 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         return '';
     }
 
+    function openImportApplyFailures() {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const items = attendanceImport.lastApply?.failures || [];
+        closeImportReview();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+
+        const rows = items.length
+            ? '<table class="msa-import-review-table"><thead><tr><th>#</th><th>الطالب</th><th>الحالة المطلوبة</th><th>السبب</th></tr></thead><tbody>' +
+              items.map((item, i) =>
+                  '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(item.name || '') + '</td><td>' +
+                  escapeHtml(item.target || '') + '</td><td>' + escapeHtml(item.reason || '') + '</td></tr>'
+              ).join('') +
+              '</tbody></table>'
+            : '<div class="msa-import-review-empty">لا توجد حالات فشل مسجلة.</div>';
+
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>حالات لم يتم تطبيقها (' + items.length + ')</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' + rows + '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+        });
+    }
+
     function openImportReview(kind) {
         const root = q('#' + APP_ID);
         if (!root) return;
@@ -4123,6 +4223,16 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 ' — ' + escapeHtml(attendanceImport.lastApply.at) +
                 '</div>'
             );
+
+            if (attendanceImport.lastApply.failed && attendanceImport.lastApply.failures?.length) {
+                lines.push(
+                    '<div class="msa-import-review-actions">' +
+                    '<button type="button" class="msa-import-review-btn is-danger" data-action="show-import-apply-failures">' +
+                    '❌ حالات لم تُطبق ' + attendanceImport.lastApply.failures.length + ' — عرض' +
+                    '</button>' +
+                    '</div>'
+                );
+            }
         }
 
         details.innerHTML = lines.join('');
@@ -4215,7 +4325,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         toast('تم مسح سجل الحضور المستورد.');
     }
 
-    function applyAttendanceImport() {
+    async function applyAttendanceImport() {
         const match = refreshAttendanceImportMatch(true);
         if (!match || match.lesson.status !== 'matched') {
             toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
@@ -4257,13 +4367,34 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         pushUndo();
         let success = 0;
         let failed = 0;
+        const failures = [];
 
         state.suspendUpdates = true;
         try {
             for (const entry of s.supported) {
                 const statusDef = STATUS_BY_KEY[entry.attendance.targetKey];
-                if (statusDef && setStudentStatus(entry.student, statusDef)) success++;
-                else failed++;
+
+                if (!statusDef) {
+                    failed++;
+                    failures.push({
+                        name: entry.student?.name || entry.record?.studentName || 'طالب غير معروف',
+                        target: entry.attendance?.label || '',
+                        reason: 'تعذر تحديد حالة مدرستي المطلوبة.'
+                    });
+                    continue;
+                }
+
+                const result = await setStudentStatusReliable(entry.student, statusDef);
+                if (result.ok) {
+                    success++;
+                } else {
+                    failed++;
+                    failures.push({
+                        name: entry.student?.name || entry.record?.studentName || 'طالب غير معروف',
+                        target: statusDef.label,
+                        reason: result.reason || 'تعذر التحقق من تطبيق الحالة.'
+                    });
+                }
             }
         } finally {
             state.suspendUpdates = false;
@@ -4275,6 +4406,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             lessonKey: match.group.key,
             success,
             failed,
+            failures,
             convertedLate: s.convertedLate.length,
             at: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
         };
@@ -4285,7 +4417,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         toast(
             'تم تطبيق ' + success + ' حالة من الملف' +
             (s.convertedLate.length ? '، ومنها ' + s.convertedLate.length + ' متأخر ← حاضر' : '') +
-            (failed ? '، وتعذر تطبيق ' + failed : '') +
+            (failed ? '، وتعذر تطبيق ' + failed + ' — راجع قائمة الفشل قبل الحفظ' : '') +
             '. راجع الإحصاءات قبل الحفظ. الحاضر: ' + c.present + '، الغائب: ' + c.absent + '.'
         );
     }
@@ -4657,6 +4789,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         root.addEventListener('click', event => {
             const reviewButton = event.target.closest?.('[data-import-review]');
             if (reviewButton) openImportReview(reviewButton.dataset.importReview);
+
+            const failuresButton = event.target.closest?.('[data-action="show-import-apply-failures"]');
+            if (failuresButton) openImportApplyFailures();
         });
         q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
         q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
@@ -4876,7 +5011,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
