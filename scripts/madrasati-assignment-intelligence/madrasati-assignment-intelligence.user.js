@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Assignment Intelligence | مدير الواجبات الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.4.7
+// @version      1.4.8
 // @description  مدير واجبات مدرستي: تحليل وتقارير نهائية مع ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وبطاقات وتقارير تتبع التصفية الحالية، مع PDF/Excel/CSV واستيراد درجات ذكي.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -18,7 +18,7 @@
 
 /*
 =========================================================================
- Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.7
+ Madrasati Assignment Intelligence | مدير الواجبات الذكي — v1.4.8
 
  تصميم وتطوير: Mohammed Almalki (M0HM3D85)
  X / Twitter : https://x.com/M0HM3D85
@@ -28,7 +28,7 @@
  هذا الإصدار يبني طبقة التحليل المتقدمة فوق النواة المستقرة v1.1.7
  المثبتة على commit محدد لضمان عدم تغير السلوك الأساسي دون قصد.
 
- v1.4.7:
+ v1.4.8:
  - إصلاح اسم الواجب في تقرير صفحة GradeAssignment بالاعتماد على عنوان بطاقة الواجب المرئي مباشرة وقت الطباعة.
  - تمرير اسم الواجب المحقق صراحة إلى رأس التقرير وعنوان نافذة الطباعة بدل الاعتماد على قيمة حالة قديمة.
 
@@ -64,7 +64,7 @@
   'use strict';
 
   const APP = 'MAI';
-  const VERSION = '1.4.7';
+  const VERSION = '1.4.8';
   const BASE_REQUIRED_VERSION = '1.1.7';
   const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V5';
   const PANEL_COLLAPSE_KEY = 'MAI_PANEL_COLLAPSED_V1';
@@ -80,7 +80,7 @@
   // صفحة GradeAssignment تعتمد على النواة المستقرة v1.1.7.
   // أما صفحة Index فلها لوحة مستقلة، لذلك لا نمنع تشغيلها إذا تعذر تحميل النواة لأي سبب.
   if (!base && isGradeAssignment) {
-    console.error('[MAI v1.4.7] Base v1.1.7 was not loaded on GradeAssignment.');
+    console.error('[MAI v1.4.8] Base v1.1.7 was not loaded on GradeAssignment.');
     return;
   }
 
@@ -821,7 +821,7 @@
       const batch = submitted.slice(i, i + concurrency);
       const links = await Promise.all(batch.map(async s => {
         try { return await resolveSingleStudentResultLink(s, params); }
-        catch (e) { console.warn('[MAI v1.4.7] Could not resolve student result link:', e); return ''; }
+        catch (e) { console.warn('[MAI v1.4.8] Could not resolve student result link:', e); return ''; }
       }));
       batch.forEach((s, j) => {
         if (links[j]) {
@@ -1226,7 +1226,7 @@
           const doc = await fetchTextDocument(detailsUrl);
           name = extractAssignmentNameFromDocument(doc);
         } catch (e) {
-          console.warn('[MAI v1.4.7] Could not resolve assignment name from details page:', e);
+          console.warn('[MAI v1.4.8] Could not resolve assignment name from details page:', e);
         }
       }
     }
@@ -2178,7 +2178,7 @@
         try {
           await runDeepQuestionAnalysisEnhanced({ silent: true });
         } catch (e) {
-          console.warn('[MAI v1.4.7] Question analysis skipped:', e);
+          console.warn('[MAI v1.4.8] Question analysis skipped:', e);
         }
       }
 
@@ -2221,11 +2221,11 @@
             return;
           }
           if (isOnlineQuestions() && (state.gradeData?.students || []).some(s => s.submissionState === 'submitted' || s.hasAnswer === true)) {
-            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.7] Post-base refresh analysis skipped:', e); }
+            try { await runDeepQuestionAnalysisEnhanced({ silent: true }); } catch (e) { console.warn('[MAI v1.4.8] Post-base refresh analysis skipped:', e); }
           }
           renderInlineAnalysis();
         } catch (e) {
-          console.warn('[MAI v1.4.7] UI sync after base update failed:', e);
+          console.warn('[MAI v1.4.8] UI sync after base update failed:', e);
         }
       }, 650);
     });
@@ -2400,7 +2400,7 @@
         else if (action === 'excel') exportExcelEnhanced();
         else throw new Error(`إجراء غير معروف: ${action}`);
       } catch (e) {
-        console.error('[MAI v1.4.7] Action failed:', action, e);
+        console.error('[MAI v1.4.8] Action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         btn.dataset.running = '0';
@@ -2452,6 +2452,7 @@
   // =====================================================================
   const indexState = {
     assignments: [],
+    query: '',
     publications: null,
     deep: null,
     busy: false,
@@ -2684,8 +2685,18 @@
     return { eligible: false, status: 'no_publications', label: 'لا توجد منشورات منتهية', current, ended };
   };
 
+  // نفس سلوك البحث في الأنشطة: يطبّق على الواجبات والتقرير والتصدير.
+  const filteredIndexAssignments = () => {
+    const tokens = norm(indexState.query || '').split(/\s+/).filter(Boolean);
+    if (!tokens.length) return indexState.assignments || [];
+    return (indexState.assignments || []).filter(row => {
+      const fields = [row.title,row.course,row.unit,row.topic,row.source,row.internalId,row.assignmentGuid,row.displayMode];
+      return tokens.every(token => fields.some(value => norm(value).includes(token)));
+    });
+  };
+
   const summarizeIndexAssignments = () => {
-    const rows = indexState.assignments || [];
+    const rows = filteredIndexAssignments();
     const grades = rows.map(r => r.grade).filter(Number.isFinite);
     const totalGrade = grades.reduce((a, b) => a + b, 0);
     const averageGrade = grades.length ? totalGrade / grades.length : null;
@@ -2756,6 +2767,13 @@
     if (!body) return;
 
     body.innerHTML = `
+      <div class="${APP}-idx-searchline">
+        <label for="${APP}-idx-search"><b>البحث عن واجب</b></label>
+        <input id="${APP}-idx-search" type="search" autocomplete="off" placeholder="اكتب اسم الواجب أو المادة أو الوحدة أو رقم الواجب…" value="${esc(indexState.query || '')}" aria-label="البحث في جميع الواجبات المحملة">
+        <button id="${APP}-idx-find" class="${APP}-idx-btn primary" type="button">بحث عن واجب</button>
+        <button id="${APP}-idx-clear" class="${APP}-idx-btn" type="button">مسح البحث</button>
+        <span class="${APP}-idx-searchcount">عرض ${summary.total} من ${(indexState.assignments || []).length} واجب</span>
+      </div>
       <div class="${APP}-idx-metrics">
         ${indexMetric(summary.total, 'إجمالي الواجبات', indexState.indexPagesScanned ? `من ${indexState.indexPagesScanned} صفحة` : '')}
         ${indexMetric(summary.activeCount, 'مفعّلة', summary.disabledCount ? `${summary.disabledCount} معطل` : '')}
@@ -2779,7 +2797,7 @@
             <th>#</th><th>الواجب</th><th>المقرر</th><th>الوحدة / الموضوع</th><th>المصدر</th><th>الدرجة</th><th>الحالة</th><th>الرصد</th><th>نسبة الحل / التسليم</th><th>المتوسط</th><th>لم يحل / لم يسلّم</th><th>روابط</th>
           </tr></thead>
           <tbody>
-            ${(indexState.assignments || []).map(row => {
+            ${filteredIndexAssignments().map(row => {
               const pub = publicationInfoFor(row);
               const deep = deepInfoFor(row);
               const reportState = reportEligibilityFor(row);
@@ -2855,6 +2873,10 @@
       #${indexPanelId} .${APP}-idx-metric{border:1px solid #e5e7eb;border-radius:11px;padding:10px;text-align:center;background:#fafafa;min-height:76px;display:flex;flex-direction:column;justify-content:center}
       #${indexPanelId} .${APP}-idx-metric strong{font-size:21px;color:#111827;line-height:1.2}#${indexPanelId} .${APP}-idx-metric span{font-size:10px;font-weight:800;color:#475569;margin-top:4px}#${indexPanelId} .${APP}-idx-metric small{font-size:9px;color:#94a3b8;margin-top:2px}
       #${indexPanelId} .${APP}-idx-sources{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;margin:8px 0 10px;color:#475569}#${indexPanelId} .${APP}-idx-chip{background:#f1f5f9;border:1px solid #e2e8f0;padding:4px 7px;border-radius:999px}
+      #${indexPanelId} .${APP}-idx-searchline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:13px}
+      #${indexPanelId} .${APP}-idx-searchline label{color:#334155;font-size:12px}
+      #${indexPanelId} .${APP}-idx-searchline input{flex:1 1 300px;min-width:190px;border:1px solid #cbd5e1;border-radius:9px;padding:10px 12px;font:12px Tahoma,Arial}
+      #${indexPanelId} .${APP}-idx-searchcount{font-size:11px;color:#64748b;font-weight:700}
       #${indexPanelId} .${APP}-idx-note{font-size:10px;line-height:1.7;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:8px 10px;margin-bottom:10px}
       #${indexPanelId} .${APP}-idx-table-wrap{overflow:auto;border:1px solid #e5e7eb;border-radius:10px}#${indexPanelId} .${APP}-idx-table{width:100%;border-collapse:collapse;min-width:1220px;font-size:10px}
       #${indexPanelId} .${APP}-idx-table th,#${indexPanelId} .${APP}-idx-table td{border-bottom:1px solid #edf2f7;padding:8px 7px;text-align:right;vertical-align:top}#${indexPanelId} .${APP}-idx-table th{background:#f8fafc;position:sticky;top:0;z-index:1;font-weight:900;color:#334155}
@@ -2905,6 +2927,20 @@
       setIndexCollapsed(panel, !panel.classList.contains(`${APP}-idx-collapsed`));
     });
 
+    // تفويض الأحداث حتى يبقى البحث فعالًا بعد كل تحديث للسجل.
+    panel.addEventListener('input', event => {
+      if(event.target?.id !== `${APP}-idx-search`)return;
+      const pos=event.target.selectionStart ?? event.target.value.length;
+      indexState.query=event.target.value;
+      renderIndexPanel();
+      const input=panel.querySelector(`#${APP}-idx-search`);
+      if(input){input.focus();try{input.setSelectionRange(pos,pos);}catch{}}
+    });
+    panel.addEventListener('click', event => {
+      const id=event.target?.id;
+      if(id===`${APP}-idx-find`){panel.querySelector(`#${APP}-idx-search`)?.focus();}
+      if(id===`${APP}-idx-clear`){indexState.query='';renderIndexPanel();panel.querySelector(`#${APP}-idx-search`)?.focus();}
+    });
     panel.addEventListener('click', async (event) => {
       const btn = event.target.closest?.(`[data-${APP.toLowerCase()}-index-action]`);
       if (!btn || btn.disabled || indexState.busy) return;
@@ -2931,7 +2967,7 @@
           exportIndexExcel();
         }
       } catch (e) {
-        console.error('[MAI v1.4.7] Index action failed:', action, e);
+        console.error('[MAI v1.4.8] Index action failed:', action, e);
         toast(String(e?.message || e), 'error');
       } finally {
         setIndexBusy(false);
@@ -3224,7 +3260,7 @@
             row.gradeDiscrepancy = Number.isFinite(pageGrade) && !nearlyEqual(pageGrade, summary.resultScore);
           }
         } catch (e) {
-          console.warn('[MAI v1.4.7] Fractional result verification skipped:', e);
+          console.warn('[MAI v1.4.8] Fractional result verification skipped:', e);
         }
       }));
     }
@@ -3467,7 +3503,7 @@
     return cache;
   }
 
-  const indexExportRows = () => (indexState.assignments || []).map(row => {
+  const indexExportRows = () => filteredIndexAssignments().map(row => {
     const pub = publicationInfoFor(row);
     const deep = deepInfoFor(row);
     const reportState = reportEligibilityFor(row);
