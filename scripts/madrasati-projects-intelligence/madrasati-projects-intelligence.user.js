@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.5
+// @version      1.5.6
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.5
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.6
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.5.5
+// Madrasati Projects & Activities Intelligence — v1.5.6
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.5';
+  const VERSION = '1.5.6';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -790,7 +790,7 @@
       &&(!state.importFeedback||!feedback||clean(student.feedback)===feedback)){
     status='unchanged';reason='الدرجة مطابقة للموجودة في مدرستي';
    }
-   preview.push({sourceRow:i+1,sid,name,className,grade,feedback,submissionStatus,student,method,status,reason});
+   preview.push({sourceRow:i+1,sid,name,className,grade,feedback,submissionStatus,student,method,status,baseStatus:status==='unchanged'?'ready':status,reason});
   }
   const numberNotes=preview.filter(x=>/^\d+(?:[.,]\d+)?$/.test(x.feedback)).length;
   state.importFeedback=false;
@@ -807,6 +807,14 @@
  const host=document.getElementById(`${APP}-import-preview`);
  if(!host||!state.importPreview)return;
  const rows=state.importPreview.rows;
+ // إبقاء معاينة «لا تغيير / جاهز» متزامنة مع خيار استيراد الملاحظات.
+ rows.forEach(r=>{
+   if(r.baseStatus!=='ready')return;
+   const gradeSame=Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-6;
+   const feedbackSame=!r.feedback||clean(r.student?.feedback)===clean(r.feedback);
+   if(gradeSame&&(!state.importFeedback||feedbackSame)){r.status='unchanged';r.reason='الدرجة مطابقة للموجودة في مدرستي';}
+   else{r.status='ready';r.reason='';}
+ });
  const ready=rows.filter(r=>r.status==='ready');
  const unchanged=rows.filter(r=>r.status==='unchanged').length;
  const bad=rows.length-ready.length-unchanged;
@@ -827,7 +835,7 @@
  <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>الصف</th><th>الطالب في الملف</th><th>اسم مدرستي</th><th>رقم الطالب</th><th>الفصل</th><th>حالة التسليم</th><th>طريقة المطابقة</th><th>الدرجة الحالية</th><th>الدرجة الجديدة</th><th>الدرجة القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
  ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||r.student?.className||'—')}</td><td>${esc(r.submissionStatus||'غير محدد')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.student?.grade)?fmt(r.student.grade):'—'}</td><td><b>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</b></td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز للتطبيق</span>`:`<span class="${APP}-pill ${r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
  </tbody></table></div>`;
- document.getElementById(`${APP}-import-feedback`)?.addEventListener('change',e=>{state.importFeedback=!!e.target.checked;});
+ document.getElementById(`${APP}-import-feedback`)?.addEventListener('change',e=>{state.importFeedback=!!e.target.checked;renderImportPreview();});
  document.getElementById(`${APP}-patch`)?.addEventListener('click',patchVisibleImport);
  document.getElementById(`${APP}-save`)?.addEventListener('click',saveImport);
  document.getElementById(`${APP}-preview-xlsx`)?.addEventListener('click',exportImportPreview);
