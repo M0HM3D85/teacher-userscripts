@@ -101,9 +101,9 @@
     {
       "id": "madrasati-smart-attendance",
       "name": "Madrasati Smart Attendance | التحضير الذكي لمدرستي",
-      "version": "0.3.4",
+      "version": "0.3.5",
       "status": "stable",
-      "description": "مركز ذكي لإدارة حضور الحصة في مدرستي بعد تحديث التحضير الجديد: إحصاءات وتصفية وبحث مرن وتقارير، زر حفظ علوي مرتبط بحفظ مدرستي، ومؤشر يوضح إمكانية التعديل أو القفل حتى اليوم التالي.",
+      "description": "التحضير الذكي لمدرستي بواجهة مدمجة غير ثابتة، واستيراد حضور Excel/CSV مع مطابقة الطلاب وتطبيق الحالات ومراجعتها، وبحث وتصفية وتقرير وحفظ مرتبط بزر مدرستي الأصلي.",
       "sourcePath": "scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js",
       "additionalInfoPath": "scripts/madrasati-smart-attendance/README.md",
       "greasyFork": "https://greasyfork.org/scripts/595613",
