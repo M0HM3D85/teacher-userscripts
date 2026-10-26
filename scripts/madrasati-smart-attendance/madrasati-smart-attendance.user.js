@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.3
-// @description  مركز ذكي لإدارة حضور الحصة في مدرستي مع حفظ الكل المتسلسل، تتبع التغييرات، الإحصاءات، البحث والفرز، التراجع والتقارير.
+// @version      0.3.4-beta1
+// @description  نسخة اختبارية متوافقة مع تحديث التحضير الجديد في مدرستي: استمرار الإحصاءات بعد الحفظ، دعم UpdateAttendStudents، واستخدام الحفظ الجماعي الأصلي.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.user.js
-// @updateURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.meta.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta1-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta1-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.3',
+        version: '0.3.4-beta1',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -643,7 +643,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 .map(makeStudentFromRow)
                 .filter(Boolean);
 
-            if (students.length) mode = 'row-save';
+            if (students.length) mode = 'legacy-row-save';
         }
 
         students = dedupeStudents(students);
@@ -1834,14 +1834,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         state.savedSignatures = new Map();
         state.saveFailures = [];
 
-        if (state.mode !== 'row-save') return;
+        if (state.mode !== 'legacy-row-save') return;
         for (const student of state.students) {
             state.savedSignatures.set(student.index, rowSaveSignature(student));
         }
     }
 
     function dirtyRowSaveStudents() {
-        if (state.mode !== 'row-save') return [];
+        if (state.mode !== 'legacy-row-save') return [];
 
         return state.students.filter(student => {
             const baseline = state.savedSignatures.get(student.index);
@@ -1862,7 +1862,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const retryBtn = q('[data-action="retry-save"]', root);
         const countEl = q('[data-role="save-count"]', root);
 
-        const visible = state.mode === 'row-save';
+        const visible = state.mode === 'legacy-row-save';
         panel?.classList.toggle('is-visible', visible);
         if (!visible) return;
 
@@ -2097,7 +2097,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     }
 
     async function runSaveQueue(targets, retryMode = false) {
-        if (state.mode !== 'row-save' || state.saveAllRunning) return;
+        if (state.mode !== 'legacy-row-save' || state.saveAllRunning) return;
 
         targets = [...new Map(
             (targets || [])
@@ -2423,7 +2423,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const modeLabel = q('[data-role="mode-label"]', root);
         const saveHint = q('[data-role="save-hint"]', root);
 
-        if (state.mode === 'row-save') {
+        if (state.mode === 'legacy-row-save') {
             if (modeLabel) modeLabel.textContent = 'وضع تعديل حضور محفوظ — حفظ فردي أصلي + حفظ الكل الذكي';
             if (saveHint) saveHint.textContent = '«حفظ الكل» يحفظ الصفوف التي تغيرت فقط، بالتتابع، وينتظر رد مدرستي لكل طالب قبل الانتقال للذي يليه.';
         } else {
@@ -2505,7 +2505,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     event.target.matches?.('input[type="radio"][name^="List["][name$=".AttendStatusId"]');
 
                 if (attendanceChanged) updateAll();
-                else if (state.mode === 'row-save' && event.target.closest?.('tr')) updateSaveAllUi();
+                else if (state.mode === 'legacy-row-save' && event.target.closest?.('tr')) updateSaveAllUi();
             });
         }
     }
@@ -2633,7 +2633,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.4-beta1] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
