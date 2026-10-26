@@ -195,6 +195,11 @@
 #${APP_ID} .msa-head-actions { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
 #${APP_ID} .msa-body { padding: 14px 16px 15px; }
 #${APP_ID}.is-collapsed .msa-body { display: none; }
+#${APP_ID}.msa-new-platform [data-action="unset-present"],
+#${APP_ID}.msa-new-platform [data-action="clear"],
+#${APP_ID}.msa-new-platform [data-action="next-unset"],
+#${APP_ID}.msa-new-platform [data-filter="unset"],
+#${APP_ID}.msa-new-platform [data-stat="unset"] { display:none !important; }
 #${APP_ID} .msa-stats {
     display: grid;
     grid-template-columns: repeat(7, minmax(112px, 1fr));
@@ -2530,16 +2535,34 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     function updateModeUi(root) {
         const modeLabel = q('[data-role="mode-label"]', root);
         const saveHint = q('[data-role="save-hint"]', root);
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+
+        root.classList.toggle('msa-new-platform', isNewPlatform);
+
+        const bulkStatus = q('[data-role="bulk-status"]', root);
+        if (bulkStatus) {
+            for (const option of qa('option', bulkStatus)) {
+                const isLate = option.value === 'late-excused' || option.value === 'late-unexcused';
+                option.hidden = isNewPlatform && isLate;
+                option.disabled = isNewPlatform && isLate;
+            }
+
+            if (isNewPlatform && String(bulkStatus.value).startsWith('late-')) {
+                bulkStatus.value = 'present';
+            }
+        }
 
         if (state.mode === 'legacy-row-save') {
-            if (modeLabel) modeLabel.textContent = 'وضع تعديل حضور محفوظ — حفظ فردي أصلي + حفظ الكل الذكي';
-            if (saveHint) saveHint.textContent = '«حفظ الكل» يحفظ الصفوف التي تغيرت فقط، بالتتابع، وينتظر رد مدرستي لكل طالب قبل الانتقال للذي يليه.';
+            if (modeLabel) modeLabel.textContent = 'واجهة مدرستي القديمة — حفظ فردي + حفظ الكل الذكي';
+            if (saveHint) saveHint.textContent = 'تم اكتشاف الواجهة القديمة؛ «حفظ الكل» متاح للتوافق فقط.';
+        } else if (state.mode === 'batch-update') {
+            if (modeLabel) modeLabel.textContent = 'تعديل حضور محفوظ — نظام مدرستي الجديد';
+            if (saveHint) saveHint.textContent = 'استخدم زر «حفظ» الأصلي في مدرستي؛ ستعود الإحصائيات والتصفية تلقائيًا بعد الحفظ.';
         } else {
-            if (modeLabel) modeLabel.textContent = 'وضع التحضير الجماعي الأولي';
-            if (saveHint) saveHint.textContent = 'بعد المراجعة استخدم زر «حفظ» الأصلي في مدرستي.';
+            if (modeLabel) modeLabel.textContent = 'تحضير حصة جديدة — نظام مدرستي الجديد';
+            if (saveHint) saveHint.textContent = 'مدرستي تبدأ الطلاب «حاضر» افتراضيًا؛ راجع الغياب ثم استخدم زر «حفظ» الأصلي.';
         }
     }
-
     function bindToolbar(root) {
         q('[data-action="all-present"]', root).addEventListener('click', () => bulkSet(STATUS.PRESENT));
         q('[data-action="unset-present"]', root).addEventListener('click', () => bulkSet(STATUS.PRESENT, { onlyUnset: true }));
