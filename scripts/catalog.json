@@ -70,9 +70,9 @@
     {
       "id": "madrasati-assignment-intelligence",
       "name": "Madrasati Assignment Intelligence | مدير الواجبات الذكي",
-      "version": "1.4.7",
+      "version": "1.4.8",
       "status": "stable",
-      "description": "مدير واجبات مدرستي المتقدم: تقارير نهائية بعد انتهاء النشر وفق وقت الخادم، دعم واجبات خارج النظام، ربط دقيق للفصل بكل طالب، تصفية حسب الفصل والتسليم والتقدير، وتقارير PDF/Excel/CSV تتبع التصفية الحالية، مع اسم واجب موثوق في تقارير GradeAssignment.",
+      "description": "مدير واجبات مدرستي المتقدم: بحث فوري عن واجب حسب العنوان والمادة والوحدة، إحصائيات وتقارير PDF/Excel/CSV تتبع التصفية، تحليل منشورات منتهية واستيراد درجات عبر النواة المستقرة.",
       "sourcePath": "scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-assignment-intelligence/README.md",
       "greasyFork": "https://greasyfork.org/scripts/596241",
@@ -86,9 +86,9 @@
     {
       "id": "madrasati-projects-intelligence",
       "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
-      "version": "1.5.2",
+      "version": "1.5.6",
       "status": "stable",
-      "description": "مدير الأنشطة والمشاريع في مدرستي: مطابقة محسّنة لدرجات Excel/CSV مع كشف الأسباب والحدود والتكرار وحماية الملاحظات والتحقق التدريجي من الحفظ، إضافة إلى البحث والإحصائيات والتقارير.",
+      "description": "مدير الأنشطة والمشاريع: نافذة استيراد درجات Excel/CSV ومطابقة رقم الطالب الموثوق مع معاينة وتصدير، حماية الملاحظات، تحقق تدريجي من الحفظ، إحصائيات وبحث وتقارير.",
       "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-projects-intelligence/README.md",
       "greasyFork": null,
