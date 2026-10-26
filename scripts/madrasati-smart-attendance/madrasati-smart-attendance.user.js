@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.3
-// @description  مركز ذكي لإدارة حضور الحصة في مدرستي مع حفظ الكل المتسلسل، تتبع التغييرات، الإحصاءات، البحث والفرز، التراجع والتقارير.
+// @version      0.3.5
+// @description  تحضير الحضور واستيراده من Excel/CSV مع مطابقة الطلاب وإحصاءات مباشرة وحفظ آمن داخل مدرستي.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -10,10 +10,11 @@
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/SchoolSchedule/Schedule/ManageLecture*
 // @grant        none
+// @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.user.js
-// @updateURL https://update.greasyfork.org/scripts/595613/Madrasati%20Smart%20Attendance%20%7C%20%D8%A7%D9%84%D8%AA%D8%AD%D8%B6%D9%8A%D8%B1%20%D8%A7%D9%84%D8%B0%D9%83%D9%8A%20%D9%84%D9%85%D8%AF%D8%B1%D8%B3%D8%AA%D9%8A.meta.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.3',
+        version: '0.3.5',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -100,6 +101,34 @@
     const MAX_UNDO = 5;
     const boundEventRoots = new WeakSet();
 
+    const ATTENDANCE_IMPORT_STORAGE_KEY = 'msa-attendance-import-v1';
+    const ATTENDANCE_IMPORT_DATA_VERSION = 2;
+    const ATTENDANCE_IMPORT_MAX_ROWS = 30000;
+    const ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT = 4200000;
+    const ATTENDANCE_REGISTRY_STORAGE_KEY = 'msa-attendance-student-registry-v2';
+    const ATTENDANCE_IDENTITY_BRIDGE_KEY = 'msa-attendance-identity-bridge-v1';
+    const ASSIGNMENT_REGISTRY_COMPAT_KEY = 'MAI_STUDENT_REGISTRY_V2';
+    const ATTENDANCE_REGISTRY_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+    let attendanceImport = {
+        loaded: false,
+        dataset: null,
+        index: null,
+        currentMatch: null,
+        lastSignature: '',
+        lastError: '',
+        lastApply: null,
+        applyRunning: false,
+        applyConfirmationPending: false,
+        applyConfirmationMessage: '',
+        applyProgress: '',
+        registry: null,
+        registryLoading: false,
+        registryError: '',
+        identityBridge: null,
+        // بيانات تشغيل المستورد محفوظة محليًا دون سجلات اختبارات.
+    };
+
     let state = {
         form: null,
         table: null,
@@ -140,6 +169,10 @@
             .replace(/[^\p{L}\p{N}\s]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    function isNewPlatformMode() {
+        return state.mode === 'batch-create' || state.mode === 'batch-update';
     }
 
     function escapeAttr(value) {
@@ -193,8 +226,219 @@
     color: #64748b;
 }
 #${APP_ID} .msa-head-actions { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+#${APP_ID} .msa-save-state {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:9px 12px;
+    margin:0 16px 12px;
+    border:1px solid #dbe4ea;
+    border-radius:10px;
+    font-size:12px;
+    font-weight:850;
+    line-height:1.5;
+}
+#${APP_ID} .msa-save-state.is-available {
+    background:#f0fdf4;
+    border-color:#bbebc9;
+    color:#166534;
+}
+#${APP_ID} .msa-save-state.is-locked {
+    background:#fff7ed;
+    border-color:#fed7aa;
+    color:#9a3412;
+}
+#${APP_ID} .msa-save-state.is-unavailable {
+    background:#fef2f2;
+    border-color:#fecaca;
+    color:#991b1b;
+}
+#${APP_ID} .msa-save-state.is-unknown {
+    background:#f8fafc;
+    border-color:#e2e8f0;
+    color:#475569;
+}
+
+#${APP_ID} .msa-import-card {
+    margin-bottom:12px;
+    padding:12px;
+    border:1px solid #dbe4ea;
+    border-radius:12px;
+    background:#fbfdff;
+}
+#${APP_ID} .msa-import-head {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+}
+#${APP_ID} .msa-import-title {
+    display:flex;
+    flex-direction:column;
+    gap:3px;
+}
+#${APP_ID} .msa-import-title strong { font-size:13px; color:#18312a; }
+#${APP_ID} .msa-import-title small { font-size:11px; color:#64748b; line-height:1.45; }
+#${APP_ID} .msa-import-actions { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+#${APP_ID} .msa-import-status {
+    margin-top:9px;
+    padding:9px 10px;
+    border-radius:9px;
+    background:#f8fafc;
+    border:1px solid #e2e8f0;
+    font-size:11px;
+    line-height:1.65;
+    color:#334155;
+}
+#${APP_ID} .msa-import-status.is-match {
+    background:#f0fdf4;
+    border-color:#bbebc9;
+    color:#166534;
+}
+#${APP_ID} .msa-import-status.is-warning {
+    background:#fff7ed;
+    border-color:#fed7aa;
+    color:#9a3412;
+}
+#${APP_ID} .msa-import-status.is-error {
+    background:#fef2f2;
+    border-color:#fecaca;
+    color:#991b1b;
+}
+#${APP_ID} .msa-import-details {
+    margin-top:8px;
+    padding:8px 10px;
+    border-radius:9px;
+    background:#fff;
+    border:1px dashed #d6e0e6;
+    font-size:11px;
+    line-height:1.65;
+    color:#475569;
+}
+#${APP_ID} .msa-import-details b { color:#1f2937; }
+#${APP_ID} .msa-import-details ul { margin:5px 0 0; padding-inline-start:20px; }
+#${APP_ID} .msa-import-chip {
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    padding:2px 7px;
+    margin:2px 2px;
+    border-radius:999px;
+    background:#eef2f7;
+    color:#475569;
+    font-size:10px;
+    font-weight:800;
+}
+#${APP_ID} .msa-import-registry {
+    display:flex;
+    align-items:center;
+    gap:7px;
+    flex-wrap:wrap;
+    margin-top:7px;
+    padding-top:7px;
+    border-top:1px dashed #e2e8f0;
+    font-size:10px;
+    color:#64748b;
+}
+#${APP_ID} .msa-import-review-actions {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:7px;
+}
+#${APP_ID} .msa-import-review-btn {
+    min-height:30px !important;
+    padding:4px 8px !important;
+    font-size:10px !important;
+    font-weight:850;
+}
+#${APP_ID} .msa-import-review-btn.is-warning { background:#fff7ed; border-color:#fdba74; color:#9a3412; }
+#${APP_ID} .msa-import-review-btn.is-danger { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+#${APP_ID} .msa-import-review-btn.is-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+#${APP_ID} .msa-import-review-btn.is-ok { background:#f0fdf4; border-color:#bbebc9; color:#166534; }
+
+#${APP_ID} .msa-import-review-overlay {
+    position:fixed;
+    inset:0;
+    z-index:2147483000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:18px;
+    background:rgba(15,23,42,.55);
+}
+#${APP_ID} .msa-import-review-dialog {
+    width:min(980px,96vw);
+    max-height:88vh;
+    display:flex;
+    flex-direction:column;
+    background:#fff;
+    border-radius:16px;
+    box-shadow:0 20px 70px rgba(15,23,42,.25);
+    overflow:hidden;
+}
+#${APP_ID} .msa-import-review-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:13px 15px;
+    border-bottom:1px solid #e5e7eb;
+    background:#f8fafc;
+}
+#${APP_ID} .msa-import-review-head strong { font-size:14px; color:#1f2937; }
+#${APP_ID} .msa-import-review-body {
+    overflow:auto;
+    padding:12px 14px 16px;
+}
+#${APP_ID} .msa-import-review-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:11px;
+}
+#${APP_ID} .msa-import-review-table th,
+#${APP_ID} .msa-import-review-table td {
+    padding:8px 7px;
+    border-bottom:1px solid #e5e7eb;
+    text-align:right;
+    vertical-align:top;
+}
+#${APP_ID} .msa-import-review-table th {
+    position:sticky;
+    top:0;
+    background:#f8fafc;
+    z-index:1;
+    color:#475569;
+}
+#${APP_ID} .msa-import-review-empty { padding:22px; text-align:center; color:#64748b; }
+
+tr.msa-import-review-row, .msa-import-review-row {
+    outline:2px solid rgba(245,158,11,.45) !important;
+    outline-offset:-2px;
+}
+tr.msa-import-missing-row, .msa-import-missing-row {
+    outline:2px solid rgba(220,38,38,.35) !important;
+    outline-offset:-2px;
+}
+tr.msa-import-late-row, .msa-import-late-row {
+    box-shadow:inset 4px 0 0 #0ea5e9 !important;
+}
+tr.msa-import-flash, .msa-import-flash {
+    animation:msaImportFlash 1.8s ease;
+}
+@keyframes msaImportFlash {
+    0%,100% { box-shadow:inherit; }
+    35% { box-shadow:0 0 0 4px rgba(37,99,235,.35) !important; }
+}
 #${APP_ID} .msa-body { padding: 14px 16px 15px; }
 #${APP_ID}.is-collapsed .msa-body { display: none; }
+#${APP_ID}.msa-new-platform [data-action="unset-present"],
+#${APP_ID}.msa-new-platform [data-action="clear"],
+#${APP_ID}.msa-new-platform [data-action="next-unset"],
+#${APP_ID}.msa-new-platform [data-filter="unset"],
+#${APP_ID}.msa-new-platform [data-stat="unset"] { display:none !important; }
+#${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(6,minmax(112px,1fr)); }
 #${APP_ID} .msa-stats {
     display: grid;
     grid-template-columns: repeat(7, minmax(112px, 1fr));
@@ -451,16 +695,68 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 .msa-report-group li { margin:3px 0; font-size:12px; }
 .msa-report-empty { color:#94a3b8; font-size:12px; }
 
-@media (min-width: 992px) and (min-height: 720px) {
-    #${APP_ID} { position:sticky; top:8px; z-index:850; }
+
+/* الواجهة النهائية: لوحة ضمن تدفق الصفحة لا تثبت فوق الطلاب مطلقًا. */
+#${APP_ID} {
+    position:static !important;
+    top:auto !important;
+    bottom:auto !important;
+    z-index:auto !important;
+    margin:0 0 10px;
+    border-radius:10px;
+    box-shadow:0 2px 10px rgba(15,23,42,.05);
+    overflow:visible;
 }
+#${APP_ID} .msa-head { padding:7px 10px; gap:6px 10px; border-radius:10px 10px 0 0; }
+#${APP_ID} .msa-title { font-size:13px; }
+#${APP_ID} .msa-save-state { margin:0; padding:3px 8px; font-size:10px; border-radius:7px; font-weight:700; max-width:210px; }
+#${APP_ID} .msa-body { padding:8px 10px 9px; }
+#${APP_ID} .msa-import-card { margin-bottom:7px; padding:7px 9px; border-radius:9px; }
+#${APP_ID} .msa-import-head { align-items:center; gap:7px; }
+#${APP_ID} .msa-import-title strong { font-size:12px; }
+#${APP_ID} .msa-import-actions { gap:5px; }
+#${APP_ID} .msa-import-status { margin-top:5px; padding:5px 7px; font-size:11px; line-height:1.45; }
+#${APP_ID} .msa-import-details { margin:5px 0 0; padding:6px; font-size:11px; }
+#${APP_ID} .msa-import-more { margin-top:4px; }
+#${APP_ID} .msa-import-more > summary, #${APP_ID} .msa-advanced-tools > summary {
+    display:list-item; cursor:pointer; color:#526476; font-size:11px; padding:4px 3px; width:max-content; max-width:100%;
+}
+#${APP_ID} .msa-inline-options { position:relative; font-size:11px; }
+#${APP_ID} .msa-inline-options > summary { cursor:pointer; list-style:none; border:1px solid #d9e2e8; padding:4px 8px; border-radius:7px; background:#fff; }
+#${APP_ID} .msa-inline-options > summary::-webkit-details-marker { display:none; }
+#${APP_ID} .msa-inline-options-content {
+    display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; padding:7px; background:#f8fafc; border:1px solid #dbe4ea; border-radius:7px;
+}
+#${APP_ID} .msa-advanced-tools { margin:0 0 4px; }
+#${APP_ID} .msa-advanced-tools .msa-row { margin:3px 0 5px; }
+#${APP_ID} .msa-stats { gap:5px; margin-bottom:6px; grid-template-columns:repeat(7,minmax(0,1fr)); }
+#${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(4,minmax(0,1fr)); }
+#${APP_ID}.msa-new-platform [data-stat="late-excused"],
+#${APP_ID}.msa-new-platform [data-stat="late-unexcused"],
+#${APP_ID}.msa-new-platform [data-filter="late"] { display:none !important; }
+#${APP_ID} .msa-stat-card { min-height:49px; padding:6px 9px; border-radius:8px; }
+#${APP_ID} .msa-stat-card::after { width:3px; }
+#${APP_ID} .msa-stat-label { font-size:10px; margin-bottom:2px; }
+#${APP_ID} .msa-stat-value { font-size:21px; }
+#${APP_ID} .msa-ready { padding:5px 9px; margin-bottom:5px; border-radius:8px; gap:7px; }
+#${APP_ID} .msa-ready-main { font-size:11px; }
+#${APP_ID} .msa-progress { height:5px; }
+#${APP_ID} .msa-row { margin-bottom:5px; gap:5px; }
+#${APP_ID} .msa-row button, #${APP_ID} .msa-head-actions button,
+#${APP_ID} .msa-import-actions button, #${APP_ID} .msa-row select {
+    min-height:28px; padding:4px 8px; font-size:11px;
+}
+#${APP_ID} .msa-search-row input { min-height:30px; }
+#${APP_ID} .msa-credit { margin-top:5px; font-size:9px; opacity:.67; }
+#${APP_ID} [hidden] { display:none !important; }
+
 @media (max-width: 1180px) {
     #${APP_ID} .msa-stats { grid-template-columns:repeat(4, minmax(110px, 1fr)); }
 }
 @media (max-width: 768px) {
     #${APP_ID} { position:static; }
     #${APP_ID} .msa-head, #${APP_ID} .msa-body { padding:11px; }
-    #${APP_ID} .msa-stats { grid-template-columns:repeat(2, minmax(120px,1fr)); }
+    #${APP_ID} .msa-stats, #${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
     #${APP_ID} button, #${APP_ID} select { flex:1 1 auto; }
     #${APP_ID} input[type="search"] { flex-basis:100%; }
     #${APP_ID} .msa-ready { grid-template-columns:1fr auto; }
@@ -547,6 +843,90 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function cleanStudentNameCandidate(value = '') {
+        return String(value || '')
+            .replace(/\s+/g, ' ')
+            .replace(/(?:بدون\s+عذر|بعذر|متأخر|غائب|حاضر)/g, ' ')
+            .replace(/[0-9٠-٩۰-۹]+/g, ' ')
+            .replace(/[|•·]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function extractVisibleStudentName(row) {
+        if (!row) return '';
+
+        const direct = row.getAttribute('data-student-name') || row.dataset?.studentName || '';
+        if (direct) return cleanStudentNameCandidate(direct);
+
+        const candidates = [];
+        const selectors = 'td, th, [data-student-name], .student-name, .studentName, .student_name';
+
+        for (const el of qa(selectors, row)) {
+            if (el.closest?.('.absence-div, .delay-div, .ratings')) continue;
+
+            const raw = cleanStudentNameCandidate(el.innerText || el.textContent || '');
+            if (!raw) continue;
+
+            const arabicChars = (raw.match(/[\u0600-\u06FF]/g) || []).length;
+            const words = raw.split(/\s+/).filter(Boolean).length;
+
+            if (arabicChars < 4 || words < 2) continue;
+
+            candidates.push({
+                value: raw,
+                score: arabicChars + Math.min(words, 8) * 8 - Math.max(0, raw.length - 80)
+            });
+        }
+
+        if (!candidates.length) {
+            const raw = cleanStudentNameCandidate(row.innerText || row.textContent || '');
+            const arabicChars = (raw.match(/[\u0600-\u06FF]/g) || []).length;
+            const words = raw.split(/\s+/).filter(Boolean).length;
+            return arabicChars >= 4 && words >= 2 ? raw : '';
+        }
+
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0].value;
+    }
+
+    function makeStudentFromBatchUpdateRow(row, domIndex) {
+        const mainRadio = q('input[type="radio"][name^="Attend["]', row);
+        if (!mainRadio) return null;
+
+        const match = mainRadio.name.match(/^Attend\[(\d+)\]$/);
+        if (!match) return null;
+
+        const index = Number(match[1]);
+        const detailName = 'List[' + index + '].AttendStatusId';
+        const detailRadio = q('input[type="radio"][name="' + escapeAttr(detailName) + '"]', row);
+        if (!detailRadio) return null;
+
+        const name = extractVisibleStudentName(row);
+        if (!name) return null;
+
+        const studentIdName = 'List[' + index + '].StudentId';
+        const studentIdInput =
+            q('input[name="' + escapeAttr(studentIdName) + '"]', row) ||
+            q('input[type="hidden"][name="StudentId"]', row);
+
+        row.classList.add('msa-student-row');
+        row.dataset.msaIndex = String(index);
+
+        if (!row.dataset.msaOriginalOrder) {
+            row.dataset.msaOriginalOrder = String(domIndex);
+        }
+
+        return {
+            index,
+            row,
+            studentId: studentIdInput?.value || '',
+            name,
+            normalizedName: normalizeArabic(name),
+            originalOrder: Number(row.dataset.msaOriginalOrder),
+            layout: 'batch-update'
+        };
+    }
     function makeStudentFromRow(row, domIndex) {
         const mainRadio = q(
             'input[type="radio"][name^="Attend["]',
@@ -592,7 +972,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             name: studentNameInput.value || '',
             normalizedName: normalizeArabic(studentNameInput.value || ''),
             originalOrder: Number(row.dataset.msaOriginalOrder),
-            layout: 'row-save'
+            layout: 'legacy-row-save'
         };
     }
 
@@ -622,9 +1002,22 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         let mode = '';
         let students = [];
 
-        // الوضع 1: التحضير الأولي — بيانات الطالب مفهرسة List[i].StudentName
+        const saveForm =
+            q('#SaveAttendStudents') ||
+            q('#UpdateAttendStudents') ||
+            qa('form').find(form =>
+                /\/SchoolSchedule\/AttendStudents\/SaveAttendStudents/i.test(form.action || '')
+            ) ||
+            null;
+
+        const isUpdate =
+            saveForm?.id === 'UpdateAttendStudents' ||
+            String(q('input[name="isUpdate"]', saveForm || document)?.value || '').toLowerCase() === 'true';
+
+        // النظام الجديد - التحضير الأولي: بيانات الطالب ما زالت مفهرسة داخل List[i].
         const indexedNameInputs = qa(
-            'input[name^="List["][name$=".StudentName"]'
+            'input[name^="List["][name$=".StudentName"]',
+            saveForm || document
         );
 
         if (indexedNameInputs.length) {
@@ -632,18 +1025,29 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 .map(makeStudentFromIndexedNameInput)
                 .filter(Boolean);
 
-            if (students.length) mode = 'batch-form';
+            if (students.length) mode = isUpdate ? 'batch-update' : 'batch-create';
         }
 
-        // الوضع 2: الحضور محفوظ مسبقًا — كل صف مستقل وله زر .btnSendAttend
-        if (!students.length) {
+        // النظام الجديد - بعد الحفظ: الاسم لم يعد موجودًا كحقل، لكنه ظاهر داخل صف الطالب.
+        if (!students.length && isUpdate) {
+            const candidateRows = qa('tr.attend-row, table tbody tr', saveForm || document);
+
+            students = candidateRows
+                .map(makeStudentFromBatchUpdateRow)
+                .filter(Boolean);
+
+            if (students.length) mode = 'batch-update';
+        }
+
+        // توافق احتياطي مع الواجهة القديمة ذات الحفظ الفردي.
+        if (!students.length && qa('.btnSendAttend').length) {
             const candidateRows = qa('table tbody tr');
 
             students = candidateRows
                 .map(makeStudentFromRow)
                 .filter(Boolean);
 
-            if (students.length) mode = 'row-save';
+            if (students.length) mode = 'legacy-row-save';
         }
 
         students = dedupeStudents(students);
@@ -654,7 +1058,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
         const form =
             firstRow.closest('form') ||
+            saveForm ||
             q('#SaveAttendStudents') ||
+            q('#UpdateAttendStudents') ||
             qa('form').find(f =>
                 /SaveAttendStudents/i.test(f.action || '') ||
                 q('input[name^="List["][name$=".AttendStatusId"]', f)
@@ -672,15 +1078,14 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             ? [...parents][0]
             : null;
 
-        const eventRoot =
-            form ||
-            table ||
-            sortParent ||
-            document;
+        const eventRoot = form || table || sortParent || document;
 
+        const updateValue = String(q('input[name="isUpdate"]', form || document)?.value || '');
         const contextKey = [
             mode,
-            ...students.map(s => `${s.index}:${s.studentId}:${s.name}`)
+            form?.id || '',
+            updateValue,
+            ...students.map(s => s.index + ':' + s.studentId + ':' + s.name)
         ].join('|');
 
         return {
@@ -694,7 +1099,6 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             students
         };
     }
-
     function rawStudentStatus(student) {
         const idx = student.index;
 
@@ -845,44 +1249,216 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function attendanceRadioLabel(radio) {
+        if (!radio) return null;
+
+        if (radio.id) {
+            const root = radio.closest?.('tr, .student-row, .row, .card, li, form') || document;
+            try {
+                const label =
+                    q('label[for="' + escapeAttr(radio.id) + '"]', root) ||
+                    q('label[for="' + escapeAttr(radio.id) + '"]');
+                if (label) return label;
+            } catch (_) {}
+        }
+
+        return radio.closest?.('label') || null;
+    }
+
+    function nativeMainStatusLabel(student, statusDef) {
+        if (!student?.row || !statusDef) return null;
+
+        if (statusDef.main === '12') {
+            return q('label.check-btn-absence', student.row) ||
+                q('label[for="' + escapeAttr('option2-' + student.index) + '"]', student.row);
+        }
+
+        if (statusDef.main === '0') {
+            return q('label.check-btn-attend', student.row) ||
+                q('label[for="' + escapeAttr('option1-' + student.index) + '"]', student.row);
+        }
+
+        return attendanceRadioLabel(findStudentStatusRadio(student, 'main', statusDef.main));
+    }
+
+    function clickNativeMainStatus(student, statusDef) {
+        const radio = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!radio || radio.disabled) return false;
+        if (radio.checked) return true;
+
+        const label = nativeMainStatusLabel(student, statusDef);
+        if (label) {
+            try { label.click(); } catch (_) {}
+        } else {
+            try { radio.click(); } catch (_) {}
+        }
+
+        return true;
+    }
+
+    function clickNativeDetailStatus(student, statusDef) {
+        const radio = findStudentStatusRadio(student, 'detail', statusDef.detail);
+        if (!radio || radio.disabled) return false;
+        if (radio.checked) return true;
+
+        // الفحص اليدوي أظهر أن اختيار العذر يتم مباشرة على input نفسه.
+        try { radio.click(); } catch (_) {}
+        return true;
+    }
+
     function dispatchRadio(radio) {
         if (!radio || radio.disabled) return false;
         if (radio.checked) return true;
 
-        try {
-            radio.click();
-        } catch (_) {}
-
-        if (radio.checked) return true;
-
-        radio.checked = true;
-        radio.dispatchEvent(new Event('input', { bubbles: true }));
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        // يستخدم فقط للوظائف العامة القديمة؛ لا نرسل input/change يدويًا
+        // لأن مدرستي نفسها تطلق الأحداث عند click().
+        try { radio.click(); } catch (_) {}
         return radio.checked;
     }
 
-    function setStudentStatus(student, statusDef) {
+    async function waitForAttendanceState(student, predicate, timeoutMs = 1600) {
+        const started = Date.now();
+        let last = readStudentStatus(student);
+
+        while (Date.now() - started <= timeoutMs) {
+            last = readStudentStatus(student);
+            if (predicate(last)) return { ok: true, status: last };
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        return { ok: false, status: last };
+    }
+
+    function findStudentStatusRadio(student, kind, value) {
         const idx = student.index;
+        const name = kind === 'main'
+            ? `Attend[${idx}]`
+            : `List[${idx}].AttendStatusId`;
 
-        const main =
+        return (
             q(
-                `input[type="radio"][name="${escapeAttr(`Attend[${idx}]`)}"][value="${escapeAttr(statusDef.main)}"]`,
+                `input[type="radio"][name="${escapeAttr(name)}"][value="${escapeAttr(value)}"]`,
                 student.row
             ) ||
-            q(`input[type="radio"][name="${escapeAttr(`Attend[${idx}]`)}"][value="${escapeAttr(statusDef.main)}"]`);
+            q(`input[type="radio"][name="${escapeAttr(name)}"][value="${escapeAttr(value)}"]`)
+        );
+    }
 
-        const detail =
-            q(
-                `input[type="radio"][name="${escapeAttr(`List[${idx}].AttendStatusId`)}"][value="${escapeAttr(statusDef.detail)}"]`,
-                student.row
-            ) ||
-            q(`input[type="radio"][name="${escapeAttr(`List[${idx}].AttendStatusId`)}"][value="${escapeAttr(statusDef.detail)}"]`);
+    function setStudentStatus(student, statusDef) {
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+        if (isNewPlatform && statusDef?.main === '34') return false;
+        if (!student || !statusDef) return false;
 
-        if (!main || !detail || main.disabled || detail.disabled) return false;
+        const current = readStudentStatus(student);
+        if (current.key === statusDef.key) return true;
 
+        const main = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!main || main.disabled) return false;
+
+        // مهم في واجهة مدرستي الجديدة:
+        // سبب الغياب قد يكون disabled قبل اختيار «غائب»، لذلك يجب الضغط على الحالة الرئيسية أولاً.
         dispatchRadio(main);
+
+        // بعض الحالات (خصوصًا حاضر وغياب بدون عذر) تضبط التفصيل تلقائيًا بعد الضغط الرئيسي.
+        let afterMain = readStudentStatus(student);
+        if (afterMain.key === statusDef.key) return true;
+
+        const detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+        if (!detail || detail.disabled) return false;
+
         dispatchRadio(detail);
-        return main.checked && detail.checked;
+        return readStudentStatus(student).key === statusDef.key;
+    }
+
+    async function setStudentStatusReliable(student, statusDef) {
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+        if (isNewPlatform && statusDef?.main === '34') {
+            return { ok: false, reason: 'late-not-supported' };
+        }
+        if (!student || !statusDef) return { ok: false, reason: 'missing-data' };
+
+        const already = readStudentStatus(student);
+        if (already.key === statusDef.key) return { ok: true, reason: 'already-set' };
+
+        const main = findStudentStatusRadio(student, 'main', statusDef.main);
+        if (!main || main.disabled) {
+            return { ok: false, reason: 'main-radio-unavailable' };
+        }
+
+        // 1) نفس ما حدث في الفحص اليدوي: الضغط على label الحالة الرئيسية فقط.
+        if (!clickNativeMainStatus(student, statusDef)) {
+            return { ok: false, reason: 'main-native-click-failed' };
+        }
+
+        // 2) ننتظر حتى تصبح القيمة الرئيسية فعلًا 12 للغائب أو 0 للحاضر.
+        const mainChanged = await waitForAttendanceState(
+            student,
+            current => current.main === statusDef.main,
+            1600
+        );
+
+        if (!mainChanged.ok) {
+            return {
+                ok: false,
+                reason: 'main-did-not-change-after-native-label-click',
+                actualKey: mainChanged.status?.key || '',
+                actualMain: mainChanged.status?.main || '',
+                actualDetail: mainChanged.status?.detail || ''
+            };
+        }
+
+        // إذا كانت مدرستي ضبطت «بدون عذر» تلقائيًا وصار الهدف صحيحًا، لا نلمس شيئًا آخر.
+        if (mainChanged.status?.key === statusDef.key) {
+            return { ok: true, reason: 'native-main-click-completed-target' };
+        }
+
+        // 3) للغياب بعذر فقط غالبًا نحتاج تغيير التفصيل من الافتراضي 2 إلى 1.
+        let detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+
+        if (!detail || detail.disabled) {
+            const ready = await waitForAttendanceState(
+                student,
+                () => {
+                    detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+                    return !!detail && !detail.disabled;
+                },
+                1600
+            );
+
+            if (!ready.ok && (!detail || detail.disabled)) {
+                return {
+                    ok: false,
+                    reason: 'detail-not-ready-after-main-click',
+                    actualKey: ready.status?.key || '',
+                    actualMain: ready.status?.main || '',
+                    actualDetail: ready.status?.detail || ''
+                };
+            }
+        }
+
+        // 4) نفس الفحص اليدوي: الضغط المباشر على input العذر، دون أحداث إضافية مصطنعة.
+        if (!clickNativeDetailStatus(student, statusDef)) {
+            return { ok: false, reason: 'detail-native-click-failed' };
+        }
+
+        // 5) نجاح صارم: يجب أن تصبح الحالة النهائية المطلوبة فعلًا.
+        const verified = await waitForAttendanceState(
+            student,
+            current => current.key === statusDef.key,
+            1600
+        );
+
+        if (verified.ok) {
+            return { ok: true, reason: 'verified-exact-native-flow' };
+        }
+
+        return {
+            ok: false,
+            reason: 'final-state-not-reached',
+            actualKey: verified.status?.key || '',
+            actualMain: verified.status?.main || '',
+            actualDetail: verified.status?.detail || ''
+        };
     }
 
     function clearStudentStatus(student) {
@@ -1111,14 +1687,25 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         const progress = q('[data-role="progress"]', root);
         const pct = c.total ? Math.round((c.selected / c.total) * 100) : 0;
 
-        if (ready) ready.classList.toggle('is-ready', c.unset === 0 && c.total > 0);
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+
+        if (ready) ready.classList.toggle('is-ready', isNewPlatform ? c.total > 0 : c.unset === 0 && c.total > 0);
         if (readyMain) {
-            readyMain.textContent = c.unset === 0
-                ? '✓ الحضور مكتمل وجاهز للمراجعة والحفظ'
-                : `باقي ${c.unset} طالب لم تحدد حالتهم`;
+            if (isNewPlatform) {
+                const parts = [c.total + ' طالب'];
+                if (c.absent) parts.push(c.absent + ' غائب');
+                if (c.late) parts.push(c.late + ' متأخر');
+                readyMain.textContent = parts.join(' — ') + ' — راجع الحالات قبل الحفظ';
+            } else {
+                readyMain.textContent = c.unset === 0
+                    ? '✓ الحضور مكتمل وجاهز للمراجعة والحفظ'
+                    : 'باقي ' + c.unset + ' طالب لم تحدد حالتهم';
+            }
         }
-        if (readyCount) readyCount.textContent = `${c.selected}/${c.total}`;
-        if (progress) progress.style.width = `${pct}%`;
+        if (readyCount) readyCount.textContent = isNewPlatform
+            ? (c.absent + c.late) + ' استثناء'
+            : c.selected + '/' + c.total;
+        if (progress) progress.style.width = (isNewPlatform ? 100 : pct) + '%';
 
         for (const student of state.students) {
             const status = readStudentStatus(student);
@@ -1142,12 +1729,28 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
     function applyVisibility() {
         const queryText = normalizeArabic(state.query);
+        const queryTokens = queryText.split(/\s+/).filter(Boolean);
 
         for (const student of state.students) {
-            const matchesQuery =
-                !queryText ||
-                student.normalizedName.includes(queryText) ||
-                String(student.studentId).includes(queryText);
+            const normalizedName = student.normalizedName || '';
+            const studentId = String(student.studentId || '');
+
+            let matchesQuery = true;
+
+            if (queryTokens.length) {
+                const allNumeric = queryTokens.every(token => /^\d+$/.test(token));
+
+                if (allNumeric) {
+                    matchesQuery = studentId.includes(queryTokens.join('')) ||
+                        queryTokens.every(token => studentId.includes(token));
+                } else {
+                    // البحث لا يعتمد على ترتيب كلمات الاسم:
+                    // "أحمد عسيري" و"عسيري أحمد" يعيدان نفس الطالب.
+                    matchesQuery = queryTokens.every(token =>
+                        normalizedName.includes(token) || studentId.includes(token)
+                    );
+                }
+            }
 
             const visible = matchesQuery && studentMatchesFilter(student);
             student.row.classList.toggle('msa-row-hidden', !visible);
@@ -1199,6 +1802,8 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         applyVisibility();
         if (['priority', 'unset-first', 'absent-first', 'late-first'].includes(state.sort)) applySort();
         updateSaveAllUi();
+        updateSaveAvailabilityUi();
+        updateAttendanceImportUi();
     }
 
     function toast(message) {
@@ -1565,6 +2170,45 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function reportSections(includePresent = true) {
+        if (isNewPlatformMode()) {
+            const sections = [];
+            if (includePresent) sections.push([STATUS.PRESENT.key, 'حاضر']);
+            sections.push(
+                [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
+                [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر']
+            );
+            return sections;
+        }
+
+        const sections = [];
+        if (includePresent) sections.push([STATUS.PRESENT.key, 'حاضر']);
+        sections.push(
+            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
+            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
+            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
+            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
+            ['unset', 'غير محدد']
+        );
+        return sections;
+    }
+
+    function reportStatusLabel(status) {
+        if (!isNewPlatformMode()) return statusLabel(status);
+        if (status.key === STATUS.PRESENT.key) return STATUS.PRESENT.label;
+        if (status.key === STATUS.ABSENT_EXCUSED.key) return STATUS.ABSENT_EXCUSED.label;
+        if (status.key === STATUS.ABSENT_UNEXCUSED.key) return STATUS.ABSENT_UNEXCUSED.label;
+        return 'حالة سابقة';
+    }
+
+    function reportSummaryText(counts) {
+        if (isNewPlatformMode()) {
+            return `الإجمالي: ${counts.total} | حاضر: ${counts.present} | غائب: ${counts.absent}`;
+        }
+
+        return `الإجمالي: ${counts.total} | حاضر: ${counts.present} | غائب: ${counts.absent} | متأخر: ${counts.late} | غير محدد: ${counts.unset}`;
+    }
+
     function reportData() {
         const groups = {
             present: [],
@@ -1596,15 +2240,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         if (data.meta.time) lines.push(`الوقت: ${data.meta.time}`);
         if (data.meta.date) lines.push(`التاريخ: ${[data.meta.day, data.meta.date].filter(Boolean).join(' — ')}`);
         if (data.meta.hijriDate) lines.push(`التاريخ الهجري: ${data.meta.hijriDate}`);
-        lines.push(`الإجمالي: ${c.total} | حاضر: ${c.present} | غائب: ${c.absent} | متأخر: ${c.late} | غير محدد: ${c.unset}`);
+        lines.push(reportSummaryText(c));
 
-        const sections = [
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(false);
 
         for (const [key, label] of sections) {
             const list = data.groups[key];
@@ -1642,7 +2280,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 i + 1,
                 student.name,
                 student.studentId,
-                statusLabel(readStudentStatus(student))
+                reportStatusLabel(readStudentStatus(student))
             ]);
         });
 
@@ -1662,14 +2300,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
     function reportHtmlBody() {
         const data = reportData();
-        const sections = [
-            [STATUS.PRESENT.key, 'حاضر'],
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(true);
 
         const groupsHtml = sections.map(([key, label]) => {
             const list = data.groups[key] || [];
@@ -1699,9 +2330,11 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 <div><span>الإجمالي</span><b>${c.total}</b></div>
                 <div><span>حاضر</span><b>${c.present}</b></div>
                 <div><span>غائب</span><b>${c.absent}</b></div>
-                <div><span>متأخر</span><b>${c.late}</b></div>
-                <div><span>غير محدد</span><b>${c.unset}</b></div>
-                <div><span>مكتمل</span><b>${c.selected}/${c.total}</b></div>
+                ${isNewPlatformMode()
+                    ? ''
+                    : `<div><span>متأخر</span><b>${c.late}</b></div>
+                       <div><span>غير محدد</span><b>${c.unset}</b></div>
+                       <div><span>مكتمل</span><b>${c.selected}/${c.total}</b></div>`}
             </div>
             <div class="msa-report-groups">${groupsHtml}</div>`;
     }
@@ -1716,7 +2349,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <title>تقرير حضور الحصة</title>
 <style>
-body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl}h1{font-size:22px;margin:0 0 8px}.meta{font-size:12px;color:#64748b;margin-bottom:14px}.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:14px 0}.summary div{border:1px solid #dfe5ea;border-radius:8px;padding:8px;text-align:center}.summary b{display:block;font-size:20px}.groups{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.group{border:1px solid #dfe5ea;border-radius:9px;padding:10px;break-inside:avoid}.group h3{font-size:14px;margin:0 0 6px}.group ol{margin:0;padding-inline-start:22px}.group li{font-size:12px;margin:3px 0}.footer{margin-top:18px;padding-top:8px;border-top:1px solid #ddd;font-size:10px;color:#64748b}@media print{body{margin:12mm}.no-print{display:none}.summary{grid-template-columns:repeat(6,1fr)}}
+body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl}h1{font-size:22px;margin:0 0 8px}.meta{font-size:12px;color:#64748b;margin-bottom:14px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:14px 0}.summary div{border:1px solid #dfe5ea;border-radius:8px;padding:8px;text-align:center}.summary b{display:block;font-size:20px}.groups{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.group{border:1px solid #dfe5ea;border-radius:9px;padding:10px;break-inside:avoid}.group h3{font-size:14px;margin:0 0 6px}.group ol{margin:0;padding-inline-start:22px}.group li{font-size:12px;margin:3px 0}.footer{margin-top:18px;padding-top:8px;border-top:1px solid #ddd;font-size:10px;color:#64748b}@media print{body{margin:12mm}.no-print{display:none}.summary{grid-template-columns:repeat(auto-fit,minmax(100px,1fr))}}
 </style></head><body>`);
 
         const data = reportData();
@@ -1730,16 +2363,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             data.meta.hijriDate ? `الهجري: ${data.meta.hijriDate}` : ''
         ].filter(Boolean).map(escapeHtml).join(' &nbsp; | &nbsp; ');
         win.document.write(`<div class="meta">${printMeta}${printMeta ? '<br>' : ''}تم الإنشاء: ${escapeHtml(data.meta.generatedAt)}</div>`);
-        win.document.write(`<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div><div>متأخر<b>${c.late}</b></div><div>غير محدد<b>${c.unset}</b></div><div>مكتمل<b>${c.selected}/${c.total}</b></div></div>`);
+        const printSummary = isNewPlatformMode()
+            ? `<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div></div>`
+            : `<div class="summary"><div>الإجمالي<b>${c.total}</b></div><div>حاضر<b>${c.present}</b></div><div>غائب<b>${c.absent}</b></div><div>متأخر<b>${c.late}</b></div><div>غير محدد<b>${c.unset}</b></div><div>مكتمل<b>${c.selected}/${c.total}</b></div></div>`;
+        win.document.write(printSummary);
 
-        const sections = [
-            [STATUS.PRESENT.key, 'حاضر'],
-            [STATUS.ABSENT_EXCUSED.key, 'غائب بعذر'],
-            [STATUS.ABSENT_UNEXCUSED.key, 'غائب بدون عذر'],
-            [STATUS.LATE_EXCUSED.key, 'متأخر بعذر'],
-            [STATUS.LATE_UNEXCUSED.key, 'متأخر بدون عذر'],
-            ['unset', 'غير محدد']
-        ];
+        const sections = reportSections(true);
         win.document.write('<div class="groups">');
         for (const [key, label] of sections) {
             const list = data.groups[key] || [];
@@ -1834,14 +2463,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         state.savedSignatures = new Map();
         state.saveFailures = [];
 
-        if (state.mode !== 'row-save') return;
+        if (state.mode !== 'legacy-row-save') return;
         for (const student of state.students) {
             state.savedSignatures.set(student.index, rowSaveSignature(student));
         }
     }
 
     function dirtyRowSaveStudents() {
-        if (state.mode !== 'row-save') return [];
+        if (state.mode !== 'legacy-row-save') return [];
 
         return state.students.filter(student => {
             const baseline = state.savedSignatures.get(student.index);
@@ -1862,7 +2491,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const retryBtn = q('[data-action="retry-save"]', root);
         const countEl = q('[data-role="save-count"]', root);
 
-        const visible = state.mode === 'row-save';
+        const visible = state.mode === 'legacy-row-save';
         panel?.classList.toggle('is-visible', visible);
         if (!visible) return;
 
@@ -2097,7 +2726,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     }
 
     async function runSaveQueue(targets, retryMode = false) {
-        if (state.mode !== 'row-save' || state.saveAllRunning) return;
+        if (state.mode !== 'legacy-row-save' || state.saveAllRunning) return;
 
         targets = [...new Map(
             (targets || [])
@@ -2265,6 +2894,2151 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         runSaveQueue(targets, true);
     }
 
+
+    function importHeaderKey(value) {
+        return normalizeArabic(toEnglishDigits(cleanText(value || '')));
+    }
+
+    const IMPORT_FIELD_ALIASES = Object.freeze({
+        date: [
+            'التاريخ', 'تاريخ', 'تاريخ الحصه', 'تاريخ الحضور',
+            'date', 'lesson date', 'attendance date', 'session date'
+        ],
+        classroom: [
+            'الفصل', 'الشعبه', 'الفصل الدراسي', 'اسم الفصل', 'اسم الشعبه',
+            'class', 'classroom', 'section', 'class name'
+        ],
+        period: [
+            'رقم الحصه', 'الحصه', 'رقم الحصه الدراسيه', 'ترتيب الحصه',
+            'period', 'period number', 'slot', 'slot number', 'lesson number', 'lecture number'
+        ],
+        studentName: [
+            'اسم الطالب', 'الطالب', 'اسم الطالبه', 'student name', 'student', 'learner name'
+        ],
+        studentId: [
+            'رقم الطالب', 'معرف الطالب', 'student id', 'student number', 'learner id'
+        ],
+        civilId: [
+            'السجل المدني', 'رقم السجل المدني', 'رقم الهويه', 'رقم الهوية', 'هوية الطالب',
+            'civil id', 'national id', 'identity number', 'national identity'
+        ],
+        email: [
+            'البريد', 'البريد التعليمي', 'البريد الالكتروني', 'البريد الإلكتروني', 'الايميل', 'الإيميل',
+            'email', 'e-mail', 'student email', 'student account', 'account', 'username'
+        ],
+        status: [
+            'حاله الحضور', 'حالة الحضور', 'الحضور', 'وضع الحضور',
+            'attendance status', 'attendance', 'presence status', 'status'
+        ],
+        excuse: [
+            'العذر', 'حاله العذر', 'نوع العذر', 'excuse', 'excuse status', 'excused'
+        ],
+        reason: [
+            'سبب العذر', 'تفاصيل العذر', 'مبرر الغياب', 'excuse reason', 'reason', 'absence reason'
+        ],
+        subject: [
+            'الماده', 'اسم الماده', 'subject', 'subject name', 'course'
+        ],
+        lesson: [
+            'الدرس', 'عنوان الدرس', 'موضوع الدرس', 'lesson', 'lesson title', 'topic'
+        ]
+    });
+
+    function headerFieldScore(header, field) {
+        const h = importHeaderKey(header);
+        if (!h) return 0;
+
+        const aliases = IMPORT_FIELD_ALIASES[field] || [];
+        let best = 0;
+
+        for (const alias of aliases) {
+            const a = importHeaderKey(alias);
+            if (!a) continue;
+            if (h === a) best = Math.max(best, 100);
+            else if (a.length >= 4 && (h.includes(a) || a.includes(h))) best = Math.max(best, 70);
+        }
+
+        if (field === 'date' && h.includes('تاريخ')) best = Math.max(best, 75);
+        if (field === 'classroom' && (h.includes('فصل') || h.includes('شعب'))) best = Math.max(best, 75);
+        if (field === 'period' && h.includes('حصه')) best = Math.max(best, h.includes('رقم') ? 90 : 72);
+        if (field === 'studentName' && h.includes('اسم') && (h.includes('طالب') || h.includes('student'))) best = Math.max(best, 90);
+        if (field === 'studentId' && (h.includes('معرف') || (h.includes('رقم') && h.includes('طالب')))) best = Math.max(best, 85);
+        if (field === 'civilId' && (h.includes('سجل') || h.includes('هويه') || h.includes('هوية'))) best = Math.max(best, 92);
+        if (field === 'email' && (h.includes('بريد') || h.includes('ايميل') || h.includes('email') || h.includes('account'))) best = Math.max(best, 92);
+        if (field === 'status' && h.includes('حضور') && (h.includes('حاله') || h === 'الحضور')) best = Math.max(best, 92);
+        if (field === 'excuse' && h.includes('عذر') && !h.includes('سبب')) best = Math.max(best, 90);
+        if (field === 'reason' && h.includes('سبب') && h.includes('عذر')) best = Math.max(best, 95);
+        if (field === 'subject' && h.includes('ماده')) best = Math.max(best, 90);
+        if (field === 'lesson' && (h.includes('درس') || h.includes('موضوع'))) best = Math.max(best, 82);
+
+        return best;
+    }
+
+    function detectImportColumnMap(headerRow) {
+        const fields = ['date', 'classroom', 'period', 'studentName', 'status', 'studentId', 'civilId', 'email', 'excuse', 'reason', 'subject', 'lesson'];
+        const required = new Set(['date', 'classroom', 'period', 'studentName', 'status']);
+        const used = new Set();
+        const map = {};
+        let score = 0;
+        let requiredCount = 0;
+
+        for (const field of fields) {
+            let bestIndex = -1;
+            let bestScore = 0;
+
+            for (let i = 0; i < headerRow.length; i++) {
+                if (used.has(i)) continue;
+                const s = headerFieldScore(headerRow[i], field);
+                if (s > bestScore) {
+                    bestScore = s;
+                    bestIndex = i;
+                }
+            }
+
+            const threshold = required.has(field) ? 70 : 80;
+            if (bestIndex >= 0 && bestScore >= threshold) {
+                map[field] = bestIndex;
+                used.add(bestIndex);
+                score += bestScore;
+                if (required.has(field)) requiredCount++;
+            }
+        }
+
+        return { map, score, requiredCount };
+    }
+
+    function findAttendanceSheetLayout(workbook) {
+        let best = null;
+
+        for (const sheetName of workbook.SheetNames || []) {
+            const sheet = workbook.Sheets[sheetName];
+            if (!sheet) continue;
+
+            const rows = window.XLSX.utils.sheet_to_json(sheet, {
+                header: 1,
+                defval: '',
+                raw: true,
+                blankrows: false
+            });
+
+            const scanRows = Math.min(rows.length, 25);
+            for (let rowIndex = 0; rowIndex < scanRows; rowIndex++) {
+                const row = Array.isArray(rows[rowIndex]) ? rows[rowIndex] : [];
+                const detected = detectImportColumnMap(row);
+
+                if (detected.requiredCount < 5) continue;
+
+                const candidate = {
+                    sheetName,
+                    rows,
+                    headerRowIndex: rowIndex,
+                    headerRow: row.map(value => cleanText(value)),
+                    map: detected.map,
+                    score: detected.score
+                };
+
+                if (!best || candidate.score > best.score) best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    function normalizeImportDate(value) {
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+            const y = value.getFullYear();
+            const m = String(value.getMonth() + 1).padStart(2, '0');
+            const d = String(value.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + d;
+        }
+
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            try {
+                const parsed = window.XLSX?.SSF?.parse_date_code?.(value);
+                if (parsed?.y && parsed?.m && parsed?.d) {
+                    return String(parsed.y).padStart(4, '0') + '-' +
+                        String(parsed.m).padStart(2, '0') + '-' +
+                        String(parsed.d).padStart(2, '0');
+                }
+            } catch (_) {}
+        }
+
+        const raw = toEnglishDigits(cleanText(value || ''));
+        if (!raw) return '';
+
+        let match = raw.match(/\b(20\d{2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\b/);
+        if (match) {
+            return match[1] + '-' + match[2].padStart(2, '0') + '-' + match[3].padStart(2, '0');
+        }
+
+        match = raw.match(/\b(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(20\d{2})\b/);
+        if (match) {
+            return match[3] + '-' + match[2].padStart(2, '0') + '-' + match[1].padStart(2, '0');
+        }
+
+        return '';
+    }
+
+    function normalizePeriodNumber(value) {
+        if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+
+        const rawDigits = toEnglishDigits(cleanText(value || ''));
+        const digitMatch = rawDigits.match(/\b(\d{1,2})\b/);
+        if (digitMatch) return String(Number(digitMatch[1]));
+
+        const text = normalizeArabic(rawDigits);
+        const words = [
+            [['الاول', 'الاولي', 'اول', 'اولي', 'first'], '1'],
+            [['الثاني', 'الثانيه', 'ثاني', 'ثانيه', 'second'], '2'],
+            [['الثالث', 'الثالثه', 'ثالث', 'ثالثه', 'third'], '3'],
+            [['الرابع', 'الرابعه', 'رابع', 'رابعه', 'fourth'], '4'],
+            [['الخامس', 'الخامسه', 'خامس', 'خامسه', 'fifth'], '5'],
+            [['السادس', 'السادسه', 'سادس', 'سادسه', 'sixth'], '6'],
+            [['السابع', 'السابعه', 'سابع', 'سابعه', 'seventh'], '7'],
+            [['الثامن', 'الثامنه', 'ثامن', 'ثامنه', 'eighth'], '8'],
+            [['التاسع', 'التاسعه', 'تاسع', 'تاسعه', 'ninth'], '9'],
+            [['العاشر', 'العاشره', 'عاشر', 'عاشره', 'tenth'], '10']
+        ];
+
+        for (const [aliases, num] of words) {
+            if (aliases.some(alias => text.includes(alias))) return num;
+        }
+
+        return '';
+    }
+
+    function classroomParts(value) {
+        const text = normalizeArabic(toEnglishDigits(cleanText(value || '')));
+        const tokens = text.split(' ').filter(Boolean);
+
+        const gradeMap = {
+            'الاول': '1', 'اول': '1', 'الاولي': '1', 'اولي': '1',
+            'الثاني': '2', 'ثاني': '2', 'الثانيه': '2', 'ثانيه': '2',
+            'الثالث': '3', 'ثالث': '3', 'الثالثه': '3', 'ثالثه': '3',
+            'الرابع': '4', 'رابع': '4', 'الرابعه': '4', 'رابعه': '4',
+            'الخامس': '5', 'خامس': '5', 'الخامسه': '5', 'خامسه': '5',
+            'السادس': '6', 'سادس': '6', 'السادسه': '6', 'سادسه': '6'
+        };
+
+        const levelMap = {
+            'ابتدائي': 'ابتدائي',
+            'الابتدائي': 'ابتدائي',
+            'متوسط': 'متوسط',
+            'المتوسط': 'متوسط',
+            'ثانوي': 'ثانوي',
+            'الثانوي': 'ثانوي'
+        };
+
+        const sectionMap = {
+            'ا': '1', 'أ': '1', '1': '1',
+            'ب': '2', '2': '2',
+            'ج': '3', '3': '3',
+            'د': '4', '4': '4',
+            'ه': '5', '5': '5',
+            'و': '6', '6': '6'
+        };
+
+        let grade = '';
+        let level = '';
+        let section = '';
+        let levelIndex = -1;
+
+        for (let i = 0; i < tokens.length; i++) {
+            if (!grade && gradeMap[tokens[i]]) grade = gradeMap[tokens[i]];
+            if (!level && levelMap[tokens[i]]) {
+                level = levelMap[tokens[i]];
+                levelIndex = i;
+            }
+        }
+
+        const sectionCandidates = levelIndex >= 0 ? tokens.slice(levelIndex + 1) : tokens.slice(1);
+        for (const token of sectionCandidates) {
+            if (sectionMap[token]) {
+                section = sectionMap[token];
+                break;
+            }
+        }
+
+        const key = grade && level
+            ? [grade, level, section || '-'].join('|')
+            : text;
+
+        return { text, tokens, grade, level, section, key };
+    }
+
+    function classroomSimilarity(a, b) {
+        const x = classroomParts(a);
+        const y = classroomParts(b);
+
+        if (!x.text || !y.text) return 0;
+        if (x.text === y.text) return 1;
+
+        if (x.grade && x.level && y.grade && y.level) {
+            if (x.grade !== y.grade || x.level !== y.level) return 0;
+            if (x.section && y.section) return x.section === y.section ? 1 : 0.08;
+            return 0.84;
+        }
+
+        const xs = new Set(x.tokens);
+        const ys = new Set(y.tokens);
+        const intersection = [...xs].filter(token => ys.has(token)).length;
+        const union = new Set([...xs, ...ys]).size || 1;
+        return intersection / union;
+    }
+
+    function simpleTextSimilarity(a, b) {
+        const x = normalizeArabic(a || '');
+        const y = normalizeArabic(b || '');
+        if (!x || !y) return 0;
+        if (x === y) return 1;
+        if (x.includes(y) || y.includes(x)) return 0.82;
+
+        const xs = new Set(x.split(' ').filter(Boolean));
+        const ys = new Set(y.split(' ').filter(Boolean));
+        const intersection = [...xs].filter(token => ys.has(token)).length;
+        const union = new Set([...xs, ...ys]).size || 1;
+        return intersection / union;
+    }
+
+    function normalizePersonName(value) {
+        return normalizeArabic(value || '')
+            .split(' ')
+            .filter(token => token && token !== 'الطالب' && token !== 'الطالبه')
+            .join(' ');
+    }
+
+    function personNameSignature(value) {
+        return normalizePersonName(value)
+            .split(' ')
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'ar'))
+            .join('|');
+    }
+
+    function canonicalPersonTokens(value) {
+        const removable = new Set([
+            'بن', 'ابن', 'بنت',
+            'اسم', 'الاسم', 'طالب', 'طالبه', 'الطالب', 'الطالبه'
+        ]);
+
+        return normalizePersonName(value)
+            .split(' ')
+            .map(token => token.trim())
+            .filter(token => token && !removable.has(token))
+            .map(token => {
+                // يحيى -> يحيي بعد التطبيع العام، بينما بعض الصفحات تعرضه «يحي».
+                // نحصر القاعدة في أسماء الأشخاص فقط ولا نغيّر normalizeArabic العام.
+                if (token.length >= 4 && token.endsWith('يي')) {
+                    return token.slice(0, -1);
+                }
+                return token;
+            });
+    }
+
+    function canonicalPersonName(value) {
+        return canonicalPersonTokens(value).join(' ');
+    }
+
+    function compactPersonName(value) {
+        return canonicalPersonName(value).replace(/\s+/g, '');
+    }
+
+    function personNameSimilarity(a, b) {
+        const aRaw = normalizePersonName(a);
+        const bRaw = normalizePersonName(b);
+        if (!aRaw || !bRaw) return 0;
+        if (aRaw === bRaw) return 1;
+
+        const aCanon = canonicalPersonName(a);
+        const bCanon = canonicalPersonName(b);
+        if (aCanon && bCanon && aCanon === bCanon) return 0.99;
+
+        const aCompact = compactPersonName(a);
+        const bCompact = compactPersonName(b);
+        if (aCompact && bCompact && aCompact === bCompact) return 0.98;
+
+        const aTokens = canonicalPersonTokens(a);
+        const bTokens = canonicalPersonTokens(b);
+        if (!aTokens.length || !bTokens.length) return 0;
+
+        const aSet = new Set(aTokens);
+        const bSet = new Set(bTokens);
+        const intersection = [...aSet].filter(token => bSet.has(token)).length;
+        const union = new Set([...aSet, ...bSet]).size || 1;
+        const jaccard = intersection / union;
+
+        const minLen = Math.min(aTokens.length, bTokens.length);
+        let samePosition = 0;
+        for (let i = 0; i < minLen; i++) {
+            if (aTokens[i] === bTokens[i]) samePosition++;
+        }
+        const ordered = samePosition / Math.max(aTokens.length, bTokens.length);
+
+        const firstLast =
+            aTokens[0] === bTokens[0] &&
+            aTokens[aTokens.length - 1] === bTokens[bTokens.length - 1]
+                ? 0.08
+                : 0;
+
+        return Math.min(0.97, jaccard * 0.68 + ordered * 0.24 + firstLast);
+    }
+
+    function rankPageStudentsByName(name, candidates) {
+        return (candidates || [])
+            .map(student => ({
+                student,
+                score: personNameSimilarity(name, student.name)
+            }))
+            .sort((a, b) => b.score - a.score);
+    }
+
+
+    function normalizeStudentId(value) {
+        return toEnglishDigits(cleanText(value || '')).replace(/\s+/g, '');
+    }
+
+    function normalizeCivilId(value) {
+        return toEnglishDigits(cleanText(value || ''))
+            .replace(/[^0-9]/g, '');
+    }
+
+    function normalizeEmail(value) {
+        return cleanText(value || '')
+            .replace(/^mailto:/i, '')
+            .replace(/\s+/g, '')
+            .toLowerCase();
+    }
+
+    function currentSchoolId() {
+        const params = new URLSearchParams(location.search);
+        return cleanText(
+            params.get('SchoolId') ||
+            params.get('schoolId') ||
+            q('[name="SchoolId"]')?.value ||
+            q('#hSchoolId')?.value ||
+            ''
+        );
+    }
+
+    function loadIdentityBridge() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(ATTENDANCE_IDENTITY_BRIDGE_KEY) || '{}');
+            return {
+                version: 2,
+                students: parsed?.students && typeof parsed.students === 'object' ? parsed.students : {},
+                emails: parsed?.emails && typeof parsed.emails === 'object' ? parsed.emails : {}
+            };
+        } catch (_) {
+            return { version: 2, students: {}, emails: {} };
+        }
+    }
+
+    function saveIdentityBridge() {
+        try {
+            localStorage.setItem(
+                ATTENDANCE_IDENTITY_BRIDGE_KEY,
+                JSON.stringify(
+                    attendanceImport.identityBridge ||
+                    { version: 2, students: {}, emails: {} }
+                )
+            );
+        } catch (_) {}
+    }
+
+    function rememberStudentIdentity(student, registryStudent) {
+        const studentId = normalizeStudentId(student?.studentId);
+        const account = normalizeEmail(registryStudent?.account);
+        if (!studentId || !account) return;
+
+        if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.students) attendanceImport.identityBridge.students = {};
+
+        attendanceImport.identityBridge.students[studentId] = {
+            account,
+            userGuid: cleanText(registryStudent?.userGuid || ''),
+            registryName: cleanText(registryStudent?.name || ''),
+            attendanceName: cleanText(student?.name || ''),
+            className: cleanText(registryStudent?.className || ''),
+            savedAt: new Date().toISOString()
+        };
+        saveIdentityBridge();
+    }
+
+    function rememberEmailAttendanceIdentity(record, student, registryStudent, method = '') {
+        const email = normalizeEmail(record?.email || registryStudent?.account);
+        if (!email || !student?.name) return;
+
+        if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.emails) attendanceImport.identityBridge.emails = {};
+
+        attendanceImport.identityBridge.emails[email] = {
+            attendanceName: cleanText(student.name || ''),
+            studentId: normalizeStudentId(student.studentId),
+            registryName: cleanText(registryStudent?.name || ''),
+            userGuid: cleanText(registryStudent?.userGuid || ''),
+            className: cleanText(record?.classroom || registryStudent?.className || ''),
+            method: cleanText(method || ''),
+            savedAt: new Date().toISOString()
+        };
+
+        if (student.studentId && registryStudent?.account) {
+            rememberStudentIdentity(student, registryStudent);
+        } else {
+            saveIdentityBridge();
+        }
+    }
+
+    function parseRegistryStudentCard(card) {
+        const text = cleanText(card?.innerText || card?.textContent || '');
+        const account =
+            text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
+
+        const name = cleanText(text.split(/اسم\s+الفصل\s*:/i)[0]);
+        const className =
+            text.match(/اسم\s+الفصل\s*:\s*(.+?)(?=\s+(?:الايميل|الإيميل|البريد)\s*:|$)/i)?.[1]?.trim() || '';
+
+        const status =
+            text.match(/حالة\s+الطالب\s*:\s*(.+?)(?=\s+\d+\s|ملف الإنجاز|$)/i)?.[1]?.trim() || '';
+
+        const profile = [...(card?.querySelectorAll?.('a[href]') || [])]
+            .find(a => /\/Profile\/My/i.test(a.getAttribute('href') || ''));
+
+        let userGuid = '';
+        if (profile) {
+            try {
+                const url = new URL(profile.getAttribute('href'), location.origin);
+                userGuid = url.searchParams.get('UserId') || url.searchParams.get('userId') || '';
+            } catch (_) {}
+        }
+
+        return {
+            name,
+            normalizedName: normalizePersonName(name),
+            nameSignature: personNameSignature(name),
+            className,
+            classKey: classroomParts(className).key,
+            status,
+            account,
+            accountNormalized: normalizeEmail(account),
+            userGuid
+        };
+    }
+
+    function detectRegistryPages(doc) {
+        const paginationText = cleanText(doc.querySelector('#pagination-container')?.innerText || '');
+        const totalMatch = paginationText.match(/من\s+(\d+)/);
+        if (totalMatch) {
+            const total = Number(totalMatch[1]);
+            if (Number.isInteger(total) && total > 0 && total <= 500) return total;
+        }
+
+        const nums = [...doc.querySelectorAll('.pagination a[href], #pagination-container a[href]')]
+            .map(a => {
+                try {
+                    const url = new URL(a.getAttribute('href'), location.origin);
+                    return Number(url.searchParams.get('PageNumber') || url.searchParams.get('page') || 0);
+                } catch (_) {
+                    return 0;
+                }
+            })
+            .filter(n => Number.isInteger(n) && n > 0 && n <= 500);
+
+        return nums.length ? Math.max(...nums) : 1;
+    }
+
+    function normalizeRegistry(raw, schoolId) {
+        const unique = new Map();
+        for (const student of raw || []) {
+            if (!student?.name || !student?.accountNormalized) continue;
+            const key = student.userGuid
+                ? 'u:' + String(student.userGuid).toLowerCase()
+                : 'a:' + student.accountNormalized;
+            if (!unique.has(key)) unique.set(key, student);
+        }
+
+        return {
+            version: 1,
+            schoolId,
+            totalPages: 0,
+            uniqueStudents: unique.size,
+            students: [...unique.values()],
+            savedAt: new Date().toISOString()
+        };
+    }
+
+    function validRegistry(registry, schoolId) {
+        return !!(
+            registry &&
+            Array.isArray(registry.students) &&
+            registry.students.length &&
+            (!schoolId || !registry.schoolId || String(registry.schoolId).toLowerCase() === String(schoolId).toLowerCase())
+        );
+    }
+
+    function loadAttendanceRegistryCache() {
+        const schoolId = currentSchoolId();
+
+        for (const key of [ATTENDANCE_REGISTRY_STORAGE_KEY, ASSIGNMENT_REGISTRY_COMPAT_KEY]) {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                if (!validRegistry(parsed, schoolId)) continue;
+
+                const students = parsed.students.map(student => ({
+                    ...student,
+                    normalizedName: normalizePersonName(student.normalizedName || student.name),
+                    nameSignature: personNameSignature(student.name),
+                    classKey: classroomParts(student.className || '').key,
+                    accountNormalized: normalizeEmail(student.accountNormalized || student.account)
+                })).filter(student => student.name && student.accountNormalized);
+
+                if (!students.length) continue;
+                return {
+                    ...parsed,
+                    schoolId: parsed.schoolId || schoolId,
+                    uniqueStudents: students.length,
+                    students
+                };
+            } catch (_) {}
+        }
+
+        return null;
+    }
+
+    function saveAttendanceRegistryCache(registry) {
+        try {
+            localStorage.setItem(ATTENDANCE_REGISTRY_STORAGE_KEY, JSON.stringify(registry));
+        } catch (_) {}
+    }
+
+    async function fetchAttendanceRegistry(force = false) {
+        const schoolId = currentSchoolId();
+        if (!schoolId) throw new Error('تعذر تحديد SchoolId لبناء دليل طلاب مدرستي.');
+
+        if (!force && validRegistry(attendanceImport.registry, schoolId)) return attendanceImport.registry;
+
+        if (!force) {
+            const cached = loadAttendanceRegistryCache();
+            if (cached) {
+                const age = Date.now() - Date.parse(cached.savedAt || 0);
+                attendanceImport.registry = cached;
+                if (!Number.isFinite(age) || age <= ATTENDANCE_REGISTRY_MAX_AGE) return cached;
+            }
+        }
+
+        if (attendanceImport.registryLoading) return attendanceImport.registry;
+
+        attendanceImport.registryLoading = true;
+        attendanceImport.registryError = '';
+        updateAttendanceImportUi();
+
+        try {
+            const fetchPage = async pageNumber => {
+                const url = '/SchoolManagment/Actions/MyStudents?PageNumber=' +
+                    encodeURIComponent(pageNumber) +
+                    '&schoolId=' + encodeURIComponent(schoolId);
+                const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+                if (!response.ok) throw new Error('تعذر جلب دليل الطلاب (HTTP ' + response.status + ').');
+                const html = await response.text();
+                return new DOMParser().parseFromString(html, 'text/html');
+            };
+
+            const firstDoc = await fetchPage(1);
+            const totalPages = detectRegistryPages(firstDoc);
+            const raw = [];
+
+            const collect = doc => {
+                const cards = [...doc.querySelectorAll('#studentsDiv .card.p-3')];
+                raw.push(...cards.map(parseRegistryStudentCard).filter(student => student.name && student.accountNormalized));
+            };
+
+            collect(firstDoc);
+            for (let page = 2; page <= totalPages; page++) {
+                collect(await fetchPage(page));
+            }
+
+            const registry = normalizeRegistry(raw, schoolId);
+            registry.totalPages = totalPages;
+            if (!registry.students.length) throw new Error('لم أجد طلابًا صالحين في صفحة MyStudents.');
+
+            attendanceImport.registry = registry;
+            saveAttendanceRegistryCache(registry);
+            return registry;
+        } finally {
+            attendanceImport.registryLoading = false;
+            updateAttendanceImportUi();
+        }
+    }
+
+    function registryMaps() {
+        const students = attendanceImport.registry?.students || [];
+        const byName = new Map();
+        const bySignature = new Map();
+        const byEmail = new Map();
+
+        const add = (map, key, value) => {
+            if (!key) return;
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(value);
+        };
+
+        for (const student of students) {
+            add(byName, normalizePersonName(student.name), student);
+            add(bySignature, personNameSignature(student.name), student);
+            add(byEmail, normalizeEmail(student.account), student);
+        }
+
+        return { byName, bySignature, byEmail };
+    }
+
+    function resolveRegistryStudent(pageStudent, maps) {
+        const studentId = normalizeStudentId(pageStudent?.studentId);
+        const stored = studentId && attendanceImport.identityBridge?.students?.[studentId];
+        if (stored?.account) {
+            const matches = maps.byEmail.get(normalizeEmail(stored.account)) || [];
+            if (matches.length === 1) return { student: matches[0], method: 'studentId→email' };
+        }
+
+        const name = normalizePersonName(pageStudent?.name);
+        const exact = maps.byName.get(name) || [];
+        if (exact.length === 1) return { student: exact[0], method: 'madrasati-name' };
+
+        const signature = personNameSignature(pageStudent?.name);
+        const tokenMatches = maps.bySignature.get(signature) || [];
+        if (tokenMatches.length === 1) return { student: tokenMatches[0], method: 'madrasati-name-tokens' };
+
+        const currentClass = currentImportLessonIdentity().classroom;
+        const all = exact.length ? exact : tokenMatches;
+        if (all.length > 1 && currentClass) {
+            const sameClass = all.filter(candidate => classroomSimilarity(currentClass, candidate.className) >= 0.72);
+            if (sameClass.length === 1) return { student: sameClass[0], method: 'madrasati-name+class' };
+        }
+
+        return { student: null, method: '', candidates: all };
+    }
+
+    function normalizedTextMatches(value, aliases, mode = 'includes') {
+        const source = normalizeArabic(value || '');
+        if (!source) return false;
+
+        return (aliases || []).some(alias => {
+            const normalizedAlias = normalizeArabic(alias || '');
+            if (!normalizedAlias) return false;
+            return mode === 'exact'
+                ? source === normalizedAlias
+                : source.includes(normalizedAlias);
+        });
+    }
+
+    function normalizeImportedAttendance(record) {
+        const rawStatus = cleanText(record.status || '');
+        const rawExcuse = cleanText(record.excuse || '');
+        const reason = cleanText(record.reason || '');
+
+        const hasExcuse = (
+            (normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بعذر', 'مع عذر']) &&
+                !normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بدون عذر'])) ||
+            normalizedTextMatches(rawExcuse, ['نعم', 'yes', 'excused'], 'exact')
+        );
+
+        const hasNoExcuse = (
+            normalizedTextMatches(rawStatus + ' ' + rawExcuse, ['بدون عذر', 'غير معذور']) ||
+            normalizedTextMatches(rawExcuse, ['لا', 'no', 'unexcused'], 'exact')
+        );
+
+        if (
+            normalizedTextMatches(rawStatus, ['حاضر', 'حضور', 'present', 'attended'])
+        ) {
+            return { kind: 'supported', targetKey: STATUS.PRESENT.key, label: 'حاضر' };
+        }
+
+        if (
+            normalizedTextMatches(rawStatus, ['غائب', 'غياب', 'absent', 'absence'])
+        ) {
+            if (hasExcuse) {
+                return { kind: 'supported', targetKey: STATUS.ABSENT_EXCUSED.key, label: 'غائب بعذر' };
+            }
+            if (hasNoExcuse) {
+                return { kind: 'supported', targetKey: STATUS.ABSENT_UNEXCUSED.key, label: 'غائب بدون عذر' };
+            }
+            return {
+                kind: 'review',
+                targetKey: '',
+                label: 'غائب — العذر غير محدد',
+                reason: reason || 'لم يحدد الملف هل الغياب بعذر أو بدون عذر.'
+            };
+        }
+
+        if (
+            normalizedTextMatches(rawStatus, ['متأخر', 'تأخر', 'late', 'tardy'])
+        ) {
+            const targetKey = hasExcuse ? STATUS.LATE_EXCUSED.key : hasNoExcuse ? STATUS.LATE_UNEXCUSED.key : '';
+            if (isNewPlatformMode()) {
+                return {
+                    kind: 'supported',
+                    targetKey: STATUS.PRESENT.key,
+                    label: 'متأخر في الملف → حاضر في مدرستي',
+                    convertedFrom: 'late',
+                    originalLabel: hasExcuse ? 'متأخر بعذر' : hasNoExcuse ? 'متأخر بدون عذر' : 'متأخر',
+                    reason: 'واجهة مدرستي الحديثة لا تدعم حالة متأخر؛ حسب الإعداد المعتمد يتم تحويله إلى حاضر.'
+                };
+            }
+            if (targetKey) return { kind: 'supported', targetKey, label: STATUS_BY_KEY[targetKey].label };
+            return { kind: 'review', targetKey: '', label: 'متأخر — العذر غير محدد' };
+        }
+
+        if (
+            normalizedTextMatches(rawStatus, ['مستأذن', 'استئذان', 'مستاذن'])
+        ) {
+            return {
+                kind: 'unsupported',
+                targetKey: '',
+                label: 'مستأذن',
+                reason: 'لا توجد حالة مستأذن مباشرة في نموذج الحضور الحالي في مدرستي.'
+            };
+        }
+
+        if (normalizedTextMatches(rawStatus, ['هروب'])) {
+            return {
+                kind: 'unsupported',
+                targetKey: '',
+                label: 'هروب',
+                reason: 'لا توجد حالة هروب مباشرة في نموذج الحضور الحالي في مدرستي.'
+            };
+        }
+
+        return {
+            kind: 'review',
+            targetKey: '',
+            label: rawStatus || 'حالة غير معروفة',
+            reason: 'لم يتعرف السكربت على حالة الحضور في الملف.'
+        };
+    }
+
+    function lessonKeyForRecord(record) {
+        return [
+            record.date,
+            normalizePeriodNumber(record.period),
+            classroomParts(record.classroom).key
+        ].join('|');
+    }
+
+    function buildAttendanceImportIndex(dataset) {
+        const groups = new Map();
+        const byDatePeriod = new Map();
+
+        for (const record of dataset?.records || []) {
+            const period = normalizePeriodNumber(record.period);
+            const classInfo = classroomParts(record.classroom);
+            if (!record.date || !period || !classInfo.key) continue;
+
+            const key = [record.date, period, classInfo.key].join('|');
+            let group = groups.get(key);
+
+            if (!group) {
+                group = {
+                    key,
+                    date: record.date,
+                    period,
+                    classroom: record.classroom,
+                    classKey: classInfo.key,
+                    subject: record.subject || '',
+                    lesson: record.lesson || '',
+                    records: []
+                };
+                groups.set(key, group);
+
+                const dpKey = record.date + '|' + period;
+                if (!byDatePeriod.has(dpKey)) byDatePeriod.set(dpKey, []);
+                byDatePeriod.get(dpKey).push(group);
+            }
+
+            group.records.push(record);
+            if (!group.subject && record.subject) group.subject = record.subject;
+            if (!group.lesson && record.lesson) group.lesson = record.lesson;
+        }
+
+        return { groups, byDatePeriod, lessonCount: groups.size };
+    }
+
+    function importedStatusCounts(records) {
+        const out = {
+            total: records.length,
+            present: 0,
+            absentExcused: 0,
+            absentUnexcused: 0,
+            late: 0,
+            leave: 0,
+            other: 0
+        };
+
+        for (const record of records) {
+            const status = normalizeImportedAttendance(record);
+            if (status.convertedFrom === 'late' || status.label.startsWith('متأخر')) out.late++;
+            else if (status.targetKey === STATUS.PRESENT.key) out.present++;
+            else if (status.targetKey === STATUS.ABSENT_EXCUSED.key) out.absentExcused++;
+            else if (status.targetKey === STATUS.ABSENT_UNEXCUSED.key) out.absentUnexcused++;
+            else if (status.label === 'مستأذن') out.leave++;
+            else out.other++;
+        }
+
+        return out;
+    }
+
+    function parseAttendanceWorkbook(workbook, fileName) {
+        const layout = findAttendanceSheetLayout(workbook);
+        if (!layout) {
+            throw new Error(
+                'لم أجد ورقة تحتوي الأعمدة الأساسية: التاريخ، الفصل، رقم الحصة، اسم الطالب، حالة الحضور.'
+            );
+        }
+
+        const records = [];
+        let invalidRows = 0;
+
+        for (let i = layout.headerRowIndex + 1; i < layout.rows.length; i++) {
+            const row = Array.isArray(layout.rows[i]) ? layout.rows[i] : [];
+            const get = field => layout.map[field] == null ? '' : row[layout.map[field]];
+
+            const rawDate = get('date');
+            const classroom = cleanText(get('classroom'));
+            const period = normalizePeriodNumber(get('period'));
+            const studentName = cleanText(get('studentName'));
+            const status = cleanText(get('status'));
+
+            const hasAny = [rawDate, classroom, period, studentName, status].some(value => cleanText(value) !== '');
+            if (!hasAny) continue;
+
+            const date = normalizeImportDate(rawDate);
+            if (!date || !classroom || !period || !studentName || !status) {
+                invalidRows++;
+                continue;
+            }
+
+            records.push({
+                date,
+                classroom,
+                period,
+                subject: cleanText(get('subject')),
+                lesson: cleanText(get('lesson')),
+                studentName,
+                studentId: normalizeStudentId(get('studentId')),
+                civilId: normalizeCivilId(get('civilId')),
+                email: normalizeEmail(get('email')),
+                status,
+                excuse: cleanText(get('excuse')),
+                reason: cleanText(get('reason')),
+                sourceRow: i + 1
+            });
+
+            if (records.length > ATTENDANCE_IMPORT_MAX_ROWS) {
+                throw new Error('الملف يتجاوز الحد الحالي وهو ' + ATTENDANCE_IMPORT_MAX_ROWS.toLocaleString('en-US') + ' سجل حضور.');
+            }
+        }
+
+        if (!records.length) {
+            throw new Error('تم التعرف على الأعمدة، لكن لم أجد سجلات حضور صالحة داخل الورقة.');
+        }
+
+        const tempDataset = { records };
+        const tempIndex = buildAttendanceImportIndex(tempDataset);
+
+        const mapping = {};
+        for (const [field, index] of Object.entries(layout.map)) {
+            mapping[field] = layout.headerRow[index] || ('عمود ' + (index + 1));
+        }
+
+        return {
+            version: ATTENDANCE_IMPORT_DATA_VERSION,
+            fileName: fileName || 'attendance.xlsx',
+            importedAt: new Date().toISOString(),
+            sheetName: layout.sheetName,
+            headerRow: layout.headerRowIndex + 1,
+            mapping,
+            recordCount: records.length,
+            lessonCount: tempIndex.lessonCount,
+            invalidRows,
+            records
+        };
+    }
+
+    function persistAttendanceImportDataset(dataset) {
+        const serialized = JSON.stringify(dataset);
+
+        if (serialized.length > ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT) {
+            localStorage.removeItem(ATTENDANCE_IMPORT_STORAGE_KEY);
+            return {
+                persisted: false,
+                warning: 'تم استيراد الملف لهذه الصفحة، لكن حجمه كبير ولن يُحفظ بين الصفحات. يمكن لاحقًا نقل التخزين إلى IndexedDB للملفات الضخمة.'
+            };
+        }
+
+        try {
+            localStorage.setItem(ATTENDANCE_IMPORT_STORAGE_KEY, serialized);
+            return { persisted: true, warning: '' };
+        } catch (_) {
+            return {
+                persisted: false,
+                warning: 'تم استيراد الملف لهذه الصفحة، لكن تعذر حفظه محليًا في المتصفح.'
+            };
+        }
+    }
+
+    function loadAttendanceImportDataset() {
+        try {
+            const raw = localStorage.getItem(ATTENDANCE_IMPORT_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (parsed?.version !== ATTENDANCE_IMPORT_DATA_VERSION || !Array.isArray(parsed.records)) return null;
+            return parsed;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function ensureAttendanceImportLoaded() {
+        if (attendanceImport.loaded) return;
+        attendanceImport.loaded = true;
+        attendanceImport.dataset = loadAttendanceImportDataset();
+        attendanceImport.index = attendanceImport.dataset
+            ? buildAttendanceImportIndex(attendanceImport.dataset)
+            : null;
+        attendanceImport.registry = loadAttendanceRegistryCache();
+        attendanceImport.identityBridge = loadIdentityBridge();
+    }
+
+    function currentImportLessonIdentity() {
+        const meta = getSessionMeta();
+        const date = normalizeImportDate(meta.date);
+        const period = normalizePeriodNumber(meta.lectureId || meta.lecture);
+        const classroom = cleanText(meta.classroom || '');
+        const subject = cleanText(meta.subject || '');
+
+        return { meta, date, period, classroom, subject };
+    }
+
+    function findImportedLesson(identity) {
+        const index = attendanceImport.index;
+        if (!index || !identity.date || !identity.period) {
+            return {
+                status: 'missing-meta',
+                message: 'تعذر قراءة تاريخ الحصة أو رقمها من صفحة مدرستي.'
+            };
+        }
+
+        const candidates = index.byDatePeriod.get(identity.date + '|' + identity.period) || [];
+        if (!candidates.length) {
+            return {
+                status: 'not-found',
+                message: 'لا توجد في الملف حصة بتاريخ ' + identity.date + ' ورقم الحصة ' + identity.period + '.'
+            };
+        }
+
+        const ranked = candidates.map(group => {
+            const classScore = classroomSimilarity(identity.classroom, group.classroom);
+            const subjectScore = simpleTextSimilarity(identity.subject, group.subject);
+            return {
+                group,
+                classScore,
+                subjectScore,
+                score: classScore * 100 + subjectScore * 12
+            };
+        }).sort((a, b) => b.score - a.score);
+
+        const best = ranked[0];
+        const second = ranked[1];
+
+        if (!identity.classroom) {
+            if (candidates.length === 1 && best.subjectScore >= 0.8) {
+                return { status: 'matched', group: best.group, classScore: 0, subjectScore: best.subjectScore, warning: 'تمت المطابقة بالوقت والمادة لأن اسم الفصل لم يُقرأ.' };
+            }
+            return {
+                status: 'missing-class',
+                message: 'وجدت حصصًا في نفس التاريخ والرقم، لكن تعذر قراءة اسم الفصل من مدرستي بأمان.'
+            };
+        }
+
+        if (best.classScore < 0.72) {
+            return {
+                status: 'not-found',
+                message: 'وجدت حصة في نفس التاريخ والرقم، لكن الفصل لا يطابق الملف. الفصل في مدرستي: ' + identity.classroom + '.'
+            };
+        }
+
+        if (second && Math.abs(best.score - second.score) < 4 && best.classScore < 1) {
+            return {
+                status: 'ambiguous',
+                message: 'وجدت أكثر من حصة محتملة في الملف ولم أستطع اختيار الفصل بأمان.'
+            };
+        }
+
+        return {
+            status: 'matched',
+            group: best.group,
+            classScore: best.classScore,
+            subjectScore: best.subjectScore,
+            warning: best.classScore < 1 ? 'تمت مطابقة الفصل بعد توحيد مسماه.' : ''
+        };
+    }
+
+    function matchImportedStudents(group) {
+        const records = group.records || [];
+        const registryStudents = attendanceImport.registry?.students || [];
+
+        const add = (map, key, value) => {
+            if (!key) return;
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(value);
+        };
+
+        const registryByEmail = new Map();
+        for (const student of registryStudents) {
+            add(
+                registryByEmail,
+                normalizeEmail(student.accountNormalized || student.account),
+                student
+            );
+        }
+
+        const pageById = new Map();
+        const pageByName = new Map();
+        const pageByCanonical = new Map();
+        const pageByCompact = new Map();
+        const pageBySignature = new Map();
+
+        for (const student of state.students) {
+            const id = normalizeStudentId(student.studentId);
+            if (id) add(pageById, id, student);
+
+            add(pageByName, normalizePersonName(student.name), student);
+            add(pageByCanonical, canonicalPersonName(student.name), student);
+            add(pageByCompact, compactPersonName(student.name), student);
+            add(pageBySignature, personNameSignature(student.name), student);
+        }
+
+        const usedRecords = new Set();
+        const usedStudents = new Set();
+        const entries = [];
+        const ambiguous = [];
+        const bridgeFailures = [];
+
+        const stats = {
+            lessonRecords: records.length,
+            pageStudents: state.students.length,
+            recordsWithEmail: 0,
+            emailFoundInRegistry: 0,
+            emailMissingInRegistry: 0,
+            emailAmbiguousInRegistry: 0,
+            matchedByLearnedEmail: 0,
+            matchedByExcelExact: 0,
+            matchedByExcelCanonical: 0,
+            matchedByExcelCompact: 0,
+            matchedByExcelSignature: 0,
+            matchedByExcelSimilarity: 0,
+            matchedWithoutEmail: 0
+        };
+
+        const chooseAvailable = candidates =>
+            (candidates || []).filter(student => !usedStudents.has(student));
+
+        const resolveByExcelName = record => {
+            const exact = chooseAvailable(
+                pageByName.get(normalizePersonName(record.studentName)) || []
+            );
+            if (exact.length === 1) {
+                return { student: exact[0], method: 'excel-exact', score: 1, candidates: exact };
+            }
+            if (exact.length > 1) {
+                return { student: null, method: 'excel-exact-ambiguous', score: 1, candidates: exact };
+            }
+
+            const canonicalKey = canonicalPersonName(record.studentName);
+            const canonical = chooseAvailable(pageByCanonical.get(canonicalKey) || []);
+            if (canonicalKey && canonical.length === 1) {
+                return { student: canonical[0], method: 'excel-canonical', score: 0.99, candidates: canonical };
+            }
+            if (canonical.length > 1) {
+                return { student: null, method: 'excel-canonical-ambiguous', score: 0.99, candidates: canonical };
+            }
+
+            const compactKey = compactPersonName(record.studentName);
+            const compact = chooseAvailable(pageByCompact.get(compactKey) || []);
+            if (compactKey && compact.length === 1) {
+                return { student: compact[0], method: 'excel-compact', score: 0.98, candidates: compact };
+            }
+            if (compact.length > 1) {
+                return { student: null, method: 'excel-compact-ambiguous', score: 0.98, candidates: compact };
+            }
+
+            const signature = chooseAvailable(
+                pageBySignature.get(personNameSignature(record.studentName)) || []
+            );
+            if (signature.length === 1) {
+                return { student: signature[0], method: 'excel-signature', score: 0.96, candidates: signature };
+            }
+            if (signature.length > 1) {
+                return { student: null, method: 'excel-signature-ambiguous', score: 0.96, candidates: signature };
+            }
+
+            const availablePage = state.students.filter(student => !usedStudents.has(student));
+            const ranked = rankPageStudentsByName(record.studentName, availablePage);
+            const best = ranked[0];
+            const second = ranked[1];
+
+            // تشابه احتياطي فقط، وبشرط أن يكون أفضل اسم واضحًا جدًا عن الثاني.
+            if (
+                best &&
+                best.score >= 0.82 &&
+                (!second || best.score - second.score >= 0.14)
+            ) {
+                return {
+                    student: best.student,
+                    method: 'excel-unique-similarity',
+                    score: best.score,
+                    candidates: [best.student],
+                    ranked: ranked.slice(0, 3)
+                };
+            }
+
+            return {
+                student: null,
+                method: best ? 'excel-name-not-safe-enough' : 'excel-name-not-found',
+                score: best?.score || 0,
+                candidates: ranked.filter(item => item.score >= 0.58).slice(0, 3).map(item => item.student),
+                ranked: ranked.slice(0, 3)
+            };
+        };
+
+        for (const record of records) {
+            let student = null;
+            let confidence = '';
+            let registryStudent = null;
+
+            const email = normalizeEmail(record.email);
+            let emailVerified = false;
+
+            if (email) {
+                stats.recordsWithEmail++;
+                const registryCandidates = registryByEmail.get(email) || [];
+
+                if (registryCandidates.length === 1) {
+                    stats.emailFoundInRegistry++;
+                    registryStudent = registryCandidates[0];
+                    emailVerified = true;
+                } else if (registryCandidates.length > 1) {
+                    stats.emailAmbiguousInRegistry++;
+                    bridgeFailures.push({
+                        record,
+                        registryStudent: null,
+                        reason: 'email-ambiguous-in-registry',
+                        candidates: registryCandidates,
+                        ranked: []
+                    });
+                } else {
+                    stats.emailMissingInRegistry++;
+                    bridgeFailures.push({
+                        record,
+                        registryStudent: null,
+                        reason: 'email-not-in-registry',
+                        candidates: [],
+                        ranked: []
+                    });
+                }
+            }
+
+            // إذا تعلمنا سابقًا البريد ↔ StudentId/اسم التحضير نستخدمه أولًا.
+            if (emailVerified) {
+                const learned = attendanceImport.identityBridge?.emails?.[email];
+                if (learned) {
+                    const learnedId = normalizeStudentId(learned.studentId);
+                    if (learnedId) {
+                        const idCandidates = chooseAvailable(pageById.get(learnedId) || []);
+                        if (idCandidates.length === 1) {
+                            student = idCandidates[0];
+                            confidence = 'email-verified→learned-studentId';
+                            stats.matchedByLearnedEmail++;
+                        }
+                    }
+
+                    if (!student && learned.attendanceName) {
+                        const learnedName = chooseAvailable(
+                            pageByName.get(normalizePersonName(learned.attendanceName)) || []
+                        );
+                        if (learnedName.length === 1) {
+                            student = learnedName[0];
+                            confidence = 'email-verified→learned-attendance-name';
+                            stats.matchedByLearnedEmail++;
+                        }
+                    }
+                }
+            }
+
+            // الاسم الكامل من Excel هو مفتاح ربط صف التحضير؛ البريد يثبت هوية السجل فقط.
+            if (!student) {
+                const resolved = resolveByExcelName(record);
+
+                if (resolved.student) {
+                    student = resolved.student;
+                    confidence = (emailVerified ? 'email-verified→' : 'name-only→') + resolved.method;
+
+                    if (resolved.method === 'excel-exact') stats.matchedByExcelExact++;
+                    else if (resolved.method === 'excel-canonical') stats.matchedByExcelCanonical++;
+                    else if (resolved.method === 'excel-compact') stats.matchedByExcelCompact++;
+                    else if (resolved.method === 'excel-signature') stats.matchedByExcelSignature++;
+                    else if (resolved.method === 'excel-unique-similarity') stats.matchedByExcelSimilarity++;
+
+                    if (!emailVerified) stats.matchedWithoutEmail++;
+                } else if (resolved.method.includes('ambiguous')) {
+                    ambiguous.push({
+                        record,
+                        student: null,
+                        candidates: resolved.candidates || [],
+                        ranked: resolved.ranked || [],
+                        reason: 'أكثر من صف في صفحة التحضير يطابق اسم Excel بعد التطبيع.',
+                        confidence: resolved.method
+                    });
+                } else {
+                    bridgeFailures.push({
+                        record,
+                        registryStudent,
+                        reason: resolved.method,
+                        candidates: resolved.candidates || [],
+                        ranked: resolved.ranked || []
+                    });
+                }
+            }
+
+            if (student && !usedStudents.has(student)) {
+                usedStudents.add(student);
+                usedRecords.add(record);
+
+                if (emailVerified) {
+                    rememberEmailAttendanceIdentity(record, student, registryStudent, confidence);
+                }
+
+                const attendance = normalizeImportedAttendance(record);
+                entries.push({
+                    student,
+                    record,
+                    confidence,
+                    attendance,
+                    registryStudent
+                });
+            }
+        }
+
+        const unmatchedPage = state.students
+            .filter(student => !usedStudents.has(student))
+            .map(student => ({
+                ...student,
+                reason: 'لا يوجد سجل حضور مطابق لهذا الطالب بعد التحقق بالبريد ومطابقة اسم Excel مع صفحة التحضير.'
+            }));
+
+        const unmatchedFile = records.filter(record => !usedRecords.has(record));
+        const unresolvedBridgeFailures = bridgeFailures.filter(item => !usedRecords.has(item.record));
+
+        const supported = entries.filter(entry => entry.attendance.kind === 'supported');
+        const review = entries.filter(entry => entry.attendance.kind !== 'supported');
+        const convertedLate = supported.filter(entry => entry.attendance.convertedFrom === 'late');
+
+        const emailMatched = entries.filter(entry =>
+            String(entry.confidence || '').startsWith('email-verified→')
+        );
+
+        stats.matchedTotal = entries.length;
+        stats.unmatchedFile = unmatchedFile.length;
+        stats.unmatchedPage = unmatchedPage.length;
+
+        return {
+            entries,
+            supported,
+            review,
+            convertedLate,
+            emailMatched,
+            unmatchedPage,
+            unmatchedFile,
+            ambiguous,
+            bridgeFailures: unresolvedBridgeFailures,
+            bridgeStats: stats,
+            matchedCount: entries.length
+        };
+    }
+
+    function refreshAttendanceImportMatch(force = false) {
+        ensureAttendanceImportLoaded();
+
+        if (!attendanceImport.dataset || !attendanceImport.index) {
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            updateAttendanceImportUi();
+            return null;
+        }
+
+        const identity = currentImportLessonIdentity();
+        const signature = [
+            attendanceImport.dataset.importedAt,
+            identity.date,
+            identity.period,
+            normalizeArabic(identity.classroom),
+            normalizeArabic(identity.subject),
+            attendanceImport.registry?.savedAt || '',
+            state.contextKey
+        ].join('|');
+
+        if (!force && attendanceImport.currentMatch && attendanceImport.lastSignature === signature) {
+            updateAttendanceImportUi();
+            return attendanceImport.currentMatch;
+        }
+
+        const lesson = findImportedLesson(identity);
+        let match = { identity, lesson, signature };
+
+        if (lesson.status === 'matched') {
+            const students = matchImportedStudents(lesson.group);
+            match = {
+                ...match,
+                group: lesson.group,
+                students,
+                importedCounts: importedStatusCounts(lesson.group.records)
+            };
+        }
+
+        attendanceImport.currentMatch = match;
+        attendanceImport.lastSignature = signature;
+        updateAttendanceImportUi();
+        return match;
+    }
+
+    function sampleNames(items, mapper, limit = 6) {
+        return items.slice(0, limit).map(mapper).filter(Boolean);
+    }
+
+
+    function clearImportRowMarkers() {
+        for (const student of state.students || []) {
+            student.row?.classList?.remove(
+                'msa-import-review-row',
+                'msa-import-missing-row',
+                'msa-import-late-row',
+                'msa-import-flash'
+            );
+        }
+    }
+
+    function markImportRows(match) {
+        clearImportRowMarkers();
+        const students = match?.students;
+        if (!students) return;
+
+        for (const entry of students.review || []) {
+            entry.student?.row?.classList?.add('msa-import-review-row');
+        }
+        for (const student of students.unmatchedPage || []) {
+            student.row?.classList?.add('msa-import-missing-row');
+        }
+        for (const item of students.ambiguous || []) {
+            item.student?.row?.classList?.add('msa-import-review-row');
+        }
+        for (const entry of students.convertedLate || []) {
+            entry.student?.row?.classList?.add('msa-import-late-row');
+        }
+    }
+
+    function reviewCategoryItems(kind) {
+        const match = attendanceImport.currentMatch;
+        const s = match?.students;
+        if (!s) return [];
+
+        if (kind === 'review') return s.review || [];
+        if (kind === 'unmatched-page') return s.unmatchedPage || [];
+        if (kind === 'unmatched-file') return s.unmatchedFile || [];
+        if (kind === 'ambiguous') return s.ambiguous || [];
+        if (kind === 'late-converted') return s.convertedLate || [];
+        if (kind === 'bridge-failures') return s.bridgeFailures || [];
+        return [];
+    }
+
+    function reviewCategoryTitle(kind) {
+        if (kind === 'review') return 'حالات تحتاج مراجعة';
+        if (kind === 'unmatched-page') return 'طلاب موجودون في مدرستي ولا يوجد لهم سجل مطابق في ملف الحصة';
+        if (kind === 'unmatched-file') return 'سجلات موجودة في ملف الحصة ولا يوجد لها طالب مطابق في صفحة مدرستي';
+        if (kind === 'ambiguous') return 'مطابقات مبهمة';
+        if (kind === 'late-converted') return 'طلاب متأخرون في الملف وسيعاملون كحاضرين في مدرستي';
+        if (kind === 'bridge-failures') return 'تعثر ربط اسم Excel بصفحة الحصة';
+        return 'تفاصيل المطابقة';
+    }
+
+    function closeImportReview() {
+        q('[data-role="import-review-overlay"]', q('#' + APP_ID))?.remove();
+    }
+
+    function gotoImportStudent(index) {
+        const student = state.students.find(item => String(item.index) === String(index));
+        if (!student?.row) return;
+        closeImportReview();
+        student.row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        student.row.classList.add('msa-import-flash');
+        setTimeout(() => student.row?.classList?.remove('msa-import-flash'), 2200);
+    }
+
+    function importReviewRowsHtml(kind, items) {
+        if (!items.length) {
+            return '<div class="msa-import-review-empty">لا توجد عناصر في هذه الفئة.</div>';
+        }
+
+        const goButton = student =>
+            student?.index == null
+                ? ''
+                : '<button type="button" data-review-goto="' + escapeHtml(student.index) + '">اذهب للطالب</button>';
+
+        if (kind === 'review') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>سجل الملف</th><th>الحالة</th><th>سبب المراجعة</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml(item.record?.studentName || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.label || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.reason || 'تحتاج مراجعة يدوية.') + '</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'unmatched-page') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الطالب في مدرستي</th><th>السبب</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((student, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(student.name || '') + '</td>' +
+                    '<td>' + escapeHtml(student.reason || 'لا يوجد سجل مطابق في الملف.') + '</td>' +
+                    '<td>' + goButton(student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'unmatched-file') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الطالب في الملف</th><th>الحالة</th><th>صف المصدر</th>' +
+                '</tr></thead><tbody>' +
+                items.map((record, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(record.studentName || '') + '</td>' +
+                    '<td>' + escapeHtml(record.status || '') + '</td>' +
+                    '<td>' + escapeHtml(record.sourceRow || '') + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'ambiguous') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>السجلات المحتملة</th><th>السبب</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml((item.candidates || []).map(x => x.studentName).join('، ')) + '</td>' +
+                    '<td>' + escapeHtml(item.reason || 'مطابقة مبهمة.') + '</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'late-converted') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>طالب مدرستي</th><th>الحالة في الملف</th><th>الحالة التي ستطبق</th><th></th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => '<tr>' +
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td>' + escapeHtml(item.student?.name || '') + '</td>' +
+                    '<td>' + escapeHtml(item.attendance?.originalLabel || item.record?.status || 'متأخر') + '</td>' +
+                    '<td>حاضر</td>' +
+                    '<td>' + goButton(item.student) + '</td>' +
+                    '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'bridge-failures') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الملف</th><th>اسم الدليل</th><th>أقرب اسم في الحصة</th><th>الدرجة</th><th>السبب</th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => {
+                    const best = item.ranked?.[0];
+                    return '<tr>' +
+                        '<td>' + (i + 1) + '</td>' +
+                        '<td>' + escapeHtml(item.record?.studentName || '') + '</td>' +
+                        '<td>' + escapeHtml(item.registryStudent?.name || '—') + '</td>' +
+                        '<td>' + escapeHtml(best?.student?.name || '—') + '</td>' +
+                        '<td>' + escapeHtml(best ? Math.round(best.score * 100) + '%' : '—') + '</td>' +
+                        '<td>' + escapeHtml(item.reason || '') + '</td>' +
+                        '</tr>';
+                }).join('') +
+                '</tbody></table>';
+        }
+
+        return '';
+    }
+
+    function openImportApplyFailures() {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const items = attendanceImport.lastApply?.failures || [];
+        closeImportReview();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+
+        const rows = items.length
+            ? '<table class="msa-import-review-table"><thead><tr><th>#</th><th>الطالب</th><th>الحالة المطلوبة</th><th>السبب</th></tr></thead><tbody>' +
+              items.map((item, i) =>
+                  '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(item.name || '') + '</td><td>' +
+                  escapeHtml(item.target || '') + '</td><td>' + escapeHtml(item.reason || '') + '</td></tr>'
+              ).join('') +
+              '</tbody></table>'
+            : '<div class="msa-import-review-empty">لا توجد حالات فشل مسجلة.</div>';
+
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>حالات لم يتم تطبيقها (' + items.length + ')</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' + rows + '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+        });
+    }
+
+    function openImportReview(kind) {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const items = reviewCategoryItems(kind);
+        closeImportReview();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>' + escapeHtml(reviewCategoryTitle(kind)) + ' (' + items.length + ')</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' + importReviewRowsHtml(kind, items) + '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+            const goto = event.target.closest?.('[data-review-goto]');
+            if (goto) gotoImportStudent(goto.dataset.reviewGoto);
+        });
+    }
+
+
+    async function refreshAttendanceRegistry(force = true) {
+        attendanceImport.registryError = '';
+        try {
+            const registry = await fetchAttendanceRegistry(force);
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            refreshAttendanceImportMatch(true);
+            toast('تم تحديث دليل طلاب مدرستي: ' + registry.students.length + ' طالب.');
+            return registry;
+        } catch (error) {
+            attendanceImport.registryError = String(error?.message || error);
+            updateAttendanceImportUi();
+            toast('تعذر تحديث دليل طلاب مدرستي؛ ستستمر المطابقة الاحتياطية بالاسم.');
+            return null;
+        }
+    }
+
+
+
+    function updateAttendanceImportUi(root = q('#' + APP_ID)) {
+        if (!root) return;
+        ensureAttendanceImportLoaded();
+
+        const statusBox = q('[data-role="import-status"]', root);
+        const details = q('[data-role="import-details"]', root);
+        const refreshBtn = q('[data-action="refresh-import-match"]', root);
+        const registryBtn = q('[data-action="refresh-import-registry"]', root);
+        const applyBtn = q('[data-action="apply-import-attendance"]', root);
+        const detailsWrap = q('[data-role="import-details-wrap"]', root);
+        const issueCount = q('[data-role="import-issues"]', root);
+        const applyConfirm = q('[data-role="import-apply-confirm"]', root);
+        const applyConfirmMessage = q('[data-role="import-apply-confirm-message"]', root);
+        const applyProgressNode = q('[data-role="import-apply-progress"]', root);
+        const clearBtn = q('[data-action="clear-import-attendance"]', root);
+
+        if (!statusBox || !details) return;
+        if (detailsWrap) detailsWrap.hidden = !attendanceImport.dataset;
+        if (issueCount) issueCount.textContent = '';
+
+        if (applyConfirm) {
+            applyConfirm.hidden = !attendanceImport.applyConfirmationPending || attendanceImport.applyRunning;
+        }
+        if (applyConfirmMessage) applyConfirmMessage.textContent = attendanceImport.applyConfirmationMessage;
+        if (applyProgressNode) {
+            applyProgressNode.hidden = !attendanceImport.applyProgress;
+            applyProgressNode.textContent = attendanceImport.applyProgress;
+        }
+
+        statusBox.classList.remove('is-match', 'is-warning', 'is-error');
+        details.hidden = true;
+        details.innerHTML = '';
+
+        if (registryBtn) {
+            registryBtn.disabled = attendanceImport.registryLoading;
+            registryBtn.textContent = attendanceImport.registryLoading ? 'جاري تحديث الدليل...' : 'تحديث دليل الطلاب';
+        }
+
+        const dataset = attendanceImport.dataset;
+        if (!dataset) {
+            clearImportRowMarkers();
+            statusBox.textContent = 'لا يوجد ملف حضور مستورد. استخدم «استيراد» لإضافة Excel أو CSV.';
+            if (refreshBtn) refreshBtn.disabled = true;
+            if (applyBtn) applyBtn.disabled = true;
+            if (clearBtn) clearBtn.hidden = true;
+            return;
+        }
+
+        if (refreshBtn) refreshBtn.disabled = false;
+        if (clearBtn) clearBtn.hidden = false;
+
+        const fileSummary =
+            '📄 ' + dataset.fileName +
+            ' — الورقة: ' + dataset.sheetName +
+            ' — ' + dataset.recordCount.toLocaleString('en-US') + ' سجل' +
+            ' — ' + dataset.lessonCount.toLocaleString('en-US') + ' حصة';
+
+        const registry = attendanceImport.registry;
+        const registryText = attendanceImport.registryLoading
+            ? 'جاري بناء دليل طلاب مدرستي...'
+            : registry?.students?.length
+                ? 'دليل مدرستي: ' + registry.students.length + ' طالب — البريد هو مفتاح الربط الأساسي.'
+                : attendanceImport.registryError
+                    ? 'دليل مدرستي غير متاح: ' + attendanceImport.registryError
+                    : 'دليل مدرستي غير محمل؛ يمكن التحديث يدويًا أو ستستخدم المطابقة بالاسم كاحتياط.';
+
+        const match = attendanceImport.currentMatch;
+        if (!match) {
+            clearImportRowMarkers();
+            statusBox.textContent = '📄 ' + dataset.fileName + ' — جارٍ تحديد الحصة...';
+            statusBox.title = fileSummary;
+            details.hidden = false;
+            details.innerHTML = '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
+            if (applyBtn) applyBtn.disabled = true;
+            return;
+        }
+
+        if (match.lesson.status !== 'matched') {
+            clearImportRowMarkers();
+            statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
+            statusBox.textContent = '⚠️ ' + match.lesson.message;
+            statusBox.title = fileSummary;
+            if (issueCount) issueCount.textContent = '• تحقق من الحصة';
+            if (applyBtn) applyBtn.disabled = true;
+
+            details.hidden = false;
+            const id = match.identity;
+            details.innerHTML =
+                '<b>هوية الحصة المقروءة من مدرستي:</b> ' +
+                '<span class="msa-import-chip">' + escapeHtml(id.date || 'تاريخ غير معروف') + '</span>' +
+                '<span class="msa-import-chip">' + escapeHtml(id.classroom || 'فصل غير معروف') + '</span>' +
+                '<span class="msa-import-chip">الحصة ' + escapeHtml(id.period || '?') + '</span>' +
+                '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
+            return;
+        }
+
+        const s = match.students;
+        const counts = match.importedCounts;
+        const saveOk = saveAvailability().available;
+
+        markImportRows(match);
+
+        const totalIssues = s.review.length + s.unmatchedPage.length +
+            s.unmatchedFile.length + s.ambiguous.length;
+        statusBox.classList.add(totalIssues ? 'is-warning' : 'is-match');
+        statusBox.textContent =
+            (totalIssues ? '⚠️' : '✅') + ' مطابقة الطلاب ' +
+            s.matchedCount + '/' + state.students.length +
+            ' — سجل الملف: ' + counts.present + ' حاضر، ' +
+            counts.absentExcused + ' غائب بعذر، ' +
+            counts.absentUnexcused + ' غائب بدون عذر' +
+            (counts.late ? '، ' + counts.late + ' متأخر' : '') +
+            (counts.leave ? '، ' + counts.leave + ' مستأذن' : '') +
+            (totalIssues ? ' — ' + totalIssues + ' حالة تحتاج انتباهًا' : '');
+        statusBox.title = fileSummary + ' | ' + match.group.date + ' — ' +
+            match.group.classroom + ' — الحصة ' + match.group.period;
+        if (issueCount) issueCount.textContent = totalIssues ? '⚠️ ' + totalIssues : '';
+
+        const lines = [];
+        lines.push('<div><b>الملف:</b> ' + escapeHtml(fileSummary) + '</div>');
+        lines.push('<div><b>الحصة:</b> ' +
+            escapeHtml(match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period) +
+            '</div>');
+        lines.push(
+            '<div><b>سجل الحصة:</b> ' +
+            '<span class="msa-import-chip">حاضر ' + counts.present + '</span>' +
+            '<span class="msa-import-chip">غائب بعذر ' + counts.absentExcused + '</span>' +
+            '<span class="msa-import-chip">غائب بدون عذر ' + counts.absentUnexcused + '</span>' +
+            (counts.late ? '<span class="msa-import-chip">متأخر ' + counts.late + ' → حاضر</span>' : '') +
+            (counts.leave ? '<span class="msa-import-chip">مستأذن ' + counts.leave + '</span>' : '') +
+            '</div>'
+        );
+
+        if (s.bridgeFailures?.length || s.ambiguous?.length) {
+            lines.push(
+                '<div style="margin-top:6px;color:#9a3412">' +
+                '⚠️ تعثر الربط النهائي: ' +
+                (s.bridgeFailures?.length || 0) + ' غير محسوم' +
+                (s.ambiguous?.length ? ' — ' + s.ambiguous.length + ' مبهم' : '') +
+                '. راجع الأسماء غير المطابقة قبل تطبيق الملف.' +
+                '</div>'
+            );
+        }
+
+        const reviewButtons = [];
+        if (s.review.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="review">⚠️ مراجعة ' + s.review.length + ' — عرض</button>');
+        if (s.unmatchedPage.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-danger" data-import-review="unmatched-page">❌ في مدرستي وليس الملف ' + s.unmatchedPage.length + ' — عرض</button>');
+        if (s.unmatchedFile.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="unmatched-file">ℹ️ في الملف وليس مدرستي ' + s.unmatchedFile.length + ' — عرض</button>');
+        if (s.ambiguous.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="ambiguous">⚠️ مطابقة مبهمة ' + s.ambiguous.length + ' — عرض</button>');
+        if (s.bridgeFailures?.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="bridge-failures">🔗 تعثر ربط الاسم ' + s.bridgeFailures.length + ' — عرض</button>');
+        if (s.convertedLate.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-ok" data-import-review="late-converted">⏱ متأخر → حاضر ' + s.convertedLate.length + ' — عرض</button>');
+        if (reviewButtons.length) lines.push('<div class="msa-import-review-actions">' + reviewButtons.join('') + '</div>');
+
+        if (match.lesson.warning) lines.push('<div>ℹ️ ' + escapeHtml(match.lesson.warning) + '</div>');
+        if (s.convertedLate.length) {
+            lines.push('<div>ℹ️ حسب الإعداد المعتمد: كل طالب حالته «متأخر» في الملف سيُسجل «حاضر» لأن واجهة مدرستي الحديثة لا تدعم التأخر.</div>');
+        }
+        if (!saveOk) lines.push('<div>🔒 يمكن مراجعة المطابقة، لكن تطبيق الملف معطل لأن حفظ الحصة غير متاح حاليًا في مدرستي.</div>');
+        if (attendanceImport.registryLoading || attendanceImport.registryError) {
+            lines.push('<div class="msa-import-registry">' + escapeHtml(registryText) + '</div>');
+        }
+
+        if (attendanceImport.lastApply?.lessonKey === match.group.key) {
+            if (detailsWrap && attendanceImport.lastApply.failed) detailsWrap.open = true;
+
+            lines.push(
+                '<div>آخر تطبيق: ' +
+                attendanceImport.lastApply.success + ' نجح' +
+                (attendanceImport.lastApply.convertedLate ? ' — منها ' + attendanceImport.lastApply.convertedLate + ' متأخر ← حاضر' : '') +
+                (attendanceImport.lastApply.failed ? '، ' + attendanceImport.lastApply.failed + ' تعذر تطبيقه' : '') +
+                ' — ' + escapeHtml(attendanceImport.lastApply.at) +
+                '</div>'
+            );
+
+            if (attendanceImport.lastApply.failed && attendanceImport.lastApply.failures?.length) {
+                lines.push(
+                    '<div class="msa-import-review-actions">' +
+                    '<button type="button" class="msa-import-review-btn is-danger" data-action="show-import-apply-failures">' +
+                    '❌ حالات لم تُطبق ' + attendanceImport.lastApply.failures.length + ' — عرض' +
+                    '</button>' +
+                    '</div>'
+                );
+            }
+        }
+
+        details.innerHTML = lines.join('');
+        details.hidden = false;
+
+        if (applyBtn) {
+            applyBtn.disabled = attendanceImport.applyRunning ||
+                !saveOk || !s.supported.length || s.ambiguous.length > 0;
+            applyBtn.textContent = attendanceImport.applyRunning
+                ? 'جارٍ التطبيق...'
+                : '✓ تطبيق الحضور';
+            applyBtn.title = !saveOk
+                ? 'الحفظ غير متاح في مدرستي حاليًا.'
+                : s.ambiguous.length
+                    ? 'يوجد تطابق مبهم ويجب مراجعته.'
+                    : 'يطبق الحالات المدعومة فقط ولا يحفظ تلقائيًا.';
+        }
+    }
+
+    async function importAttendanceFile(file) {
+        if (!file) return;
+        if (!window.XLSX) {
+            toast('تعذر تحميل قارئ Excel. أعد تحميل الصفحة ثم حاول مرة أخرى.');
+            return;
+        }
+
+        const root = q('#' + APP_ID);
+        const statusBox = q('[data-role="import-status"]', root);
+        if (statusBox) {
+            statusBox.classList.remove('is-match', 'is-warning', 'is-error');
+            statusBox.textContent = 'جاري قراءة الملف وتحليل الأعمدة والحصص...';
+        }
+
+        try {
+            const data = await file.arrayBuffer();
+            const workbook = window.XLSX.read(data, {
+                type: 'array',
+                cellDates: true,
+                cellNF: false,
+                cellText: false
+            });
+
+            const dataset = parseAttendanceWorkbook(workbook, file.name);
+            const storage = persistAttendanceImportDataset(dataset);
+
+            attendanceImport.loaded = true;
+            attendanceImport.dataset = dataset;
+            attendanceImport.index = buildAttendanceImportIndex(dataset);
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            attendanceImport.lastError = '';
+            attendanceImport.lastApply = null;
+
+            try {
+                await fetchAttendanceRegistry(false);
+            } catch (registryError) {
+                attendanceImport.registryError = String(registryError?.message || registryError);
+            }
+
+            refreshAttendanceImportMatch(true);
+
+            let message =
+                'تم استيراد ' + dataset.recordCount.toLocaleString('en-US') +
+                ' سجل حضور من ' + dataset.lessonCount.toLocaleString('en-US') +
+                ' حصة.';
+            if (dataset.invalidRows) message += ' تم تجاهل ' + dataset.invalidRows + ' صف غير مكتمل.';
+            if (storage.warning) message += ' ' + storage.warning;
+            toast(message);
+        } catch (error) {
+            attendanceImport.lastError = String(error?.message || error);
+            if (statusBox) {
+                statusBox.classList.add('is-error');
+                statusBox.textContent = 'تعذر استيراد الملف: ' + attendanceImport.lastError;
+            }
+            toast('تعذر استيراد ملف الحضور.');
+            console.error('[Madrasati Smart Attendance] Attendance import failed:', error);
+        }
+    }
+
+    function clearAttendanceImport() {
+        if (!attendanceImport.dataset) return;
+        if (!window.confirm('سيتم مسح سجل الحضور المستورد من هذا المتصفح. هل تريد المتابعة؟')) return;
+
+        try { localStorage.removeItem(ATTENDANCE_IMPORT_STORAGE_KEY); } catch (_) {}
+        attendanceImport.loaded = true;
+        attendanceImport.dataset = null;
+        attendanceImport.index = null;
+        attendanceImport.currentMatch = null;
+        attendanceImport.lastSignature = '';
+        attendanceImport.lastApply = null;
+        closeImportReview();
+        clearImportRowMarkers();
+        updateAttendanceImportUi();
+        toast('تم مسح سجل الحضور المستورد.');
+    }
+
+    function requestAttendanceImportApplication() {
+        if (attendanceImport.applyRunning) return;
+        const match = refreshAttendanceImportMatch(true);
+        if (!match || match.lesson?.status !== 'matched') {
+            toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
+            return;
+        }
+        const availability = saveAvailability();
+        if (!availability.available) {
+            toast(availability.message);
+            return;
+        }
+        const s = match.students;
+        if (s.ambiguous.length) {
+            toast('يوجد تطابق طلاب مبهم. لن يتم التطبيق قبل حله.');
+            return;
+        }
+        if (!s.supported.length) {
+            toast('لا توجد حالات مدعومة قابلة للتطبيق من الملف.');
+            return;
+        }
+        const warnings = [];
+        if (s.review.length) warnings.push(s.review.length + ' حالة تحتاج مراجعة ولن تطبق');
+        if (s.unmatchedPage.length) warnings.push(s.unmatchedPage.length + ' طالب في مدرستي بلا سجل مطابق');
+        if (s.unmatchedFile.length) warnings.push(s.unmatchedFile.length + ' سجل في الملف بلا طالب مطابق');
+        attendanceImport.applyProgress = '';
+        attendanceImport.applyConfirmationMessage =
+            'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
+            (s.convertedLate.length ? ' سيتم تحويل ' + s.convertedLate.length + ' طالب متأخر إلى حاضر.' : '') +
+            (warnings.length ? ' تنبيه: ' + warnings.join('، ') + '.' : '') +
+            ' لن يتم الحفظ تلقائيًا؛ راجع الإحصاءات قبل الحفظ.';
+        attendanceImport.applyConfirmationPending = true;
+        updateAttendanceImportUi();
+    }
+
+    function setAttendanceApplyProgress(message) {
+        attendanceImport.applyProgress = message;
+        const node = q('[data-role="import-apply-progress"]', q('#' + APP_ID));
+        if (node) {
+            node.hidden = false;
+            node.textContent = message;
+        }
+    }
+
+    async function applyAttendanceImport() {
+        // التطبيق لا يبدأ إلا بعد الموافقة الصريحة من لوحة السكربت.
+        if (!attendanceImport.applyConfirmationPending ||
+            attendanceImport.applyRunning) return;
+        attendanceImport.applyConfirmationPending = false;
+
+        const match = refreshAttendanceImportMatch(true);
+        if (!match || match.lesson?.status !== 'matched') {
+            toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
+            return;
+        }
+        const availability = saveAvailability();
+        if (!availability.available) {
+            toast(availability.message);
+            return;
+        }
+
+        const s = match.students;
+        if (s.ambiguous.length || !s.supported.length) {
+            toast('تعذر بدء التطبيق: لا توجد حالات مدعومة أو توجد مطابقة مبهمة.');
+            return;
+        }
+
+        attendanceImport.applyRunning = true;
+        attendanceImport.lastApply = null;
+        setAttendanceApplyProgress('جارٍ تجهيز تطبيق ' + s.supported.length + ' حالة؛ لا تغلق الصفحة ولا تضغط حفظ.');
+        updateAttendanceImportUi();
+
+        const results = [];
+        let fatalError = '';
+        try {
+            pushUndo();
+            state.suspendUpdates = true;
+            try {
+                for (let i = 0; i < s.supported.length; i++) {
+                    const entry = s.supported[i];
+                    const statusDef = STATUS_BY_KEY[entry.attendance?.targetKey];
+                    const student = entry.student;
+                    const name = student?.name || entry.record?.studentName || 'طالب غير معروف';
+                    setAttendanceApplyProgress(
+                        'جاري تطبيق الحضور ' + (i + 1) + '/' + s.supported.length +
+                        ' — ' + name
+                    );
+
+                    if (!statusDef || !student) {
+                        results.push({ entry, statusDef, ok: false, reason: 'حالة أو صف الطالب غير موجود' });
+                        continue;
+                    }
+                    try {
+                        const result = await setStudentStatusReliable(student, statusDef);
+                        results.push({
+                            entry,
+                            statusDef,
+                            ok: !!result?.ok,
+                            reason: result?.reason || 'تعذر تأكيد تطبيق الحالة'
+                        });
+                    } catch (error) {
+                        results.push({
+                            entry, statusDef, ok: false,
+                            reason: 'خطأ أثناء التطبيق: ' + String(error?.message || error)
+                        });
+                    }
+
+                    // إتاحة تحديث الواجهة خلال تطبيق مجموعة كبيرة من الطلاب.
+                    if (i % 5 === 4) await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            } finally {
+                state.suspendUpdates = false;
+            }
+
+            // مراجعة مستقلة لجميع الصفوف بعد نهاية التطبيق، وليس الاعتماد على نتيجة click.
+            setAttendanceApplyProgress('جارٍ التحقق النهائي من حالات جميع الطلاب...');
+            await new Promise(resolve => setTimeout(resolve, 350));
+            for (const result of results) {
+                if (!result.statusDef || !result.entry.student) continue;
+                try {
+                    const actual = readStudentStatus(result.entry.student);
+                    if (actual.key === result.statusDef.key) {
+                        result.ok = true;
+                        result.reason = 'تم التحقق من الحالة النهائية';
+                    } else {
+                        result.ok = false;
+                        result.reason =
+                            'الحالة النهائية مختلفة: ' + (actual.key || 'غير معروفة') +
+                            '، المطلوب: ' + result.statusDef.key +
+                            (result.reason ? ' (' + result.reason + ')' : '');
+                    }
+                } catch (error) {
+                    result.ok = false;
+                    result.reason = 'تعذر التحقق النهائي: ' + String(error?.message || error);
+                }
+            }
+        } catch (error) {
+            fatalError = String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Bulk apply failed:', error);
+        } finally {
+            state.suspendUpdates = false;
+            attendanceImport.applyRunning = false;
+            try { updateAll(); } catch (error) {
+                console.error('[Madrasati Smart Attendance] UI update after bulk failed:', error);
+            }
+        }
+
+        const success = results.filter(item => item.ok).length;
+        const failures = results.filter(item => !item.ok).map(item => ({
+            name: item.entry.student?.name || item.entry.record?.studentName || 'طالب غير معروف',
+            target: item.statusDef?.label || item.entry.attendance?.label || '',
+            reason: item.reason
+        }));
+        if (fatalError) {
+            failures.push({
+                name: 'خطأ عام',
+                target: 'التطبيق الجماعي',
+                reason: fatalError
+            });
+        }
+        const unprocessed = s.supported.length - results.length;
+        if (unprocessed > 0) {
+            failures.push({
+                name: unprocessed + ' طلاب',
+                target: 'لم يكتمل التطبيق',
+                reason: 'توقفت العملية قبل معالجة كل الطلاب'
+            });
+        }
+        const failed = s.supported.length - success;
+        attendanceImport.lastApply = {
+            lessonKey: match.group.key,
+            success,
+            failed,
+            failures,
+            convertedLate: s.convertedLate.length,
+            at: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
+        };
+
+        const c = stats();
+        setAttendanceApplyProgress(
+            (failed ? '⚠️' : '✅') +
+            ' انتهى التطبيق: ' + success + '/' + s.supported.length + ' حالة مطابقة بعد التحقق.' +
+            ' حاضر: ' + c.present +
+            '، غائب بعذر: ' + c.absentExcused +
+            '، غائب بدون عذر: ' + c.absentUnexcused +
+            (failed ? ' — تعذر: ' + failed + ' (انظر حالات لم تُطبق).' : '') +
+            ' لم يتم الحفظ تلقائيًا.'
+        );
+        updateAttendanceImportUi();
+        toast(
+            'تم التحقق من ' + success + '/' + s.supported.length +
+            ' حالة. راجع الإحصاءات قبل الحفظ.' +
+            (failed ? ' توجد ' + failed + ' حالات تحتاج مراجعة.' : '')
+        );
+    }
+
     function buildToolbar() {
         const root = document.createElement('section');
         root.id = APP_ID;
@@ -2273,43 +5047,72 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             <div class="msa-head">
                 <div class="msa-title-wrap">
                     <div class="msa-title">⚡ التحضير الذكي لمدرستي</div>
-                    <small data-role="mode-label">أدوات مساعدة داخل صفحة التحضير</small>
                 </div>
+                <div class="msa-save-state is-unknown" data-role="save-state">جارٍ فحص الحفظ...</div>
                 <div class="msa-head-actions">
+                    <button type="button" class="msa-primary" data-action="native-save-top">💾 حفظ</button>
                     <button type="button" class="msa-report-btn" data-action="report">📋 تقرير الحصة</button>
                     <button type="button" data-action="toggle-panel">طي الأدوات</button>
                 </div>
             </div>
 
             <div class="msa-body">
+                <div class="msa-import-card" data-role="import-card">
+                    <div class="msa-import-head">
+                        <div class="msa-import-title">
+                            <strong>📥 سجل الحضور المستورد</strong>
+                        </div>
+                        <div class="msa-import-actions">
+                            <button type="button" data-action="import-attendance">📁 استيراد</button>
+                            <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>✓ تطبيق الحضور</button>
+                            <details class="msa-inline-options">
+                                <summary title="خيارات الملف">⋯ الخيارات</summary>
+                                <div class="msa-inline-options-content">
+                                    <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
+                                    <button type="button" data-action="refresh-import-match" disabled>إعادة المطابقة</button>
+                                    <button type="button" data-action="clear-import-attendance" hidden>مسح الملف المستورد</button>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+                    <div data-role="import-apply-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
+                        <div><b>📥 تأكيد تطبيق حضور الملف</b></div>
+                        <div data-role="import-apply-confirm-message" style="margin:6px 0;white-space:pre-wrap"></div>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+                            <button type="button" class="msa-primary" data-action="confirm-import-apply">✅ تطبيق الآن دون حفظ</button>
+                            <button type="button" data-action="cancel-import-apply">إلغاء</button>
+                        </div>
+                    </div>
+                    <div data-role="import-apply-progress" role="status" hidden style="margin:8px 0;padding:9px 12px;border:1px solid #c4b5fd;border-radius:9px;background:#faf5ff;color:#4c1d95"></div>
+                    <input type="file" data-role="import-file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+                    <div class="msa-import-status" data-role="import-status">لم يتم استيراد سجل حضور بعد.</div>
+                    <details class="msa-import-more" data-role="import-details-wrap" hidden>
+                        <summary>تفاصيل السجل والمراجعة <span data-role="import-issues"></span></summary>
+                        <div class="msa-import-details" data-role="import-details" hidden></div>
+                    </details>
+                </div>
+
                 <div class="msa-stats">
                     <div class="msa-stat-card" data-filter="all" data-stat="total">
                         <span class="msa-stat-label">جميع الطلاب</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="all">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="present" data-stat="present">
                         <span class="msa-stat-label">حاضر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="present">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="absent-excused" data-stat="absent-excused">
                         <span class="msa-stat-label">غائب بعذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="absent-excused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="absent-unexcused" data-stat="absent-unexcused">
                         <span class="msa-stat-label">غائب بدون عذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="absent-unexcused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="late-excused" data-stat="late-excused">
                         <span class="msa-stat-label">متأخر بعذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="late-excused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="late-unexcused" data-stat="late-unexcused">
                         <span class="msa-stat-label">متأخر بدون عذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="late-unexcused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="unset" data-stat="unset">
                         <span class="msa-stat-label">غير محدد</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="unset">نسخ</button>
                     </div>
                 </div>
 
@@ -2319,8 +5122,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     <span class="msa-ready-count" data-role="ready-count">0/0</span>
                 </div>
 
-                <div class="msa-row">
-                    <button type="button" class="msa-primary" data-action="all-present">✓ تحضير الكل حاضر</button>
+                <div class="msa-row msa-main-actions">
+                    <button type="button" class="msa-primary" data-action="all-present">✓ الكل حاضر</button>
+                    <button type="button" data-action="undo" disabled>↶ تراجع</button>
+                </div>
+                <details class="msa-advanced-tools">
+                    <summary>أدوات التحديد الجماعي المتقدمة</summary>
+                    <div class="msa-row">
                     <button type="button" class="msa-secondary" data-action="unset-present">✓ غير المحددين ← حاضر</button>
 
                     <select data-role="bulk-status" aria-label="حالة جماعية">
@@ -2332,16 +5140,16 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     </select>
                     <button type="button" data-action="apply-bulk">تطبيق الحالة</button>
                     <button type="button" class="msa-soft-danger" data-action="clear">مسح التحديد</button>
-                    <button type="button" data-action="undo" disabled>↶ تراجع</button>
 
                     <span class="msa-spacer"></span>
                     <span class="msa-scope-group" aria-label="نطاق التطبيق">
                         <button type="button" class="msa-scope-btn is-active" data-scope="all">كل الطلاب</button>
                         <button type="button" class="msa-scope-btn" data-scope="visible">الظاهر فقط</button>
                     </span>
-                </div>
+                    </div>
+                </details>
 
-                <div class="msa-row">
+                <div class="msa-row msa-search-row">
                     <input type="search" data-role="search" placeholder="ابحث باسم الطالب أو رقمه..." autocomplete="off">
                     <select data-role="sort" aria-label="فرز الطلاب">
                         <option value="original">الترتيب الأصلي</option>
@@ -2376,12 +5184,6 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         <strong data-role="save-progress-text">جاهز للحفظ المتسلسل</strong>
                         <span data-role="save-count">التغييرات غير المحفوظة: 0</span>
                     </div>
-                </div>
-
-                <div class="msa-row">
-                    <span class="msa-hint" data-role="save-hint"></span>
-                    <span class="msa-spacer"></span>
-                    <span class="msa-shortcuts">اختصارات: / بحث · Alt+A تحضير الكل · Alt+Z تراجع · Alt+N التالي غير المحدد</span>
                 </div>
 
                 <div class="msa-credit">تطوير: <strong>M0HM3D85</strong> — © 2026 جميع الحقوق محفوظة</div>
@@ -2419,19 +5221,165 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         document.body.prepend(root);
     }
 
-    function updateModeUi(root) {
-        const modeLabel = q('[data-role="mode-label"]', root);
-        const saveHint = q('[data-role="save-hint"]', root);
+    function pageVisibleText() {
+        return cleanText(document.body?.innerText || '');
+    }
 
-        if (state.mode === 'row-save') {
-            if (modeLabel) modeLabel.textContent = 'وضع تعديل حضور محفوظ — حفظ فردي أصلي + حفظ الكل الذكي';
-            if (saveHint) saveHint.textContent = '«حفظ الكل» يحفظ الصفوف التي تغيرت فقط، بالتتابع، وينتظر رد مدرستي لكل طالب قبل الانتقال للذي يليه.';
-        } else {
-            if (modeLabel) modeLabel.textContent = 'وضع التحضير الجماعي الأولي';
-            if (saveHint) saveHint.textContent = 'بعد المراجعة استخدم زر «حفظ» الأصلي في مدرستي.';
+    function saveAvailability() {
+        const button = nativeSaveButton();
+        const text = pageVisibleText();
+
+        const lockedUntilTomorrow =
+            text.includes('تم استخدام التعديل المتاح لهذه الحصة') &&
+            text.includes('يُتاح التعديل مرة أخرى بدايةً من اليوم التالي');
+
+        if (lockedUntilTomorrow) {
+            return {
+                key: 'locked-today',
+                available: false,
+                message: '🔒 تم استخدام التعديل المتاح لهذه الحصة — يتاح التعديل مرة أخرى بدايةً من اليوم التالي.'
+            };
+        }
+
+        if (!button) {
+            return {
+                key: 'unknown',
+                available: false,
+                message: 'تعذر العثور على زر الحفظ الأصلي في مدرستي.'
+            };
+        }
+
+        if (button.disabled) {
+            return {
+                key: 'disabled',
+                available: false,
+                message: state.mode === 'batch-update'
+                    ? '⛔ لا يمكن تعديل هذه الحصة حاليًا؛ زر الحفظ الأصلي في مدرستي غير متاح.'
+                    : '⛔ لا يمكن حفظ هذه الحصة حاليًا؛ زر الحفظ الأصلي في مدرستي غير متاح.'
+            };
+        }
+
+        return {
+            key: 'available',
+            available: true,
+            message: state.mode === 'batch-update'
+                ? '✅ ما زال بالإمكان تعديل هذه الحصة وحفظ التعديل.'
+                : '✅ يمكن حفظ هذه الحصة الآن.'
+        };
+    }
+
+    function updateSaveAvailabilityUi(root = q('#' + APP_ID)) {
+        if (!root) return;
+
+        const topSave = q('[data-action="native-save-top"]', root);
+        const box = q('[data-role="save-state"]', root);
+        const availability = saveAvailability();
+
+        if (topSave) {
+            topSave.disabled = !availability.available;
+            topSave.setAttribute('aria-disabled', String(!availability.available));
+            topSave.title = availability.message;
+        }
+
+        if (box) {
+            box.classList.remove(
+                'is-available',
+                'is-locked',
+                'is-unavailable',
+                'is-unknown'
+            );
+
+            if (availability.key === 'available') {
+                box.classList.add('is-available');
+            } else if (availability.key === 'locked-today') {
+                box.classList.add('is-locked');
+            } else if (availability.key === 'disabled') {
+                box.classList.add('is-unavailable');
+            } else {
+                box.classList.add('is-unknown');
+            }
+
+            box.textContent = availability.key === 'available'
+                ? '✓ الحفظ متاح'
+                : availability.key === 'locked-today'
+                    ? '🔒 التعديل غدًا'
+                    : '⛔ الحفظ غير متاح';
+            box.title = availability.message;
         }
     }
 
+    function nativeSaveButton() {
+        const form = state.form || q('#SaveAttendStudents') || q('#UpdateAttendStudents');
+        if (!form) return null;
+
+        return (
+            q('button[name="SendAttend"]', form) ||
+            q('button[type="submit"].btn-primary', form) ||
+            q('input[type="submit"]', form)
+        );
+    }
+
+    function triggerNativeSave() {
+        const availability = saveAvailability();
+        const button = nativeSaveButton();
+
+        if (!availability.available || !button) {
+            toast(availability.message);
+            updateSaveAvailabilityUi();
+            return;
+        }
+
+        button.click();
+    }
+
+    function updateModeUi(root) {
+        const modeLabel = q('[data-role="mode-label"]', root);
+        const saveHint = q('[data-role="save-hint"]', root);
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+
+        root.classList.toggle('msa-new-platform', isNewPlatform);
+
+        const searchInput = q('[data-role="search"]', root);
+        if (searchInput) {
+            searchInput.placeholder = state.mode === 'batch-update'
+                ? 'ابحث بأي جزء من الاسم وبأي ترتيب...'
+                : 'ابحث بالاسم بأي ترتيب أو برقم الطالب...';
+        }
+
+        updateSaveAvailabilityUi(root);
+
+        const bulkStatus = q('[data-role="bulk-status"]', root);
+        if (bulkStatus) {
+            for (const option of qa('option', bulkStatus)) {
+                const isLate = option.value === 'late-excused' || option.value === 'late-unexcused';
+                option.hidden = isNewPlatform && isLate;
+                option.disabled = isNewPlatform && isLate;
+            }
+
+            if (isNewPlatform && String(bulkStatus.value).startsWith('late-')) {
+                bulkStatus.value = 'present';
+            }
+        }
+
+        const sortSelect = q('[data-role="sort"]', root);
+        const unsetSort = sortSelect?.querySelector('option[value="unset-first"]');
+        if (unsetSort) {
+            unsetSort.hidden = isNewPlatform;
+            unsetSort.disabled = isNewPlatform;
+            if (isNewPlatform && sortSelect.value === 'unset-first') sortSelect.value = 'original';
+        }
+
+        if (state.mode === 'legacy-row-save') {
+            if (modeLabel) modeLabel.textContent = 'واجهة مدرستي القديمة — حفظ فردي + حفظ الكل الذكي';
+            if (saveHint) saveHint.textContent = 'تم اكتشاف الواجهة القديمة؛ «حفظ الكل» متاح للتوافق فقط.';
+        } else if (state.mode === 'batch-update') {
+            if (modeLabel) modeLabel.textContent = 'تعديل حضور محفوظ — نظام مدرستي الجديد';
+            if (saveHint) saveHint.textContent = '⚠️ عند حفظ تعديل الحضور، تستخدم مدرستي فرصة التعديل المتاحة لليوم، ويُتاح التعديل مرة أخرى بدايةً من اليوم التالي.';
+        } else {
+            if (modeLabel) modeLabel.textContent = 'تحضير حصة جديدة — نظام مدرستي الجديد';
+            if (saveHint) saveHint.textContent = 'مدرستي تبدأ الطلاب «حاضر» افتراضيًا؛ راجع الغياب ثم استخدم زر «حفظ» الأصلي.';
+        }
+    }
     function bindToolbar(root) {
         q('[data-action="all-present"]', root).addEventListener('click', () => bulkSet(STATUS.PRESENT));
         q('[data-action="unset-present"]', root).addEventListener('click', () => bulkSet(STATUS.PRESENT, { onlyUnset: true }));
@@ -2445,6 +5393,41 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="clear"]', root).addEventListener('click', bulkClear);
         q('[data-action="undo"]', root).addEventListener('click', undoLast);
         q('[data-action="report"]', root).addEventListener('click', openReport);
+        q('[data-action="native-save-top"]', root)?.addEventListener('click', triggerNativeSave);
+
+        const importFileInput = q('[data-role="import-file"]', root);
+        q('[data-action="import-attendance"]', root)?.addEventListener('click', () => importFileInput?.click());
+        importFileInput?.addEventListener('change', async event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) await importAttendanceFile(file);
+        });
+        q('[data-action="refresh-import-registry"]', root)?.addEventListener('click', async () => {
+            await refreshAttendanceRegistry(true);
+        });
+        q('[data-action="refresh-import-match"]', root)?.addEventListener('click', async () => {
+            if (!attendanceImport.registry?.students?.length) {
+                await refreshAttendanceRegistry(false);
+            }
+            refreshAttendanceImportMatch(true);
+            toast('تمت إعادة فحص مطابقة الحصة الحالية مع الملف.');
+        });
+        root.addEventListener('click', event => {
+            const reviewButton = event.target.closest?.('[data-import-review]');
+            if (reviewButton) openImportReview(reviewButton.dataset.importReview);
+
+            const failuresButton = event.target.closest?.('[data-action="show-import-apply-failures"]');
+            if (failuresButton) openImportApplyFailures();
+
+        });
+        q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', requestAttendanceImportApplication);
+        q('[data-action="confirm-import-apply"]', root)?.addEventListener('click', applyAttendanceImport);
+        q('[data-action="cancel-import-apply"]', root)?.addEventListener('click', () => {
+            attendanceImport.applyConfirmationPending = false;
+            updateAttendanceImportUi();
+        });
+        q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
+
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
 
         q('[data-action="save-all"]', root)?.addEventListener('click', saveAllChanges);
@@ -2458,7 +5441,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         q('[data-role="ready"]', root).addEventListener('click', () => {
             const c = stats();
-            if (c.unset) setFilter('unset');
+            const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+            if (!isNewPlatform && c.unset) setFilter('unset');
             else setFilter('exceptions');
         });
 
@@ -2504,8 +5488,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     event.target.matches?.('input[type="radio"][name^="Attend["]') ||
                     event.target.matches?.('input[type="radio"][name^="List["][name$=".AttendStatusId"]');
 
-                if (attendanceChanged) updateAll();
-                else if (state.mode === 'row-save' && event.target.closest?.('tr')) updateSaveAllUi();
+                if (attendanceChanged) {
+                    clearTimeout(updateAll._attendanceTimer);
+                    updateAll._attendanceTimer = setTimeout(() => {
+                        updateAll();
+                        requestAnimationFrame(() => updateAll());
+                    }, 0);
+                } else if (state.mode === 'legacy-row-save' && event.target.closest?.('tr')) {
+                    updateSaveAllUi();
+                }
             });
         }
     }
@@ -2581,6 +5572,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 event.preventDefault();
                 undoLast();
             } else if (key === 'n') {
+                if (state.mode === 'batch-create' || state.mode === 'batch-update') return;
                 event.preventDefault();
                 focusNextUnset();
             }
@@ -2601,7 +5593,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const sameContext =
             oldRoot && document.contains(oldRoot) && state.contextKey === context.contextKey && sameRows;
 
-        if (sameContext) return true;
+        if (sameContext) {
+            refreshAttendanceImportMatch();
+            updateSaveAvailabilityUi(oldRoot);
+            return true;
+        }
         if (oldRoot) oldRoot.remove();
 
         state = {
@@ -2631,9 +5627,23 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         bindNativeSaveTracking();
         updateModeUi(root);
         updateAll();
+        refreshAttendanceImportMatch(true);
+
+        if (attendanceImport.dataset && !attendanceImport.registryLoading) {
+            fetchAttendanceRegistry(false)
+                .then(() => {
+                    attendanceImport.currentMatch = null;
+                    attendanceImport.lastSignature = '';
+                    refreshAttendanceImportMatch(true);
+                })
+                .catch(error => {
+                    attendanceImport.registryError = String(error?.message || error);
+                    updateAttendanceImportUi();
+                });
+        }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
@@ -2651,14 +5661,29 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
     // صفحة ManageLecture تستخدم تحميلًا جزئيًا للحضور، لذلك نراقب ظهور/استبدال النموذج.
     let observerTimer = null;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(mutations => {
+        const relevant = mutations.some(mutation => {
+            const target = mutation.target?.nodeType === Node.ELEMENT_NODE
+                ? mutation.target
+                : mutation.target?.parentElement;
+
+            return !target?.closest?.('#' + APP_ID + ', .msa-report-overlay');
+        });
+
+        if (!relevant) return;
+
         clearTimeout(observerTimer);
-        observerTimer = setTimeout(init, 180);
+        observerTimer = setTimeout(() => {
+            init();
+            updateSaveAvailabilityUi();
+        }, 180);
     });
 
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['disabled', 'class', 'style', 'hidden', 'aria-disabled']
     });
 
     // بعض تنقلات مدرستي تغير الرابط/محتوى الحصة دون إعادة تحميل الصفحة بالكامل.
