@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta10
+// @version      0.3.5-beta11
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta10-email-first-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta10-email-first-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta10',
+        version: '0.3.5-beta11',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -3160,6 +3160,76 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             .join('|');
     }
 
+    function canonicalPersonTokens(value) {
+        const removable = new Set([
+            'بن', 'ابن', 'بنت',
+            'اسم', 'الاسم', 'طالب', 'طالبه', 'الطالب', 'الطالبه'
+        ]);
+
+        return normalizePersonName(value)
+            .split(' ')
+            .map(token => token.trim())
+            .filter(token => token && !removable.has(token));
+    }
+
+    function canonicalPersonName(value) {
+        return canonicalPersonTokens(value).join(' ');
+    }
+
+    function compactPersonName(value) {
+        return canonicalPersonName(value).replace(/\s+/g, '');
+    }
+
+    function personNameSimilarity(a, b) {
+        const aRaw = normalizePersonName(a);
+        const bRaw = normalizePersonName(b);
+        if (!aRaw || !bRaw) return 0;
+        if (aRaw === bRaw) return 1;
+
+        const aCanon = canonicalPersonName(a);
+        const bCanon = canonicalPersonName(b);
+        if (aCanon && bCanon && aCanon === bCanon) return 0.99;
+
+        const aCompact = compactPersonName(a);
+        const bCompact = compactPersonName(b);
+        if (aCompact && bCompact && aCompact === bCompact) return 0.98;
+
+        const aTokens = canonicalPersonTokens(a);
+        const bTokens = canonicalPersonTokens(b);
+        if (!aTokens.length || !bTokens.length) return 0;
+
+        const aSet = new Set(aTokens);
+        const bSet = new Set(bTokens);
+        const intersection = [...aSet].filter(token => bSet.has(token)).length;
+        const union = new Set([...aSet, ...bSet]).size || 1;
+        const jaccard = intersection / union;
+
+        const minLen = Math.min(aTokens.length, bTokens.length);
+        let samePosition = 0;
+        for (let i = 0; i < minLen; i++) {
+            if (aTokens[i] === bTokens[i]) samePosition++;
+        }
+        const ordered = samePosition / Math.max(aTokens.length, bTokens.length);
+
+        const firstLast =
+            aTokens[0] === bTokens[0] &&
+            aTokens[aTokens.length - 1] === bTokens[bTokens.length - 1]
+                ? 0.08
+                : 0;
+
+        return Math.min(0.97, jaccard * 0.68 + ordered * 0.24 + firstLast);
+    }
+
+    function rankPageStudentsByName(name, candidates) {
+        return (candidates || [])
+            .map(student => ({
+                student,
+                score: personNameSimilarity(name, student.name)
+            }))
+            .sort((a, b) => b.score - a.score);
+    }
+
+
     function normalizeStudentId(value) {
         return toEnglishDigits(cleanText(value || '')).replace(/\s+/g, '');
     }
@@ -3860,6 +3930,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             emailMissingInRegistry: 0,
             emailAmbiguousInRegistry: 0,
             officialNameMatchedPage: 0,
+            officialNameMatchedCanonical: 0,
+            officialNameMatchedSimilarity: 0,
             officialNameMissingPage: 0,
             officialNameAmbiguousPage: 0,
             matchedByStudentId: 0,
@@ -3871,36 +3943,93 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             (candidates || []).filter(student => !usedStudents.has(student));
 
         const resolvePageFromRegistry = registryStudent => {
-            if (!registryStudent) return { student: null, reason: 'missing-registry-student', candidates: [] };
+            if (!registryStudent) {
+                return {
+                    student: null,
+                    reason: 'missing-registry-student',
+                    candidates: [],
+                    ranked: []
+                };
+            }
 
             const exact = chooseAvailable(pageByName.get(normalizePersonName(registryStudent.name)) || []);
             if (exact.length === 1) {
-                return { student: exact[0], reason: 'official-name', candidates: exact };
+                return {
+                    student: exact[0],
+                    reason: 'official-name',
+                    candidates: exact,
+                    ranked: [{ student: exact[0], score: 1 }]
+                };
             }
-            if (exact.length > 1) {
-                const currentClass = currentImportLessonIdentity().classroom;
-                const sameClass = currentClass
-                    ? exact.filter(candidate =>
-                        classroomSimilarity(currentClass, registryStudent.className || '') >= 0.72
-                    )
-                    : [];
-                if (sameClass.length === 1) {
-                    return { student: sameClass[0], reason: 'official-name+class', candidates: sameClass };
-                }
-                return { student: null, reason: 'official-name-ambiguous', candidates: exact };
+
+            const canonical = canonicalPersonName(registryStudent.name);
+            const canonicalMatches = chooseAvailable(
+                state.students.filter(student => canonicalPersonName(student.name) === canonical)
+            );
+            if (canonical && canonicalMatches.length === 1) {
+                return {
+                    student: canonicalMatches[0],
+                    reason: 'official-name-canonical',
+                    candidates: canonicalMatches,
+                    ranked: [{ student: canonicalMatches[0], score: 0.99 }]
+                };
+            }
+
+            const compact = compactPersonName(registryStudent.name);
+            const compactMatches = chooseAvailable(
+                state.students.filter(student => compactPersonName(student.name) === compact)
+            );
+            if (compact && compactMatches.length === 1) {
+                return {
+                    student: compactMatches[0],
+                    reason: 'official-name-compact',
+                    candidates: compactMatches,
+                    ranked: [{ student: compactMatches[0], score: 0.98 }]
+                };
             }
 
             const signatureMatches = chooseAvailable(
                 pageBySignature.get(personNameSignature(registryStudent.name)) || []
             );
             if (signatureMatches.length === 1) {
-                return { student: signatureMatches[0], reason: 'official-name-tokens', candidates: signatureMatches };
-            }
-            if (signatureMatches.length > 1) {
-                return { student: null, reason: 'official-name-tokens-ambiguous', candidates: signatureMatches };
+                return {
+                    student: signatureMatches[0],
+                    reason: 'official-name-tokens',
+                    candidates: signatureMatches,
+                    ranked: [{ student: signatureMatches[0], score: 0.96 }]
+                };
             }
 
-            return { student: null, reason: 'official-name-not-in-page', candidates: [] };
+            const availablePage = state.students.filter(student => !usedStudents.has(student));
+            const ranked = rankPageStudentsByName(registryStudent.name, availablePage);
+            const best = ranked[0];
+            const second = ranked[1];
+
+            // لا نعتمد التشابه إلا إذا كان قويًا وواضحًا عن ثاني أفضل اسم.
+            if (
+                best &&
+                best.score >= 0.74 &&
+                (!second || best.score - second.score >= 0.12)
+            ) {
+                return {
+                    student: best.student,
+                    reason: 'official-name-unique-similarity',
+                    candidates: [best.student],
+                    ranked: ranked.slice(0, 3)
+                };
+            }
+
+            const candidates = ranked
+                .filter(item => item.score >= 0.58)
+                .slice(0, 3)
+                .map(item => item.student);
+
+            return {
+                student: null,
+                reason: best ? 'official-name-not-safe-enough' : 'official-name-not-in-page',
+                candidates,
+                ranked: ranked.slice(0, 3)
+            };
         };
 
         // المرحلة الأولى: سجل الملف نفسه هو نقطة البداية.
@@ -3933,8 +4062,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         const resolved = resolvePageFromRegistry(registryStudent);
                         if (resolved.student) {
                             student = resolved.student;
-                            confidence = 'email→registry→official-name';
+                            confidence = 'email→registry→' + resolved.reason;
                             stats.officialNameMatchedPage++;
+                            if (resolved.reason === 'official-name-canonical' || resolved.reason === 'official-name-compact') {
+                                stats.officialNameMatchedCanonical++;
+                            }
+                            if (resolved.reason === 'official-name-unique-similarity') {
+                                stats.officialNameMatchedSimilarity++;
+                            }
                             stats.matchedByEmailBridge++;
                             rememberStudentIdentity(student, registryStudent);
                         } else if (resolved.reason.includes('ambiguous')) {
@@ -3943,7 +4078,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                                 record,
                                 registryStudent,
                                 reason: resolved.reason,
-                                candidates: resolved.candidates || []
+                                candidates: resolved.candidates || [],
+                                ranked: resolved.ranked || []
                             });
                         } else {
                             stats.officialNameMissingPage++;
@@ -3951,7 +4087,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                                 record,
                                 registryStudent,
                                 reason: resolved.reason,
-                                candidates: []
+                                candidates: resolved.candidates || [],
+                                ranked: resolved.ranked || []
                             });
                         }
                     } else if (registryCandidates.length > 1) {
@@ -4034,7 +4171,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const supported = entries.filter(entry => entry.attendance.kind === 'supported');
         const review = entries.filter(entry => entry.attendance.kind !== 'supported');
         const convertedLate = supported.filter(entry => entry.attendance.convertedFrom === 'late');
-        const emailMatched = entries.filter(entry => entry.confidence === 'email→registry→official-name');
+        const emailMatched = entries.filter(entry => String(entry.confidence || '').startsWith('email→registry→'));
 
         stats.matchedTotal = entries.length;
         stats.unmatchedFile = unmatchedFile.length;
@@ -4145,6 +4282,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (kind === 'unmatched-file') return s.unmatchedFile || [];
         if (kind === 'ambiguous') return s.ambiguous || [];
         if (kind === 'late-converted') return s.convertedLate || [];
+        if (kind === 'bridge-failures') return s.bridgeFailures || [];
         return [];
     }
 
@@ -4154,6 +4292,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (kind === 'unmatched-file') return 'سجلات موجودة في ملف الحصة ولا يوجد لها طالب مطابق في صفحة مدرستي';
         if (kind === 'ambiguous') return 'مطابقات مبهمة';
         if (kind === 'late-converted') return 'طلاب متأخرون في الملف وسيعاملون كحاضرين في مدرستي';
+        if (kind === 'bridge-failures') return 'تعثر جسر الاسم بين دليل مدرستي وصفحة الحصة';
         return 'تفاصيل المطابقة';
     }
 
@@ -4246,6 +4385,24 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     '<td>حاضر</td>' +
                     '<td>' + goButton(item.student) + '</td>' +
                     '</tr>').join('') +
+                '</tbody></table>';
+        }
+
+        if (kind === 'bridge-failures') {
+            return '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم الملف</th><th>اسم الدليل</th><th>أقرب اسم في الحصة</th><th>الدرجة</th><th>السبب</th>' +
+                '</tr></thead><tbody>' +
+                items.map((item, i) => {
+                    const best = item.ranked?.[0];
+                    return '<tr>' +
+                        '<td>' + (i + 1) + '</td>' +
+                        '<td>' + escapeHtml(item.record?.studentName || '') + '</td>' +
+                        '<td>' + escapeHtml(item.registryStudent?.name || '—') + '</td>' +
+                        '<td>' + escapeHtml(best?.student?.name || '—') + '</td>' +
+                        '<td>' + escapeHtml(best ? Math.round(best.score * 100) + '%' : '—') + '</td>' +
+                        '<td>' + escapeHtml(item.reason || '') + '</td>' +
+                        '</tr>';
+                }).join('') +
                 '</tbody></table>';
         }
 
@@ -4919,6 +5076,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '<span class="msa-import-chip">بريد في الملف ' + (bridgeStats.recordsWithEmail ?? 0) + '</span>' +
             '<span class="msa-import-chip">البريد وجد في الدليل ' + (bridgeStats.emailFoundInRegistry ?? 0) + '</span>' +
             '<span class="msa-import-chip">الاسم الرسمي وجد في الحصة ' + (bridgeStats.officialNameMatchedPage ?? 0) + '</span>' +
+            '<span class="msa-import-chip">تطبيع الاسم ' + (bridgeStats.officialNameMatchedCanonical ?? 0) + '</span>' +
+            '<span class="msa-import-chip">تشابه آمن ' + (bridgeStats.officialNameMatchedSimilarity ?? 0) + '</span>' +
             '<span class="msa-import-chip">احتياط بالاسم ' + (bridgeStats.matchedByFallbackName ?? 0) + '</span>' +
             '</div>'
         );
@@ -4950,6 +5109,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (s.unmatchedPage.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-danger" data-import-review="unmatched-page">❌ في مدرستي وليس الملف ' + s.unmatchedPage.length + ' — عرض</button>');
         if (s.unmatchedFile.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="unmatched-file">ℹ️ في الملف وليس مدرستي ' + s.unmatchedFile.length + ' — عرض</button>');
         if (s.ambiguous.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="ambiguous">⚠️ مطابقة مبهمة ' + s.ambiguous.length + ' — عرض</button>');
+        if (s.bridgeFailures?.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="bridge-failures">🔗 تعثر جسر الاسم ' + s.bridgeFailures.length + ' — عرض</button>');
         if (s.convertedLate.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-ok" data-import-review="late-converted">⏱ متأخر → حاضر ' + s.convertedLate.length + ' — عرض</button>');
         if (reviewButtons.length) lines.push('<div class="msa-import-review-actions">' + reviewButtons.join('') + '</div>');
 
@@ -5794,7 +5954,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta10] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta11] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
