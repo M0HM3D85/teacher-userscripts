@@ -102,7 +102,7 @@
     const boundEventRoots = new WeakSet();
 
     const ATTENDANCE_IMPORT_STORAGE_KEY = 'msa-attendance-import-v1';
-    const ATTENDANCE_IMPORT_DATA_VERSION = 1;
+    const ATTENDANCE_IMPORT_DATA_VERSION = 2;
     const ATTENDANCE_IMPORT_MAX_ROWS = 30000;
     const ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT = 4200000;
     const ATTENDANCE_REGISTRY_STORAGE_KEY = 'msa-attendance-student-registry-v1';
