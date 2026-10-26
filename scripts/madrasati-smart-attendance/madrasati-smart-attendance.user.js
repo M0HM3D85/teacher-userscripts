@@ -1077,6 +1077,208 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         updateAll();
     }
 
+    function captureTestBaseline() {
+        state.testBaseline = state.students.map(student => {
+            const raw = rawStudentStatus(student);
+            return {
+                index: student.index,
+                main: raw.main,
+                detail: raw.detail,
+                stars: currentStarsValue(student)
+            };
+        });
+    }
+
+    function testChangedCount() {
+        if (!state.testBaseline?.length) return 0;
+        const baseline = new Map(state.testBaseline.map(item => [item.index, item]));
+
+        return state.students.filter(student => {
+            const old = baseline.get(student.index);
+            if (!old) return false;
+            const raw = rawStudentStatus(student);
+            return String(raw.main) !== String(old.main) ||
+                String(raw.detail) !== String(old.detail) ||
+                String(currentStarsValue(student)) !== String(old.stars);
+        }).length;
+    }
+
+    function setStarsLocal(student, value) {
+        const stars = Number(value || 0);
+        const field =
+            q('input[name="Stars"]', student.row) ||
+            q('input[name$=".Stars"]', student.row);
+        if (field) field.value = String(stars);
+
+        const ratings = q('.ratings', student.row);
+        if (ratings) {
+            ratings.dataset.selectedRating = String(stars);
+            const starEls = qa('.bi-star-fill', ratings);
+            starEls.forEach((el, index) => {
+                el.classList.toggle('gold-star', index < stars);
+            });
+        }
+    }
+
+    function restoreTestBaseline() {
+        if (!state.testBaseline?.length) {
+            toast('لا توجد لقطة أصلية محفوظة لهذا الاختبار.');
+            return;
+        }
+
+        const baseline = new Map(state.testBaseline.map(item => [item.index, item]));
+        state.suspendUpdates = true;
+
+        try {
+            for (const student of state.students) {
+                const old = baseline.get(student.index);
+                if (!old) continue;
+
+                const statusDef = Object.values(STATUS).find(
+                    item => String(item.main) === String(old.main) &&
+                        String(item.detail) === String(old.detail)
+                );
+
+                if (statusDef) {
+                    setStudentStatus(student, statusDef, { allowHiddenLate: true });
+                } else {
+                    const idx = student.index;
+                    const main = q(
+                        'input[type="radio"][name="' +
+                        escapeAttr('Attend[' + idx + ']') +
+                        '"][value="' + escapeAttr(old.main) + '"]',
+                        student.row
+                    );
+                    const detail = q(
+                        'input[type="radio"][name="' +
+                        escapeAttr('List[' + idx + '].AttendStatusId') +
+                        '"][value="' + escapeAttr(old.detail) + '"]',
+                        student.row
+                    );
+                    if (main) dispatchRadio(main);
+                    if (detail) dispatchRadio(detail);
+                }
+
+                setStarsLocal(student, old.stars);
+            }
+        } finally {
+            state.suspendUpdates = false;
+        }
+
+        updateAll();
+        toast('تمت استعادة الحالة الأصلية التي كانت موجودة عند بدء وضع الاختبار.');
+    }
+
+    function updateTestModeUi() {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        root.classList.toggle('msa-test-mode', Boolean(state.testMode));
+
+        const toggle = q('[data-action="test-toggle"]', root);
+        if (toggle) {
+            toggle.classList.toggle('is-active', Boolean(state.testMode));
+            toggle.textContent = state.testMode
+                ? '🧪 التجربة مفعّلة'
+                : '🧪 وضع تجريبي';
+        }
+
+        const restore = q('[data-action="test-restore"]', root);
+        if (restore && state.testMode) {
+            const changed = testChangedCount();
+            restore.textContent = changed
+                ? '↺ استعادة الأصل (' + changed + ')'
+                : '↺ استعادة الأصل';
+            restore.disabled = changed === 0;
+        }
+    }
+
+    function toggleTestMode() {
+        if (!isNewPlatformMode()) {
+            toast('وضع الاختبار مخصص لواجهة التحضير الجديدة في مدرستي.');
+            return;
+        }
+
+        if (!state.testMode) {
+            captureTestBaseline();
+            state.testMode = true;
+            updateTestModeUi();
+            toast('تم تفعيل وضع الاختبار. الحفظ الحقيقي محجوب حتى تطفئ الوضع.');
+            return;
+        }
+
+        const changed = testChangedCount();
+        const message = changed
+            ? 'يوجد ' + changed + ' طالب تغيرت حالته داخل الاختبار. عند الخروج ستبقى هذه التغييرات ظاهرة وسيصبح حفظ مدرستي متاحًا.\n\nهل تريد الخروج من وضع الاختبار؟'
+            : 'هل تريد الخروج من وضع الاختبار وإعادة تفعيل حفظ مدرستي؟';
+
+        if (!window.confirm(message)) return;
+
+        state.testMode = false;
+        updateTestModeUi();
+        toast('تم إيقاف وضع الاختبار. أصبح الحفظ الأصلي في مدرستي متاحًا.');
+    }
+
+    function isAttendanceSaveForm(form) {
+        if (!form) return false;
+        const action = String(form.action || '');
+        return form === state.form ||
+            form.id === 'SaveAttendStudents' ||
+            form.id === 'UpdateAttendStudents' ||
+            /\/SchoolSchedule\/AttendStudents\/SaveAttendStudents/i.test(action);
+    }
+
+    function bindTestModeSaveGuard() {
+        if (document.documentElement.dataset.msaTestSaveGuard === '1') return;
+        document.documentElement.dataset.msaTestSaveGuard = '1';
+
+        document.addEventListener('click', event => {
+            if (!state.testMode) return;
+            if (event.target.closest?.('#' + APP_ID)) return;
+
+            const control = event.target.closest?.(
+                'button, input[type="submit"], input[type="button"]'
+            );
+            if (!control) return;
+
+            const text = String(
+                control.innerText ||
+                control.value ||
+                control.textContent ||
+                ''
+            ).replace(/\s+/g, ' ').trim();
+
+            const inAttendanceForm = isAttendanceSaveForm(control.form || control.closest?.('form'));
+            const looksLikeAttendanceSave =
+                inAttendanceForm ||
+                control.id === 'btnConfirmAbsenceAlert' ||
+                control.name === 'SendAttend' ||
+                (/حفظ/.test(text) && Boolean(control.closest?.('.modal, [role="dialog"]')));
+
+            if (!looksLikeAttendanceSave) return;
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            toast('🧪 وضع الاختبار مفعّل: تم منع الحفظ ولم يُرسل شيء إلى مدرستي.');
+        }, true);
+
+        document.addEventListener('submit', event => {
+            if (!state.testMode || !isAttendanceSaveForm(event.target)) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            toast('🧪 تم منع إرسال نموذج الحضور لأن وضع الاختبار مفعّل.');
+        }, true);
+
+        const nativeSubmit = HTMLFormElement.prototype.submit;
+        HTMLFormElement.prototype.submit = function () {
+            if (state.testMode && isAttendanceSaveForm(this)) {
+                toast('🧪 تم منع الحفظ البرمجي لأن وضع الاختبار مفعّل.');
+                return;
+            }
+            return nativeSubmit.call(this);
+        };
+    }
+
     function undoLast() {
         const previous = state.undoStack.pop();
         if (!previous) {
@@ -1357,6 +1559,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         applyVisibility();
         if (['priority', 'unset-first', 'absent-first', 'late-first'].includes(state.sort)) applySort();
         updateSaveAllUi();
+        updateTestModeUi();
     }
 
     function toast(message) {
@@ -2664,6 +2867,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="undo"]', root).addEventListener('click', undoLast);
         q('[data-action="report"]', root).addEventListener('click', openReport);
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
+        q('[data-action="test-toggle"]', root)?.addEventListener('click', toggleTestMode);
+        q('[data-action="test-restore"]', root)?.addEventListener('click', restoreTestBaseline);
 
         q('[data-action="save-all"]', root)?.addEventListener('click', saveAllChanges);
         q('[data-action="retry-save"]', root)?.addEventListener('click', retryFailedSaves);
@@ -2846,7 +3051,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             savedSignatures: new Map(),
             saveFailures: [],
             saveAllArmedUntil: 0,
-            saveDebugStep: ''
+            saveDebugStep: '',
+            testMode: false,
+            testBaseline: []
         };
 
         resetSavedSignatures();
@@ -2856,6 +3063,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         bindToolbar(root);
         bindKeyboardShortcuts();
         bindNativeSaveTracking();
+        bindTestModeSaveGuard();
         updateModeUi(root);
         updateAll();
 
