@@ -86,7 +86,7 @@
     {
       "id": "madrasati-projects-intelligence",
       "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "status": "stable",
       "description": "مدير الأنشطة والمشاريع في مدرستي: مطابقة محسّنة لدرجات Excel/CSV مع كشف الأسباب والحدود والتكرار وحماية الملاحظات والتحقق التدريجي من الحفظ، إضافة إلى البحث والإحصائيات والتقارير.",
       "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
