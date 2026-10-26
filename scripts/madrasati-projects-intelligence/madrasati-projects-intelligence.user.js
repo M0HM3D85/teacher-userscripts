@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.4
+// @version      1.5.5
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.4
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.5
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.5.4
+// Madrasati Projects & Activities Intelligence — v1.5.5
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.4';
+  const VERSION = '1.5.5';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -893,19 +893,21 @@
   };
 
   const globalProjectFormFields = () => {
-    const form = [...document.forms].find(f => /\/Projects\/Projects\/GradeProject\//i.test(f.action || ''));
-    const out = [];
-    if (!form) return out;
-    [...form.elements].forEach(el => {
-      if (!el.name || /^List\[/i.test(el.name)) return;
-      if (el.disabled || ['button','submit','reset','file'].includes(el.type)) return;
-      if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
-      out.push([el.name, el.value ?? '']);
-    });
+    const form=[...document.forms].find(f=>/\/Projects\/Projects\/GradeProject\//i.test(f.action||'')||f.querySelector?.('[name^="List["]'));
+    const out=[],seen=new Set();
+    const push=el=>{
+      if(!el?.name||/^List\[/i.test(el.name)||el.disabled)return;
+      if(['button','submit','reset','file'].includes(el.type))return;
+      if((el.type==='radio'||el.type==='checkbox')&&!el.checked)return;
+      const key=el.name+'|'+String(el.value??'');
+      if(!seen.has(key)){out.push([el.name,el.value??'']);seen.add(key);}
+    };
+    if(form)[...form.elements].forEach(push);
+    document.querySelectorAll('input[type="hidden"][name]').forEach(push);
     return out;
   };
 
-  const buildProjectPost = rows => {
+    const buildProjectPost = rows => {
     const params = new URLSearchParams();
     globalProjectFormFields().forEach(([k, v]) => params.append(k, v));
     rows.forEach((row, index) => {
@@ -924,18 +926,29 @@
   };
 
   const postProjectRows = async rows => {
-    const form = [...document.forms].find(f => /\/Projects\/Projects\/GradeProject\//i.test(f.action || ''));
-    if (!form) throw new Error('لم يتم العثور على نموذج حفظ درجات النشاط.');
-    const response = await fetch(form.action, {
-      method: 'POST', credentials: 'include', cache: 'no-store',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-      body: buildProjectPost(rows).toString(), redirect: 'follow'
-    });
-    if (!response.ok) throw new Error(`فشل الحفظ: HTTP ${response.status}`);
-    return response.text();
+    if(!/\/Projects\/Projects\/GradeProject\//i.test(location.pathname))throw new Error('الحفظ متاح من صفحة رصد المشروع فقط.');
+    if(!rows?.length)throw new Error('لا توجد درجات في الدفعة.');
+    const form=[...document.forms].find(f=>/\/Projects\/Projects\/GradeProject\//i.test(f.action||'')||f.querySelector?.('[name^="List["]'));
+    if(!form)throw new Error('لم أتعرف على نموذج حفظ درجات المشروع. لم تُرسل الدفعة.');
+    const url=`${location.origin}${location.pathname}${location.search||''}`;
+    const body=buildProjectPost(rows);
+    const count=[...body.keys()].filter(k=>/^List\[\d+\]\.StudentId$/.test(k)).length;
+    if(count!==rows.length)throw new Error('الدفعة غير مكتملة. لم تُرسل إلى مدرستي.');
+    const trace=globalThis.MAIP_IMPORT_TRACE||(globalThis.MAIP_IMPORT_TRACE=[]);
+    trace.push({action:'POST_START',at:new Date().toISOString(),size:rows.length});
+    const response=await fetch(url,{method:'POST',credentials:'include',cache:'no-store',redirect:'follow',
+      headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','X-Requested-With':'XMLHttpRequest'},
+      body:body.toString()});
+    const html=await response.text();
+    trace.push({action:'POST_RESULT',at:new Date().toISOString(),size:rows.length,status:response.status,redirected:response.redirected,bodyLength:html.length});
+    if(!response.ok)throw new Error(`رفض مدرستي الحفظ (HTTP ${response.status}).`);
+    const resolved=new URL(response.url||url,location.origin);
+    if(response.redirected&&!/\/Projects\/Projects\/GradeProject\//i.test(resolved.pathname))throw new Error('أعاد مدرستي التوجيه بعيدًا عن صفحة الرصد؛ لم يتأكد الحفظ.');
+    if(/<title[^>]*>\s*(?:تسجيل الدخول|Login|Sign in)/i.test(html)||/name=["']password["']/i.test(html))throw new Error('انتهت الجلسة أو ظهر تسجيل الدخول بدل نتيجة الحفظ.');
+    return html;
   };
 
-  const saveImport = async function(){
+    const saveImport = async function(){
  const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
  if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
@@ -946,7 +959,15 @@
  setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
  let posted=0;
  try{
-  const changes=ready.map(r=>({...r.student,grade:r.grade,feedback:state.importFeedback?(r.feedback||r.student.feedback||''):(r.student.feedback||''),rawFields:{...r.student.rawFields,Grade:String(r.grade),feedBack:state.importFeedback?(r.feedback||r.student.feedback||''):(r.student.feedback||'')}}));
+  // اقرأ أحدث حالة للطلاب قبل أي كتابة على مدرستي؛ الخانات القديمة قد تكون تغيّرت.
+  const latest=await fetchAllStudents(),latestById=new Map(latest.map(row=>[studentIdKey(row.studentId),row]));
+  if(ready.some(r=>!latestById.has(studentIdKey(r.student.studentId))))throw new Error('بعض سجلات الطلاب لم تعد متاحة في مدرستي؛ لم تُرسل الدرجات.');
+  const changes=ready.map(r=>{
+    const student=latestById.get(studentIdKey(r.student.studentId));
+    if(!Number.isFinite(student.totalGrade)||student.totalGrade<=0||r.grade>student.totalGrade)throw new Error(`تغير الحد الأعلى لدرجة ${r.student.name}. أُوقف الحفظ.`);
+    const feedback=state.importFeedback?(r.feedback||student.feedback||''):(student.feedback||'');
+    return {...student,grade:r.grade,feedback,rawFields:{...student.rawFields,Grade:String(r.grade),feedBack:feedback}};
+  });
   for(let i=0;i<changes.length;i+=10){
    const batch=changes.slice(i,i+10);
    await postProjectRows(batch);
