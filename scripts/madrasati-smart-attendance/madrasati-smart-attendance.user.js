@@ -200,6 +200,7 @@
 #${APP_ID}.msa-new-platform [data-action="next-unset"],
 #${APP_ID}.msa-new-platform [data-filter="unset"],
 #${APP_ID}.msa-new-platform [data-stat="unset"] { display:none !important; }
+#${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(6,minmax(112px,1fr)); }
 #${APP_ID} .msa-stats {
     display: grid;
     grid-template-columns: repeat(7, minmax(112px, 1fr));
@@ -555,7 +556,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
     function cleanStudentNameCandidate(value = '') {
         return String(value || '')
             .replace(/\s+/g, ' ')
-            .replace(/\b(?:حاضر|غائب|متأخر|بعذر|بدون\s+عذر)\b/g, ' ')
+            .replace(/(?:بدون\s+عذر|بعذر|متأخر|غائب|حاضر)/g, ' ')
             .replace(/[0-9٠-٩۰-۹]+/g, ' ')
             .replace(/[|•·]+/g, ' ')
             .replace(/\s+/g, ' ')
@@ -681,7 +682,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             name: studentNameInput.value || '',
             normalizedName: normalizeArabic(studentNameInput.value || ''),
             originalOrder: Number(row.dataset.msaOriginalOrder),
-            layout: 'row-save'
+            layout: 'legacy-row-save'
         };
     }
 
@@ -2552,6 +2553,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
 
         root.classList.toggle('msa-new-platform', isNewPlatform);
+
+        const searchInput = q('[data-role="search"]', root);
+        if (searchInput) {
+            searchInput.placeholder = state.mode === 'batch-update'
+                ? 'ابحث باسم الطالب...'
+                : 'ابحث باسم الطالب أو رقمه...';
+        }
 
         const bulkStatus = q('[data-role="bulk-status"]', root);
         if (bulkStatus) {
