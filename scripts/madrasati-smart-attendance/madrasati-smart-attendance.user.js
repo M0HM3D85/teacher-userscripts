@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.4-beta4
-// @description  نسخة اختبارية: زر حفظ علوي مرتبط بحفظ مدرستي الأصلي، بحث أسماء مرن، وتقارير متوافقة مع واجهة التحضير الجديدة.
+// @version      0.3.4
+// @description  إدارة ذكية للحضور في مدرستي مع إحصاءات وتقارير وبحث مرن، وزر حفظ علوي مرتبط بالحفظ الأصلي مع بيان حالة إمكانية التعديل.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta4-top-save/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta4-top-save/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-final/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-final/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.4-beta4',
+        version: '0.3.4',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -197,6 +197,39 @@
     color: #64748b;
 }
 #${APP_ID} .msa-head-actions { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+#${APP_ID} .msa-save-state {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:9px 12px;
+    margin:0 16px 12px;
+    border:1px solid #dbe4ea;
+    border-radius:10px;
+    font-size:12px;
+    font-weight:850;
+    line-height:1.5;
+}
+#${APP_ID} .msa-save-state.is-available {
+    background:#f0fdf4;
+    border-color:#bbebc9;
+    color:#166534;
+}
+#${APP_ID} .msa-save-state.is-locked {
+    background:#fff7ed;
+    border-color:#fed7aa;
+    color:#9a3412;
+}
+#${APP_ID} .msa-save-state.is-unavailable {
+    background:#fef2f2;
+    border-color:#fecaca;
+    color:#991b1b;
+}
+#${APP_ID} .msa-save-state.is-unknown {
+    background:#f8fafc;
+    border-color:#e2e8f0;
+    color:#475569;
+}
+
 #${APP_ID} .msa-body { padding: 14px 16px 15px; }
 #${APP_ID}.is-collapsed .msa-body { display: none; }
 #${APP_ID}.msa-new-platform [data-action="unset-present"],
@@ -1347,6 +1380,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         applyVisibility();
         if (['priority', 'unset-first', 'absent-first', 'late-first'].includes(state.sort)) applySort();
         updateSaveAllUi();
+        updateSaveAvailabilityUi();
     }
 
     function toast(message) {
@@ -2454,6 +2488,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 </div>
             </div>
 
+            <div class="msa-save-state is-unknown" data-role="save-state">
+                جارٍ فحص إمكانية الحفظ والتعديل...
+            </div>
+
             <div class="msa-body">
                 <div class="msa-stats">
                     <div class="msa-stat-card" data-filter="all" data-stat="total">
@@ -2592,6 +2630,88 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         document.body.prepend(root);
     }
 
+    function pageVisibleText() {
+        return cleanText(document.body?.innerText || '');
+    }
+
+    function saveAvailability() {
+        const button = nativeSaveButton();
+        const text = pageVisibleText();
+
+        const lockedUntilTomorrow =
+            text.includes('تم استخدام التعديل المتاح لهذه الحصة') &&
+            text.includes('يُتاح التعديل مرة أخرى بدايةً من اليوم التالي');
+
+        if (lockedUntilTomorrow) {
+            return {
+                key: 'locked-today',
+                available: false,
+                message: '🔒 تم استخدام التعديل المتاح لهذه الحصة — يتاح التعديل مرة أخرى بدايةً من اليوم التالي.'
+            };
+        }
+
+        if (!button) {
+            return {
+                key: 'unknown',
+                available: false,
+                message: 'تعذر العثور على زر الحفظ الأصلي في مدرستي.'
+            };
+        }
+
+        if (button.disabled) {
+            return {
+                key: 'disabled',
+                available: false,
+                message: state.mode === 'batch-update'
+                    ? '⛔ لا يمكن تعديل هذه الحصة حاليًا؛ زر الحفظ الأصلي في مدرستي غير متاح.'
+                    : '⛔ لا يمكن حفظ هذه الحصة حاليًا؛ زر الحفظ الأصلي في مدرستي غير متاح.'
+            };
+        }
+
+        return {
+            key: 'available',
+            available: true,
+            message: state.mode === 'batch-update'
+                ? '✅ ما زال بالإمكان تعديل هذه الحصة وحفظ التعديل.'
+                : '✅ يمكن حفظ هذه الحصة الآن.'
+        };
+    }
+
+    function updateSaveAvailabilityUi(root = q('#' + APP_ID)) {
+        if (!root) return;
+
+        const topSave = q('[data-action="native-save-top"]', root);
+        const box = q('[data-role="save-state"]', root);
+        const availability = saveAvailability();
+
+        if (topSave) {
+            topSave.disabled = !availability.available;
+            topSave.setAttribute('aria-disabled', String(!availability.available));
+            topSave.title = availability.message;
+        }
+
+        if (box) {
+            box.classList.remove(
+                'is-available',
+                'is-locked',
+                'is-unavailable',
+                'is-unknown'
+            );
+
+            if (availability.key === 'available') {
+                box.classList.add('is-available');
+            } else if (availability.key === 'locked-today') {
+                box.classList.add('is-locked');
+            } else if (availability.key === 'disabled') {
+                box.classList.add('is-unavailable');
+            } else {
+                box.classList.add('is-unknown');
+            }
+
+            box.textContent = availability.message;
+        }
+    }
+
     function nativeSaveButton() {
         const form = state.form || q('#SaveAttendStudents') || q('#UpdateAttendStudents');
         if (!form) return null;
@@ -2604,14 +2724,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     }
 
     function triggerNativeSave() {
+        const availability = saveAvailability();
         const button = nativeSaveButton();
-        if (!button) {
-            toast('لم يتم العثور على زر الحفظ الأصلي في مدرستي.');
-            return;
-        }
 
-        if (button.disabled) {
-            toast('زر الحفظ الأصلي غير متاح حاليًا.');
+        if (!availability.available || !button) {
+            toast(availability.message);
+            updateSaveAvailabilityUi();
             return;
         }
 
@@ -2633,14 +2751,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 : 'ابحث بالاسم بأي ترتيب أو برقم الطالب...';
         }
 
-        const topSave = q('[data-action="native-save-top"]', root);
-        if (topSave) {
-            const nativeSave = nativeSaveButton();
-            topSave.disabled = !nativeSave || nativeSave.disabled;
-            topSave.title = state.mode === 'batch-update'
-                ? 'ينفذ زر الحفظ الأصلي في مدرستي، بما في ذلك شاشة سبب التعديل.'
-                : 'ينفذ زر الحفظ الأصلي في مدرستي، بما في ذلك شاشة تأكيد الرصد.';
-        }
+        updateSaveAvailabilityUi(root);
 
         const bulkStatus = q('[data-role="bulk-status"]', root);
         if (bulkStatus) {
@@ -2668,7 +2779,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             if (saveHint) saveHint.textContent = 'تم اكتشاف الواجهة القديمة؛ «حفظ الكل» متاح للتوافق فقط.';
         } else if (state.mode === 'batch-update') {
             if (modeLabel) modeLabel.textContent = 'تعديل حضور محفوظ — نظام مدرستي الجديد';
-            if (saveHint) saveHint.textContent = '⚠️ تعديل حضور محفوظ قد يطلب «سبب التعديل»، وتوضح مدرستي أنه قد لا يمكن تعديله مرة أخرى اليوم. استخدم زر «حفظ» الأصلي.';
+            if (saveHint) saveHint.textContent = '⚠️ عند حفظ تعديل الحضور، تستخدم مدرستي فرصة التعديل المتاحة لليوم، ويُتاح التعديل مرة أخرى بدايةً من اليوم التالي.';
         } else {
             if (modeLabel) modeLabel.textContent = 'تحضير حصة جديدة — نظام مدرستي الجديد';
             if (saveHint) saveHint.textContent = 'مدرستي تبدأ الطلاب «حاضر» افتراضيًا؛ راجع الغياب ثم استخدم زر «حفظ» الأصلي.';
@@ -2885,7 +2996,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.4-beta4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
@@ -2905,12 +3016,17 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     let observerTimer = null;
     const observer = new MutationObserver(() => {
         clearTimeout(observerTimer);
-        observerTimer = setTimeout(init, 180);
+        observerTimer = setTimeout(() => {
+            init();
+            updateSaveAvailabilityUi();
+        }, 180);
     });
 
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['disabled', 'class', 'style', 'hidden', 'aria-disabled']
     });
 
     // بعض تنقلات مدرستي تغير الرابط/محتوى الحصة دون إعادة تحميل الصفحة بالكامل.
