@@ -700,11 +700,15 @@
    }else if(status==='ready'&&(!Number.isFinite(student?.totalGrade)||student.totalGrade<=0)){
     status='invalid';reason='الدرجة الكلية في مدرستي غير معروفة؛ لن يتم الحفظ دون تحقق';
    }
+   if(status==='ready'&&student&&className&&clean(student.className)&&norm(className)!==norm(student.className)){
+    status='identity_conflict';reason='الفصل في الملف يختلف عن الفصل المسجل للطالب في هذا المشروع';
+   }
    if(student&&status==='ready'){
     const prior=matchedIds.get(String(student.studentId));
     if(prior){
      status='duplicate';reason=`هذا الطالب مكرر في صفوف الملف (الصف ${prior.sourceRow})`;
-     prior.status='duplicate';prior.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;
+     const prev=preview[prior.mark];
+     if(prev){prev.status='duplicate';prev.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;}
     }else matchedIds.set(String(student.studentId),{sourceRow:i+1,mark:preview.length});
    }
    preview.push({sourceRow:i+1,sid,name,className,grade,feedback,student,method,status,reason});
