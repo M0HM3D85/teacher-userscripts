@@ -975,6 +975,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
     }
 
     function setStudentStatus(student, statusDef) {
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+        if (isNewPlatform && statusDef?.main === '34') return false;
+
         const idx = student.index;
 
         const main =
@@ -1224,14 +1227,25 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         const progress = q('[data-role="progress"]', root);
         const pct = c.total ? Math.round((c.selected / c.total) * 100) : 0;
 
-        if (ready) ready.classList.toggle('is-ready', c.unset === 0 && c.total > 0);
+        const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+
+        if (ready) ready.classList.toggle('is-ready', isNewPlatform ? c.total > 0 : c.unset === 0 && c.total > 0);
         if (readyMain) {
-            readyMain.textContent = c.unset === 0
-                ? '✓ الحضور مكتمل وجاهز للمراجعة والحفظ'
-                : `باقي ${c.unset} طالب لم تحدد حالتهم`;
+            if (isNewPlatform) {
+                const parts = [c.total + ' طالب'];
+                if (c.absent) parts.push(c.absent + ' غائب');
+                if (c.late) parts.push(c.late + ' متأخر');
+                readyMain.textContent = parts.join(' — ') + ' — راجع الحالات قبل الحفظ';
+            } else {
+                readyMain.textContent = c.unset === 0
+                    ? '✓ الحضور مكتمل وجاهز للمراجعة والحفظ'
+                    : 'باقي ' + c.unset + ' طالب لم تحدد حالتهم';
+            }
         }
-        if (readyCount) readyCount.textContent = `${c.selected}/${c.total}`;
-        if (progress) progress.style.width = `${pct}%`;
+        if (readyCount) readyCount.textContent = isNewPlatform
+            ? (c.absent + c.late) + ' استثناء'
+            : c.selected + '/' + c.total;
+        if (progress) progress.style.width = (isNewPlatform ? 100 : pct) + '%';
 
         for (const student of state.students) {
             const status = readStudentStatus(student);
@@ -2552,6 +2566,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             }
         }
 
+        const sortSelect = q('[data-role="sort"]', root);
+        const unsetSort = sortSelect?.querySelector('option[value="unset-first"]');
+        if (unsetSort) {
+            unsetSort.hidden = isNewPlatform;
+            unsetSort.disabled = isNewPlatform;
+            if (isNewPlatform && sortSelect.value === 'unset-first') sortSelect.value = 'original';
+        }
+
         if (state.mode === 'legacy-row-save') {
             if (modeLabel) modeLabel.textContent = 'واجهة مدرستي القديمة — حفظ فردي + حفظ الكل الذكي';
             if (saveHint) saveHint.textContent = 'تم اكتشاف الواجهة القديمة؛ «حفظ الكل» متاح للتوافق فقط.';
@@ -2589,7 +2611,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         q('[data-role="ready"]', root).addEventListener('click', () => {
             const c = stats();
-            if (c.unset) setFilter('unset');
+            const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
+            if (!isNewPlatform && c.unset) setFilter('unset');
             else setFilter('exceptions');
         });
 
@@ -2635,8 +2658,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     event.target.matches?.('input[type="radio"][name^="Attend["]') ||
                     event.target.matches?.('input[type="radio"][name^="List["][name$=".AttendStatusId"]');
 
-                if (attendanceChanged) updateAll();
-                else if (state.mode === 'legacy-row-save' && event.target.closest?.('tr')) updateSaveAllUi();
+                if (attendanceChanged) {
+                    clearTimeout(updateAll._attendanceTimer);
+                    updateAll._attendanceTimer = setTimeout(() => {
+                        updateAll();
+                        requestAnimationFrame(() => updateAll());
+                    }, 0);
+                } else if (state.mode === 'legacy-row-save' && event.target.closest?.('tr')) {
+                    updateSaveAllUi();
+                }
             });
         }
     }
@@ -2712,6 +2742,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 event.preventDefault();
                 undoLast();
             } else if (key === 'n') {
+                if (state.mode === 'batch-create' || state.mode === 'batch-update') return;
                 event.preventDefault();
                 focusNextUnset();
             }
