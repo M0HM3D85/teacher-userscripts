@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta9
+// @version      0.3.5-beta10
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta9-inline-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta9-inline-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta10-email-first-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta10-email-first-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta9',
+        version: '0.3.5-beta10',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -105,7 +105,7 @@
     const ATTENDANCE_IMPORT_DATA_VERSION = 2;
     const ATTENDANCE_IMPORT_MAX_ROWS = 30000;
     const ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT = 4200000;
-    const ATTENDANCE_REGISTRY_STORAGE_KEY = 'msa-attendance-student-registry-v1';
+    const ATTENDANCE_REGISTRY_STORAGE_KEY = 'msa-attendance-student-registry-v2';
     const ATTENDANCE_IDENTITY_BRIDGE_KEY = 'msa-attendance-identity-bridge-v1';
     const ASSIGNMENT_REGISTRY_COMPAT_KEY = 'MAI_STUDENT_REGISTRY_V2';
     const ATTENDANCE_REGISTRY_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -3260,6 +3260,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     }
 
     function detectRegistryPages(doc) {
+        const paginationText = cleanText(doc.querySelector('#pagination-container')?.innerText || '');
+        const totalMatch = paginationText.match(/من\s+(\d+)/);
+        if (totalMatch) {
+            const total = Number(totalMatch[1]);
+            if (Number.isInteger(total) && total > 0 && total <= 500) return total;
+        }
+
         const nums = [...doc.querySelectorAll('.pagination a[href], #pagination-container a[href]')]
             .map(a => {
                 try {
@@ -3270,6 +3277,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 }
             })
             .filter(n => Number.isInteger(n) && n > 0 && n <= 500);
+
         return nums.length ? Math.max(...nums) : 1;
     }
 
@@ -3809,97 +3817,228 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
     function matchImportedStudents(group) {
         const records = group.records || [];
-        const byId = new Map();
-        const byEmail = new Map();
-        const byCivil = new Map();
-        const byName = new Map();
-        const bySignature = new Map();
+        const registryStudents = attendanceImport.registry?.students || [];
 
-        const add = (map, key, record) => {
+        const add = (map, key, value) => {
             if (!key) return;
             if (!map.has(key)) map.set(key, []);
-            map.get(key).push(record);
+            map.get(key).push(value);
         };
 
-        for (const record of records) {
-            add(byId, normalizeStudentId(record.studentId), record);
-            add(byEmail, normalizeEmail(record.email), record);
-            add(byCivil, normalizeCivilId(record.civilId), record);
-            add(byName, normalizePersonName(record.studentName), record);
-            add(bySignature, personNameSignature(record.studentName), record);
+        const registryByEmail = new Map();
+        for (const student of registryStudents) {
+            add(
+                registryByEmail,
+                normalizeEmail(student.accountNormalized || student.account),
+                student
+            );
         }
 
-        const registry = registryMaps();
-        const used = new Set();
-        const entries = [];
-        const unmatchedPage = [];
-        const ambiguous = [];
+        const pageById = new Map();
+        const pageByName = new Map();
+        const pageBySignature = new Map();
 
         for (const student of state.students) {
-            const studentId = normalizeStudentId(student.studentId);
-            const name = normalizePersonName(student.name);
-            const signature = personNameSignature(student.name);
+            const id = normalizeStudentId(student.studentId);
+            if (id) add(pageById, id, student);
 
-            let candidates = [];
+            add(pageByName, normalizePersonName(student.name), student);
+            add(pageBySignature, personNameSignature(student.name), student);
+        }
+
+        const usedRecords = new Set();
+        const usedStudents = new Set();
+        const entries = [];
+        const ambiguous = [];
+        const bridgeFailures = [];
+
+        const stats = {
+            lessonRecords: records.length,
+            pageStudents: state.students.length,
+            recordsWithEmail: 0,
+            emailFoundInRegistry: 0,
+            emailMissingInRegistry: 0,
+            emailAmbiguousInRegistry: 0,
+            officialNameMatchedPage: 0,
+            officialNameMissingPage: 0,
+            officialNameAmbiguousPage: 0,
+            matchedByStudentId: 0,
+            matchedByEmailBridge: 0,
+            matchedByFallbackName: 0
+        };
+
+        const chooseAvailable = candidates =>
+            (candidates || []).filter(student => !usedStudents.has(student));
+
+        const resolvePageFromRegistry = registryStudent => {
+            if (!registryStudent) return { student: null, reason: 'missing-registry-student', candidates: [] };
+
+            const exact = chooseAvailable(pageByName.get(normalizePersonName(registryStudent.name)) || []);
+            if (exact.length === 1) {
+                return { student: exact[0], reason: 'official-name', candidates: exact };
+            }
+            if (exact.length > 1) {
+                const currentClass = currentImportLessonIdentity().classroom;
+                const sameClass = currentClass
+                    ? exact.filter(candidate =>
+                        classroomSimilarity(currentClass, registryStudent.className || '') >= 0.72
+                    )
+                    : [];
+                if (sameClass.length === 1) {
+                    return { student: sameClass[0], reason: 'official-name+class', candidates: sameClass };
+                }
+                return { student: null, reason: 'official-name-ambiguous', candidates: exact };
+            }
+
+            const signatureMatches = chooseAvailable(
+                pageBySignature.get(personNameSignature(registryStudent.name)) || []
+            );
+            if (signatureMatches.length === 1) {
+                return { student: signatureMatches[0], reason: 'official-name-tokens', candidates: signatureMatches };
+            }
+            if (signatureMatches.length > 1) {
+                return { student: null, reason: 'official-name-tokens-ambiguous', candidates: signatureMatches };
+            }
+
+            return { student: null, reason: 'official-name-not-in-page', candidates: [] };
+        };
+
+        // المرحلة الأولى: سجل الملف نفسه هو نقطة البداية.
+        // email(file) -> MyStudents -> official Madrasati name -> attendance row.
+        for (const record of records) {
+            let student = null;
             let confidence = '';
             let registryStudent = null;
 
-            if (studentId && (byId.get(studentId) || []).length) {
-                candidates = byId.get(studentId);
-                confidence = 'id';
+            const importedStudentId = normalizeStudentId(record.studentId);
+            if (importedStudentId) {
+                const idCandidates = chooseAvailable(pageById.get(importedStudentId) || []);
+                if (idCandidates.length === 1) {
+                    student = idCandidates[0];
+                    confidence = 'id';
+                    stats.matchedByStudentId++;
+                }
             }
 
-            if (!candidates.length && attendanceImport.registry?.students?.length) {
-                const resolved = resolveRegistryStudent(student, registry);
-                registryStudent = resolved.student || null;
+            if (!student) {
+                const email = normalizeEmail(record.email);
+                if (email) {
+                    stats.recordsWithEmail++;
+                    const registryCandidates = registryByEmail.get(email) || [];
 
-                if (registryStudent?.accountNormalized) {
-                    const emailMatches = byEmail.get(normalizeEmail(registryStudent.accountNormalized)) || [];
-                    if (emailMatches.length) {
-                        candidates = emailMatches;
-                        confidence = 'madrasati-email';
-                        rememberStudentIdentity(student, registryStudent);
+                    if (registryCandidates.length === 1) {
+                        stats.emailFoundInRegistry++;
+                        registryStudent = registryCandidates[0];
+
+                        const resolved = resolvePageFromRegistry(registryStudent);
+                        if (resolved.student) {
+                            student = resolved.student;
+                            confidence = 'email→registry→official-name';
+                            stats.officialNameMatchedPage++;
+                            stats.matchedByEmailBridge++;
+                            rememberStudentIdentity(student, registryStudent);
+                        } else if (resolved.reason.includes('ambiguous')) {
+                            stats.officialNameAmbiguousPage++;
+                            bridgeFailures.push({
+                                record,
+                                registryStudent,
+                                reason: resolved.reason,
+                                candidates: resolved.candidates || []
+                            });
+                        } else {
+                            stats.officialNameMissingPage++;
+                            bridgeFailures.push({
+                                record,
+                                registryStudent,
+                                reason: resolved.reason,
+                                candidates: []
+                            });
+                        }
+                    } else if (registryCandidates.length > 1) {
+                        stats.emailAmbiguousInRegistry++;
+                        bridgeFailures.push({
+                            record,
+                            registryStudent: null,
+                            reason: 'email-ambiguous-in-registry',
+                            candidates: registryCandidates
+                        });
+                    } else {
+                        stats.emailMissingInRegistry++;
+                        bridgeFailures.push({
+                            record,
+                            registryStudent: null,
+                            reason: 'email-not-in-registry',
+                            candidates: []
+                        });
                     }
                 }
             }
 
-            if (!candidates.length && (byName.get(name) || []).length) {
-                candidates = byName.get(name);
-                confidence = 'exact-name';
-            } else if (!candidates.length && (bySignature.get(signature) || []).length) {
-                candidates = bySignature.get(signature);
-                confidence = 'name-tokens';
+            // احتياط فقط: الاسم الموجود في ملف المصدر مباشرة.
+            if (!student) {
+                const exact = chooseAvailable(pageByName.get(normalizePersonName(record.studentName)) || []);
+                if (exact.length === 1) {
+                    student = exact[0];
+                    confidence = 'fallback-exact-name';
+                    stats.matchedByFallbackName++;
+                } else if (!exact.length) {
+                    const signature = chooseAvailable(
+                        pageBySignature.get(personNameSignature(record.studentName)) || []
+                    );
+                    if (signature.length === 1) {
+                        student = signature[0];
+                        confidence = 'fallback-name-tokens';
+                        stats.matchedByFallbackName++;
+                    } else if (signature.length > 1) {
+                        ambiguous.push({
+                            record,
+                            student: null,
+                            candidates: signature,
+                            reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
+                            confidence: 'fallback-name-tokens'
+                        });
+                    }
+                } else {
+                    ambiguous.push({
+                        record,
+                        student: null,
+                        candidates: exact,
+                        reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
+                        confidence: 'fallback-exact-name'
+                    });
+                }
             }
 
-            const available = candidates.filter(record => !used.has(record));
-
-            if (available.length === 1) {
-                const record = available[0];
-                used.add(record);
+            if (student && !usedStudents.has(student)) {
+                usedStudents.add(student);
+                usedRecords.add(record);
                 const attendance = normalizeImportedAttendance(record);
-                entries.push({ student, record, confidence, attendance, registryStudent });
-            } else if (available.length > 1) {
-                ambiguous.push({
+                entries.push({
                     student,
-                    candidates: available,
-                    reason: 'أكثر من سجل في الملف يطابق الطالب.',
-                    confidence
-                });
-            } else {
-                unmatchedPage.push({
-                    ...student,
-                    reason: attendanceImport.registry?.students?.length
-                        ? 'لم يُعثر على سجل حضور مطابق بالبريد أو الاسم.'
-                        : 'لم يُعثر على سجل حضور مطابق. دليل طلاب مدرستي غير متاح حاليًا.'
+                    record,
+                    confidence,
+                    attendance,
+                    registryStudent
                 });
             }
         }
 
-        const unmatchedFile = records.filter(record => !used.has(record));
+        const unmatchedPage = state.students
+            .filter(student => !usedStudents.has(student))
+            .map(student => ({
+                ...student,
+                reason: 'لم يجد السكربت سجلًا مطابقًا لهذا الطالب بعد المرور بمسار البريد ثم الاسم الاحتياطي.'
+            }));
+
+        const unmatchedFile = records.filter(record => !usedRecords.has(record));
         const supported = entries.filter(entry => entry.attendance.kind === 'supported');
         const review = entries.filter(entry => entry.attendance.kind !== 'supported');
         const convertedLate = supported.filter(entry => entry.attendance.convertedFrom === 'late');
-        const emailMatched = entries.filter(entry => entry.confidence === 'madrasati-email');
+        const emailMatched = entries.filter(entry => entry.confidence === 'email→registry→official-name');
+
+        stats.matchedTotal = entries.length;
+        stats.unmatchedFile = unmatchedFile.length;
+        stats.unmatchedPage = unmatchedPage.length;
 
         return {
             entries,
@@ -3910,6 +4049,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             unmatchedPage,
             unmatchedFile,
             ambiguous,
+            bridgeFailures,
+            bridgeStats: stats,
             matchedCount: entries.length
         };
     }
@@ -4069,12 +4210,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         if (kind === 'unmatched-file') {
             return '<table class="msa-import-review-table"><thead><tr>' +
-                '<th>#</th><th>اسم الطالب في الملف</th><th>البريد</th><th>الحالة</th><th>صف المصدر</th>' +
+                '<th>#</th><th>اسم الطالب في الملف</th><th>الحالة</th><th>صف المصدر</th>' +
                 '</tr></thead><tbody>' +
                 items.map((record, i) => '<tr>' +
                     '<td>' + (i + 1) + '</td>' +
                     '<td>' + escapeHtml(record.studentName || '') + '</td>' +
-                    '<td>' + escapeHtml(record.email || '—') + '</td>' +
                     '<td>' + escapeHtml(record.status || '') + '</td>' +
                     '<td>' + escapeHtml(record.sourceRow || '') + '</td>' +
                     '</tr>').join('') +
@@ -4759,7 +4899,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             ' — ✅ تمت مطابقة الحصة: ' +
             match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period +
             '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length +
-            (s.emailMatched.length ? ' — بالبريد: ' + s.emailMatched.length : '') + '.';
+            ' — ربط البريد: ' + s.emailMatched.length + '.';
 
         const lines = [];
         lines.push(
@@ -4772,16 +4912,38 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '</div>'
         );
 
+        const bridgeStats = s.bridgeStats || {};
         lines.push(
-            '<div><b>المطابقة:</b> ' +
+            '<div><b>مسار الربط:</b> ' +
+            '<span class="msa-import-chip">سجلات الحصة ' + (bridgeStats.lessonRecords ?? match.group.records.length) + '</span>' +
+            '<span class="msa-import-chip">بريد في الملف ' + (bridgeStats.recordsWithEmail ?? 0) + '</span>' +
+            '<span class="msa-import-chip">البريد وجد في الدليل ' + (bridgeStats.emailFoundInRegistry ?? 0) + '</span>' +
+            '<span class="msa-import-chip">الاسم الرسمي وجد في الحصة ' + (bridgeStats.officialNameMatchedPage ?? 0) + '</span>' +
+            '<span class="msa-import-chip">احتياط بالاسم ' + (bridgeStats.matchedByFallbackName ?? 0) + '</span>' +
+            '</div>'
+        );
+
+        lines.push(
+            '<div><b>المطابقة النهائية:</b> ' +
             '<span class="msa-import-chip">قابل للتطبيق ' + s.supported.length + '</span>' +
-            '<span class="msa-import-chip">بالبريد ' + s.emailMatched.length + '</span>' +
+            '<span class="msa-import-chip">ربط بالبريد ' + s.emailMatched.length + '</span>' +
             '<span class="msa-import-chip">مراجعة ' + s.review.length + '</span>' +
-            '<span class="msa-import-chip">غير موجود بالملف ' + s.unmatchedPage.length + '</span>' +
-            '<span class="msa-import-chip">غير موجود بمدرستي ' + s.unmatchedFile.length + '</span>' +
+            '<span class="msa-import-chip">في مدرستي وليس الملف ' + s.unmatchedPage.length + '</span>' +
+            '<span class="msa-import-chip">في الملف وليس الحصة ' + s.unmatchedFile.length + '</span>' +
             (s.ambiguous.length ? '<span class="msa-import-chip">مبهم ' + s.ambiguous.length + '</span>' : '') +
             '</div>'
         );
+
+        if ((bridgeStats.emailMissingInRegistry ?? 0) || (bridgeStats.officialNameMissingPage ?? 0) || (bridgeStats.officialNameAmbiguousPage ?? 0)) {
+            lines.push(
+                '<div style="margin-top:6px;color:#9a3412">' +
+                '⚠️ تعثر الربط: ' +
+                'بريد غير موجود في الدليل ' + (bridgeStats.emailMissingInRegistry ?? 0) +
+                ' — اسم رسمي غير موجود في الحصة ' + (bridgeStats.officialNameMissingPage ?? 0) +
+                ' — اسم رسمي مبهم ' + (bridgeStats.officialNameAmbiguousPage ?? 0) +
+                '</div>'
+            );
+        }
 
         const reviewButtons = [];
         if (s.review.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="review">⚠️ مراجعة ' + s.review.length + ' — عرض</button>');
@@ -5632,7 +5794,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta9] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta10] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
