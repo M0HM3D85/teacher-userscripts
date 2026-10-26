@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta11
+// @version      0.3.5-beta12
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta12-learned-identity/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta12-learned-identity/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta11',
+        version: '0.3.5-beta12',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -3260,11 +3260,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     function loadIdentityBridge() {
         try {
             const parsed = JSON.parse(localStorage.getItem(ATTENDANCE_IDENTITY_BRIDGE_KEY) || '{}');
-            return parsed && typeof parsed === 'object'
-                ? { version: 1, students: parsed.students && typeof parsed.students === 'object' ? parsed.students : {} }
-                : { version: 1, students: {} };
+            return {
+                version: 2,
+                students: parsed?.students && typeof parsed.students === 'object' ? parsed.students : {},
+                emails: parsed?.emails && typeof parsed.emails === 'object' ? parsed.emails : {}
+            };
         } catch (_) {
-            return { version: 1, students: {} };
+            return { version: 2, students: {}, emails: {} };
         }
     }
 
@@ -3272,7 +3274,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         try {
             localStorage.setItem(
                 ATTENDANCE_IDENTITY_BRIDGE_KEY,
-                JSON.stringify(attendanceImport.identityBridge || { version: 1, students: {} })
+                JSON.stringify(
+                    attendanceImport.identityBridge ||
+                    { version: 2, students: {}, emails: {} }
+                )
             );
         } catch (_) {}
     }
@@ -3283,13 +3288,41 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (!studentId || !account) return;
 
         if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.students) attendanceImport.identityBridge.students = {};
+
         attendanceImport.identityBridge.students[studentId] = {
             account,
             userGuid: cleanText(registryStudent?.userGuid || ''),
             officialName: cleanText(registryStudent?.name || student?.name || ''),
+            attendanceName: cleanText(student?.name || ''),
             className: cleanText(registryStudent?.className || ''),
             savedAt: new Date().toISOString()
         };
+        saveIdentityBridge();
+    }
+
+    function rememberEmailAttendanceIdentity(record, student, registryStudent, method = '') {
+        const email = normalizeEmail(record?.email || registryStudent?.account);
+        if (!email || !student?.name) return;
+
+        if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.emails) attendanceImport.identityBridge.emails = {};
+
+        attendanceImport.identityBridge.emails[email] = {
+            attendanceName: cleanText(student.name || ''),
+            studentId: normalizeStudentId(student.studentId),
+            registryName: cleanText(registryStudent?.name || ''),
+            userGuid: cleanText(registryStudent?.userGuid || ''),
+            className: cleanText(registryStudent?.className || record?.classroom || ''),
+            method: cleanText(method || ''),
+            savedAt: new Date().toISOString()
+        };
+
+        rememberStudentIdentity(student, registryStudent || {
+            account: email,
+            name: student.name,
+            className: record?.classroom || ''
+        });
         saveIdentityBridge();
     }
 
@@ -3935,8 +3968,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             officialNameMissingPage: 0,
             officialNameAmbiguousPage: 0,
             matchedByStudentId: 0,
+            matchedByLearnedEmail: 0,
             matchedByEmailBridge: 0,
-            matchedByFallbackName: 0
+            matchedByFallbackName: 0,
+            matchedByFallbackCanonical: 0,
+            matchedByFallbackSimilarity: 0
         };
 
         const chooseAvailable = candidates =>
@@ -4039,8 +4075,48 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             let confidence = '';
             let registryStudent = null;
 
+            const recordEmail = normalizeEmail(record.email);
+            const learned = recordEmail
+                ? attendanceImport.identityBridge?.emails?.[recordEmail]
+                : null;
+
+            if (learned) {
+                const learnedId = normalizeStudentId(learned.studentId);
+                if (learnedId) {
+                    const idCandidates = chooseAvailable(pageById.get(learnedId) || []);
+                    if (idCandidates.length === 1) {
+                        student = idCandidates[0];
+                        confidence = 'learned-email→studentId';
+                        stats.matchedByLearnedEmail++;
+                    }
+                }
+
+                if (!student && learned.attendanceName) {
+                    const exact = chooseAvailable(
+                        pageByName.get(normalizePersonName(learned.attendanceName)) || []
+                    );
+                    if (exact.length === 1) {
+                        student = exact[0];
+                        confidence = 'learned-email→attendance-name';
+                        stats.matchedByLearnedEmail++;
+                    }
+                }
+
+                if (!student && learned.attendanceName) {
+                    const canonical = canonicalPersonName(learned.attendanceName);
+                    const matches = chooseAvailable(
+                        state.students.filter(item => canonicalPersonName(item.name) === canonical)
+                    );
+                    if (canonical && matches.length === 1) {
+                        student = matches[0];
+                        confidence = 'learned-email→canonical-name';
+                        stats.matchedByLearnedEmail++;
+                    }
+                }
+            }
+
             const importedStudentId = normalizeStudentId(record.studentId);
-            if (importedStudentId) {
+            if (!student && importedStudentId) {
                 const idCandidates = chooseAvailable(pageById.get(importedStudentId) || []);
                 if (idCandidates.length === 1) {
                     student = idCandidates[0];
@@ -4111,14 +4187,44 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 }
             }
 
-            // احتياط فقط: الاسم الموجود في ملف المصدر مباشرة.
+            // احتياط: اسم المصدر نفسه، ثم تطبيع الاسم، ثم تشابه آمن وفريد.
             if (!student) {
+                const availablePage = state.students.filter(item => !usedStudents.has(item));
                 const exact = chooseAvailable(pageByName.get(normalizePersonName(record.studentName)) || []);
+
                 if (exact.length === 1) {
                     student = exact[0];
                     confidence = 'fallback-exact-name';
                     stats.matchedByFallbackName++;
-                } else if (!exact.length) {
+                }
+
+                if (!student) {
+                    const canonical = canonicalPersonName(record.studentName);
+                    const canonicalMatches = availablePage.filter(
+                        item => canonical && canonicalPersonName(item.name) === canonical
+                    );
+                    if (canonicalMatches.length === 1) {
+                        student = canonicalMatches[0];
+                        confidence = 'fallback-canonical-name';
+                        stats.matchedByFallbackName++;
+                        stats.matchedByFallbackCanonical++;
+                    }
+                }
+
+                if (!student) {
+                    const compact = compactPersonName(record.studentName);
+                    const compactMatches = availablePage.filter(
+                        item => compact && compactPersonName(item.name) === compact
+                    );
+                    if (compactMatches.length === 1) {
+                        student = compactMatches[0];
+                        confidence = 'fallback-compact-name';
+                        stats.matchedByFallbackName++;
+                        stats.matchedByFallbackCanonical++;
+                    }
+                }
+
+                if (!student) {
                     const signature = chooseAvailable(
                         pageBySignature.get(personNameSignature(record.studentName)) || []
                     );
@@ -4126,29 +4232,44 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         student = signature[0];
                         confidence = 'fallback-name-tokens';
                         stats.matchedByFallbackName++;
-                    } else if (signature.length > 1) {
+                    }
+                }
+
+                if (!student) {
+                    const ranked = rankPageStudentsByName(record.studentName, availablePage);
+                    const best = ranked[0];
+                    const second = ranked[1];
+
+                    if (
+                        best &&
+                        best.score >= 0.72 &&
+                        (!second || best.score - second.score >= 0.10)
+                    ) {
+                        student = best.student;
+                        confidence = 'fallback-unique-similarity';
+                        stats.matchedByFallbackName++;
+                        stats.matchedByFallbackSimilarity++;
+                    } else if (best && best.score >= 0.58) {
                         ambiguous.push({
                             record,
                             student: null,
-                            candidates: signature,
-                            reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
-                            confidence: 'fallback-name-tokens'
+                            candidates: ranked.slice(0, 3).map(item => item.student),
+                            ranked: ranked.slice(0, 3),
+                            reason: 'وجد السكربت أسماء قريبة لكن الفارق غير كافٍ للاعتماد الآلي.',
+                            confidence: 'fallback-similarity-review'
                         });
                     }
-                } else {
-                    ambiguous.push({
-                        record,
-                        student: null,
-                        candidates: exact,
-                        reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
-                        confidence: 'fallback-exact-name'
-                    });
                 }
             }
 
             if (student && !usedStudents.has(student)) {
                 usedStudents.add(student);
                 usedRecords.add(record);
+
+                if (recordEmail) {
+                    rememberEmailAttendanceIdentity(record, student, registryStudent, confidence);
+                }
+
                 const attendance = normalizeImportedAttendance(record);
                 entries.push({
                     student,
@@ -4168,10 +4289,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             }));
 
         const unmatchedFile = records.filter(record => !usedRecords.has(record));
+        const unresolvedBridgeFailures = bridgeFailures.filter(item => !usedRecords.has(item.record));
         const supported = entries.filter(entry => entry.attendance.kind === 'supported');
         const review = entries.filter(entry => entry.attendance.kind !== 'supported');
         const convertedLate = supported.filter(entry => entry.attendance.convertedFrom === 'late');
-        const emailMatched = entries.filter(entry => String(entry.confidence || '').startsWith('email→registry→'));
+        const emailMatched = entries.filter(entry => {
+            const method = String(entry.confidence || '');
+            return method.startsWith('email→registry→') || method.startsWith('learned-email→');
+        });
 
         stats.matchedTotal = entries.length;
         stats.unmatchedFile = unmatchedFile.length;
@@ -4186,7 +4311,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             unmatchedPage,
             unmatchedFile,
             ambiguous,
-            bridgeFailures,
+            bridgeFailures: unresolvedBridgeFailures,
             bridgeStats: stats,
             matchedCount: entries.length
         };
@@ -5078,7 +5203,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '<span class="msa-import-chip">الاسم الرسمي وجد في الحصة ' + (bridgeStats.officialNameMatchedPage ?? 0) + '</span>' +
             '<span class="msa-import-chip">تطبيع الاسم ' + (bridgeStats.officialNameMatchedCanonical ?? 0) + '</span>' +
             '<span class="msa-import-chip">تشابه آمن ' + (bridgeStats.officialNameMatchedSimilarity ?? 0) + '</span>' +
+            '<span class="msa-import-chip">هوية متعلمة ' + (bridgeStats.matchedByLearnedEmail ?? 0) + '</span>' +
             '<span class="msa-import-chip">احتياط بالاسم ' + (bridgeStats.matchedByFallbackName ?? 0) + '</span>' +
+            '<span class="msa-import-chip">احتياط بتطبيع ' + (bridgeStats.matchedByFallbackCanonical ?? 0) + '</span>' +
+            '<span class="msa-import-chip">احتياط بتشابه ' + (bridgeStats.matchedByFallbackSimilarity ?? 0) + '</span>' +
             '</div>'
         );
 
@@ -5093,13 +5221,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '</div>'
         );
 
-        if ((bridgeStats.emailMissingInRegistry ?? 0) || (bridgeStats.officialNameMissingPage ?? 0) || (bridgeStats.officialNameAmbiguousPage ?? 0)) {
+        if (s.bridgeFailures?.length) {
             lines.push(
                 '<div style="margin-top:6px;color:#9a3412">' +
-                '⚠️ تعثر الربط: ' +
-                'بريد غير موجود في الدليل ' + (bridgeStats.emailMissingInRegistry ?? 0) +
-                ' — اسم رسمي غير موجود في الحصة ' + (bridgeStats.officialNameMissingPage ?? 0) +
-                ' — اسم رسمي مبهم ' + (bridgeStats.officialNameAmbiguousPage ?? 0) +
+                '⚠️ تعثر جسر الهوية النهائي: ' + s.bridgeFailures.length +
+                ' سجل فقط بقي دون حسم بعد جميع مراحل الربط.' +
                 '</div>'
             );
         }
@@ -5954,7 +6080,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta11] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta12] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
