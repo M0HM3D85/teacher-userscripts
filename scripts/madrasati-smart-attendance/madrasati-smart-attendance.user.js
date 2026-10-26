@@ -3169,7 +3169,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         return normalizePersonName(value)
             .split(' ')
             .map(token => token.trim())
-            .filter(token => token && !removable.has(token));
+            .filter(token => token && !removable.has(token))
+            .map(token => {
+                // يحيى -> يحيي بعد التطبيع العام، بينما بعض الصفحات تعرضه «يحي».
+                // نحصر القاعدة في أسماء الأشخاص فقط ولا نغيّر normalizeArabic العام.
+                if (token.length >= 4 && token.endsWith('يي')) {
+                    return token.slice(0, -1);
+                }
+                return token;
+            });
     }
 
     function canonicalPersonName(value) {
