@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta17
+// @version      0.3.5-beta18
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta17-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta17-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta18-diagnostic-reference-fix/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta17',
+        version: '0.3.5-beta18',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -118,6 +118,10 @@
         lastSignature: '',
         lastError: '',
         lastApply: null,
+        applyRunning: false,
+        applyConfirmationPending: false,
+        applyConfirmationMessage: '',
+        applyProgress: '',
         registry: null,
         registryLoading: false,
         registryError: '',
@@ -5344,11 +5348,22 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const applyBtn = q('[data-action="apply-import-attendance"]', root);
         const diagnosticBtn = q('[data-action="diagnose-import-apply"]', root);
         const diagnosticConfirm = q('[data-role="diagnostic-confirm"]', root);
+        const applyConfirm = q('[data-role="import-apply-confirm"]', root);
+        const applyConfirmMessage = q('[data-role="import-apply-confirm-message"]', root);
+        const applyProgressNode = q('[data-role="import-apply-progress"]', root);
         const clearBtn = q('[data-action="clear-import-attendance"]', root);
 
         if (!statusBox || !details) return;
         if (diagnosticConfirm) {
             diagnosticConfirm.hidden = !attendanceImport.diagnosticConfirmationPending || attendanceImport.diagnosticRunning;
+        }
+        if (applyConfirm) {
+            applyConfirm.hidden = !attendanceImport.applyConfirmationPending || attendanceImport.applyRunning;
+        }
+        if (applyConfirmMessage) applyConfirmMessage.textContent = attendanceImport.applyConfirmationMessage;
+        if (applyProgressNode) {
+            applyProgressNode.hidden = !attendanceImport.applyProgress;
+            applyProgressNode.textContent = attendanceImport.applyProgress;
         }
 
         statusBox.classList.remove('is-match', 'is-warning', 'is-error');
@@ -5377,7 +5392,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             inspectNamesBtn.disabled = !attendanceImport.registry?.students?.length;
         }
         if (diagnosticBtn) {
-            diagnosticBtn.disabled = attendanceImport.diagnosticRunning;
+            diagnosticBtn.disabled = attendanceImport.diagnosticRunning || attendanceImport.applyRunning;
             diagnosticBtn.textContent = attendanceImport.diagnosticRunning
                 ? '🧪 جاري التشخيص...'
                 : '🧪 تشخيص التطبيق';
@@ -5577,7 +5592,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         details.hidden = false;
 
         if (applyBtn) {
-            applyBtn.disabled = !saveOk || !s.supported.length || s.ambiguous.length > 0;
+            applyBtn.disabled = attendanceImport.applyRunning || attendanceImport.diagnosticRunning ||
+                !saveOk || !s.supported.length || s.ambiguous.length > 0;
+            applyBtn.textContent = attendanceImport.applyRunning
+                ? 'جارٍ تطبيق حضور الملف...'
+                : 'تطبيق حضور الملف';
             applyBtn.title = !saveOk
                 ? 'الحفظ غير متاح في مدرستي حاليًا.'
                 : s.ambiguous.length
@@ -5663,13 +5682,60 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         toast('تم مسح سجل الحضور المستورد.');
     }
 
-    async function applyAttendanceImport() {
+    function requestAttendanceImportApplication() {
+        if (attendanceImport.applyRunning || attendanceImport.diagnosticRunning) return;
         const match = refreshAttendanceImportMatch(true);
-        if (!match || match.lesson.status !== 'matched') {
+        if (!match || match.lesson?.status !== 'matched') {
             toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
             return;
         }
+        const availability = saveAvailability();
+        if (!availability.available) {
+            toast(availability.message);
+            return;
+        }
+        const s = match.students;
+        if (s.ambiguous.length) {
+            toast('يوجد تطابق طلاب مبهم. لن يتم التطبيق قبل حله.');
+            return;
+        }
+        if (!s.supported.length) {
+            toast('لا توجد حالات مدعومة قابلة للتطبيق من الملف.');
+            return;
+        }
+        const warnings = [];
+        if (s.review.length) warnings.push(s.review.length + ' حالة تحتاج مراجعة ولن تطبق');
+        if (s.unmatchedPage.length) warnings.push(s.unmatchedPage.length + ' طالب في مدرستي بلا سجل مطابق');
+        if (s.unmatchedFile.length) warnings.push(s.unmatchedFile.length + ' سجل في الملف بلا طالب مطابق');
+        attendanceImport.applyConfirmationMessage =
+            'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
+            (s.convertedLate.length ? ' سيتم تحويل ' + s.convertedLate.length + ' طالب متأخر إلى حاضر.' : '') +
+            (warnings.length ? ' تنبيه: ' + warnings.join('، ') + '.' : '') +
+            ' لن يتم الحفظ تلقائيًا؛ راجع الإحصاءات قبل الحفظ.';
+        attendanceImport.applyConfirmationPending = true;
+        updateAttendanceImportUi();
+    }
 
+    function setAttendanceApplyProgress(message) {
+        attendanceImport.applyProgress = message;
+        const node = q('[data-role="import-apply-progress"]', q('#' + APP_ID));
+        if (node) {
+            node.hidden = false;
+            node.textContent = message;
+        }
+    }
+
+    async function applyAttendanceImport() {
+        // التطبيق لا يبدأ إلا بعد الموافقة الصريحة من لوحة السكربت.
+        if (!attendanceImport.applyConfirmationPending ||
+            attendanceImport.applyRunning || attendanceImport.diagnosticRunning) return;
+        attendanceImport.applyConfirmationPending = false;
+
+        const match = refreshAttendanceImportMatch(true);
+        if (!match || match.lesson?.status !== 'matched') {
+            toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
+            return;
+        }
         const availability = saveAvailability();
         if (!availability.available) {
             toast(availability.message);
@@ -5677,69 +5743,113 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         const s = match.students;
-        if (s.ambiguous.length) {
-            toast('يوجد تطابق طلاب مبهم. لن يتم التطبيق قبل حله.');
+        if (s.ambiguous.length || !s.supported.length) {
+            toast('تعذر بدء التطبيق: لا توجد حالات مدعومة أو توجد مطابقة مبهمة.');
             return;
         }
 
-        if (!s.supported.length) {
-            toast('لا توجد حالات مدعومة قابلة للتطبيق من الملف.');
-            return;
-        }
+        attendanceImport.applyRunning = true;
+        attendanceImport.lastApply = null;
+        setAttendanceApplyProgress('جارٍ تجهيز تطبيق ' + s.supported.length + ' حالة؛ لا تغلق الصفحة ولا تضغط حفظ.');
+        updateAttendanceImportUi();
 
-        const warnings = [];
-        if (s.review.length) warnings.push(s.review.length + ' حالة تحتاج مراجعة ولن تطبق');
-        if (s.unmatchedPage.length) warnings.push(s.unmatchedPage.length + ' طالب في مدرستي بلا سجل مطابق');
-        if (s.unmatchedFile.length) warnings.push(s.unmatchedFile.length + ' سجل في الملف بلا طالب مطابق');
-
-        const confirmation =
-            'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
-            (s.convertedLate.length
-                ? '\n\nسيتم تحويل ' + s.convertedLate.length + ' طالب من «متأخر» في الملف إلى «حاضر» في مدرستي.'
-                : '') +
-            (warnings.length ? '\n\nتنبيه: ' + warnings.join('، ') + '.' : '') +
-            '\n\nلن يتم الحفظ تلقائيًا. ستراجع النتيجة ثم تضغط زر الحفظ بنفسك.';
-
-        if (!window.confirm(confirmation)) return;
-
-        pushUndo();
-        let success = 0;
-        let failed = 0;
-        const failures = [];
-
-        state.suspendUpdates = true;
+        const results = [];
+        let fatalError = '';
         try {
-            for (const entry of s.supported) {
-                const statusDef = STATUS_BY_KEY[entry.attendance.targetKey];
+            pushUndo();
+            state.suspendUpdates = true;
+            try {
+                for (let i = 0; i < s.supported.length; i++) {
+                    const entry = s.supported[i];
+                    const statusDef = STATUS_BY_KEY[entry.attendance?.targetKey];
+                    const student = entry.student;
+                    const name = student?.name || entry.record?.studentName || 'طالب غير معروف';
+                    setAttendanceApplyProgress(
+                        'جاري تطبيق الحضور ' + (i + 1) + '/' + s.supported.length +
+                        ' — ' + name
+                    );
 
-                if (!statusDef) {
-                    failed++;
-                    failures.push({
-                        name: entry.student?.name || entry.record?.studentName || 'طالب غير معروف',
-                        target: entry.attendance?.label || '',
-                        reason: 'تعذر تحديد حالة مدرستي المطلوبة.'
-                    });
-                    continue;
+                    if (!statusDef || !student) {
+                        results.push({ entry, statusDef, ok: false, reason: 'حالة أو صف الطالب غير موجود' });
+                        continue;
+                    }
+                    try {
+                        const result = await setStudentStatusReliable(student, statusDef);
+                        results.push({
+                            entry,
+                            statusDef,
+                            ok: !!result?.ok,
+                            reason: result?.reason || 'تعذر تأكيد تطبيق الحالة'
+                        });
+                    } catch (error) {
+                        results.push({
+                            entry, statusDef, ok: false,
+                            reason: 'خطأ أثناء التطبيق: ' + String(error?.message || error)
+                        });
+                    }
+
+                    // إتاحة تحديث الواجهة خلال تطبيق مجموعة كبيرة من الطلاب.
+                    if (i % 5 === 4) await new Promise(resolve => setTimeout(resolve, 0));
                 }
+            } finally {
+                state.suspendUpdates = false;
+            }
 
-                const result = await setStudentStatusReliable(entry.student, statusDef);
-                if (result.ok) {
-                    success++;
-                } else {
-                    failed++;
-                    failures.push({
-                        name: entry.student?.name || entry.record?.studentName || 'طالب غير معروف',
-                        target: statusDef.label,
-                        reason: result.reason || 'تعذر التحقق من تطبيق الحالة.'
-                    });
+            // مراجعة مستقلة لجميع الصفوف بعد نهاية التطبيق، وليس الاعتماد على نتيجة click.
+            setAttendanceApplyProgress('جارٍ التحقق النهائي من حالات جميع الطلاب...');
+            await new Promise(resolve => setTimeout(resolve, 350));
+            for (const result of results) {
+                if (!result.statusDef || !result.entry.student) continue;
+                try {
+                    const actual = readStudentStatus(result.entry.student);
+                    if (actual.key === result.statusDef.key) {
+                        result.ok = true;
+                        result.reason = 'تم التحقق من الحالة النهائية';
+                    } else {
+                        result.ok = false;
+                        result.reason =
+                            'الحالة النهائية مختلفة: ' + (actual.key || 'غير معروفة') +
+                            '، المطلوب: ' + result.statusDef.key +
+                            (result.reason ? ' (' + result.reason + ')' : '');
+                    }
+                } catch (error) {
+                    result.ok = false;
+                    result.reason = 'تعذر التحقق النهائي: ' + String(error?.message || error);
                 }
             }
+        } catch (error) {
+            fatalError = String(error?.message || error);
+            console.error('[Madrasati Smart Attendance] Bulk apply failed:', error);
         } finally {
             state.suspendUpdates = false;
+            attendanceImport.applyRunning = false;
+            try { updateAll(); } catch (error) {
+                console.error('[Madrasati Smart Attendance] UI update after bulk failed:', error);
+            }
         }
 
-        updateAll();
-
+        const success = results.filter(item => item.ok).length;
+        const failures = results.filter(item => !item.ok).map(item => ({
+            name: item.entry.student?.name || item.entry.record?.studentName || 'طالب غير معروف',
+            target: item.statusDef?.label || item.entry.attendance?.label || '',
+            reason: item.reason
+        }));
+        if (fatalError) {
+            failures.push({
+                name: 'خطأ عام',
+                target: 'التطبيق الجماعي',
+                reason: fatalError
+            });
+        }
+        const unprocessed = s.supported.length - results.length;
+        if (unprocessed > 0) {
+            failures.push({
+                name: unprocessed + ' طلاب',
+                target: 'لم يكتمل التطبيق',
+                reason: 'توقفت العملية قبل معالجة كل الطلاب'
+            });
+        }
+        const failed = s.supported.length - success;
         attendanceImport.lastApply = {
             lessonKey: match.group.key,
             success,
@@ -5749,14 +5859,21 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             at: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
         };
 
-        updateAttendanceImportUi();
-
         const c = stats();
+        setAttendanceApplyProgress(
+            (failed ? '⚠️' : '✅') +
+            ' انتهى التطبيق: ' + success + '/' + s.supported.length + ' حالة مطابقة بعد التحقق.' +
+            ' حاضر: ' + c.present +
+            '، غائب بعذر: ' + c.absentExcused +
+            '، غائب بدون عذر: ' + c.absentUnexcused +
+            (failed ? ' — تعذر: ' + failed + ' (انظر حالات لم تُطبق).' : '') +
+            ' لم يتم الحفظ تلقائيًا.'
+        );
+        updateAttendanceImportUi();
         toast(
-            'تم تطبيق ' + success + ' حالة من الملف' +
-            (s.convertedLate.length ? '، ومنها ' + s.convertedLate.length + ' متأخر ← حاضر' : '') +
-            (failed ? '، وتعذر تطبيق ' + failed + ' — راجع قائمة الفشل قبل الحفظ' : '') +
-            '. راجع الإحصاءات قبل الحفظ. الحاضر: ' + c.present + '، الغائب: ' + c.absent + '.'
+            'تم التحقق من ' + success + '/' + s.supported.length +
+            ' حالة. راجع الإحصاءات قبل الحفظ.' +
+            (failed ? ' توجد ' + failed + ' حالات تحتاج مراجعة.' : '')
         );
     }
 
@@ -5798,6 +5915,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                             <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
                         </div>
                     </div>
+                    <div data-role="import-apply-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
+                        <div><b>📥 تأكيد تطبيق حضور الملف</b></div>
+                        <div data-role="import-apply-confirm-message" style="margin:6px 0;white-space:pre-wrap"></div>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+                            <button type="button" class="msa-primary" data-action="confirm-import-apply">✅ تطبيق الآن دون حفظ</button>
+                            <button type="button" data-action="cancel-import-apply">إلغاء</button>
+                        </div>
+                    </div>
+                    <div data-role="import-apply-progress" role="status" hidden style="margin:8px 0;padding:9px 12px;border:1px solid #c4b5fd;border-radius:9px;background:#faf5ff;color:#4c1d95"></div>
                     <div data-role="diagnostic-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
                         <div>⚠️ <b>تأكيد اختبار الغياب</b>: سيختبر السكربت غياب طالب واحد مطابق داخل الصفحة فقط، دون حفظ الحصة. إذا نجح فقد تتغير حالة هذا الطالب في الصفحة؛ راجعها أو أعد تحميل الحصة قبل الحفظ.</div>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
@@ -6153,9 +6279,14 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 copyAttendanceDiagnostic(attendanceImport.lastDiagnostic);
             }
         });
-        q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
+        q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', requestAttendanceImportApplication);
+        q('[data-action="confirm-import-apply"]', root)?.addEventListener('click', applyAttendanceImport);
+        q('[data-action="cancel-import-apply"]', root)?.addEventListener('click', () => {
+            attendanceImport.applyConfirmationPending = false;
+            updateAttendanceImportUi();
+        });
         q('[data-action="diagnose-import-apply"]', root)?.addEventListener('click', () => {
-            if (attendanceImport.diagnosticRunning) return;
+            if (attendanceImport.diagnosticRunning || attendanceImport.applyRunning) return;
             attendanceImport.diagnosticConfirmationPending = true;
             resetAttendanceDiagnosticTrace();
             traceAttendanceDiagnostic('🧪 تم استلام أمر التشخيص من الزر.');
@@ -6407,7 +6538,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta17] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta18] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
