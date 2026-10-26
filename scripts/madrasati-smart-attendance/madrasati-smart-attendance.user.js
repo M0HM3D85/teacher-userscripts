@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta6
+// @version      0.3.5-beta7
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta6-exact-native-flow/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta6-exact-native-flow/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta7-self-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta7-self-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta6',
+        version: '0.3.5-beta7',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -121,7 +121,9 @@
         registry: null,
         registryLoading: false,
         registryError: '',
-        identityBridge: null
+        identityBridge: null,
+        lastDiagnostic: null,
+        diagnosticRunning: false
     };
 
     let state = {
@@ -4191,6 +4193,420 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
     }
 
+
+    function diagnosticAttendanceSnapshot(student) {
+        if (!student) return null;
+
+        const status = readStudentStatus(student);
+        const mainPresent = findStudentStatusRadio(student, 'main', '0');
+        const mainAbsent = findStudentStatusRadio(student, 'main', '12');
+        const detailExcused = findStudentStatusRadio(student, 'detail', '1');
+        const detailUnexcused = findStudentStatusRadio(student, 'detail', '2');
+        const absentLabel = nativeMainStatusLabel(student, STATUS.ABSENT_UNEXCUSED);
+
+        const radioInfo = radio => radio ? {
+            id: radio.id || '',
+            name: radio.name || '',
+            value: radio.value || '',
+            checked: !!radio.checked,
+            disabled: !!radio.disabled,
+            className: cleanText(radio.className || '')
+        } : null;
+
+        return {
+            at: new Date().toISOString(),
+            studentIndex: student.index,
+            studentName: student.name,
+            rowClass: cleanText(student.row?.className || ''),
+            rowText: cleanText(student.row?.innerText || student.row?.textContent || ''),
+            status,
+            mainPresent: radioInfo(mainPresent),
+            mainAbsent: radioInfo(mainAbsent),
+            detailExcused: radioInfo(detailExcused),
+            detailUnexcused: radioInfo(detailUnexcused),
+            absentLabel: absentLabel ? {
+                text: cleanText(absentLabel.innerText || absentLabel.textContent || ''),
+                className: cleanText(absentLabel.className || ''),
+                htmlFor: absentLabel.getAttribute('for') || ''
+            } : null
+        };
+    }
+
+    function diagnosticImportedAbsence(record) {
+        const normalized = normalizeImportedAttendance(record);
+        return normalized?.targetKey === STATUS.ABSENT_EXCUSED.key ||
+            normalized?.targetKey === STATUS.ABSENT_UNEXCUSED.key;
+    }
+
+    function safeDiagnosticName(value) {
+        return cleanText(value || '');
+    }
+
+    function downloadAttendanceDiagnostic(report) {
+        try {
+            const blob = new Blob([JSON.stringify(report, null, 2)], {
+                type: 'application/json;charset=utf-8'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download =
+                'madrasati-smart-attendance-self-diagnostic-' +
+                new Date().toISOString().replace(/[:.]/g, '-') +
+                '.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1800);
+        } catch (error) {
+            console.error('[Madrasati Smart Attendance] diagnostic download failed', error);
+        }
+    }
+
+    function diagnosticSummaryText(report) {
+        const counts = report?.counts || {};
+        const result = report?.result || {};
+
+        if (result.rootCause === 'absent-records-not-matched') {
+            return (
+                'التشخيص: الملف يحتوي ' + (counts.importedAbsent || 0) +
+                ' غائب، لكن القابل للتطبيق منهم ' + (counts.matchedAbsent || 0) +
+                '. المشكلة في مطابقة الطلاب قبل مرحلة الضغط.'
+            );
+        }
+
+        if (result.rootCause === 'no-absent-records') {
+            return 'التشخيص: لم يجد السكربت أي سجل غياب في الحصة المستوردة.';
+        }
+
+        if (result.rootCause === 'main-radio-not-found') {
+            return 'التشخيص: الطالب مطابق، لكن السكربت لم يجد Attend[i]=12 الخاص بزر «غائب».';
+        }
+
+        if (result.rootCause === 'native-click-did-not-change-main') {
+            return 'التشخيص: تم العثور على زر «غائب» ومحاولة الضغط عليه، لكن Attend[i] بقي على حالته ولم يتحول إلى 12.';
+        }
+
+        if (result.rootCause === 'main-changed-detail-failed') {
+            return 'التشخيص: زر «غائب» نجح وأصبح Attend=12، لكن تعذر الوصول إلى سبب الغياب المطلوب.';
+        }
+
+        if (result.rootCause === 'success') {
+            return 'التشخيص: مسار التطبيق نجح على طالب الاختبار داخل الصفحة. إذا كان التطبيق الجماعي لا يعمل فالمشكلة في اختيار الطلاب/المطابقة وليس زر الغياب.';
+        }
+
+        return 'اكتمل التشخيص. افتح ملخص التشخيص أو ارفع ملف JSON الناتج.';
+    }
+
+    function openAttendanceDiagnosticReport(report) {
+        const root = q('#' + APP_ID);
+        if (!root || !report) return;
+
+        closeImportReview();
+
+        const result = report.result || {};
+        const counts = report.counts || {};
+        const target = report.target || {};
+        const unmatched = report.unmatchedAbsentRecords || [];
+        const events = report.events || [];
+
+        const unmatchedHtml = unmatched.length
+            ? '<div style="margin-top:10px"><b>غائبون في الملف لم تتم مطابقتهم:</b><ul>' +
+              unmatched.map(item =>
+                  '<li>' + escapeHtml(item.studentName || '') +
+                  ' — ' + escapeHtml(item.status || '') +
+                  (item.excuse ? ' — ' + escapeHtml(item.excuse) : '') +
+                  '</li>'
+              ).join('') +
+              '</ul></div>'
+            : '';
+
+        const eventsHtml = events.length
+            ? '<div style="margin-top:10px"><b>أحداث اختبار النقر:</b><ul>' +
+              events.map(item =>
+                  '<li>' + escapeHtml(item.type || '') +
+                  ' — target=' + escapeHtml(item.target || '') +
+                  ' — trusted=' + escapeHtml(String(item.isTrusted)) +
+                  ' — checked=' + escapeHtml(String(item.checked)) +
+                  '</li>'
+              ).join('') +
+              '</ul></div>'
+            : '';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>🧪 تشخيص تطبيق الحضور</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' +
+                    '<div><b>النتيجة:</b> ' + escapeHtml(diagnosticSummaryText(report)) + '</div>' +
+                    '<div style="margin-top:8px">' +
+                        '<span class="msa-import-chip">غياب الملف ' + escapeHtml(counts.importedAbsent || 0) + '</span>' +
+                        '<span class="msa-import-chip">غياب مطابق ' + escapeHtml(counts.matchedAbsent || 0) + '</span>' +
+                        '<span class="msa-import-chip">غياب غير مطابق ' + escapeHtml(counts.unmatchedAbsent || 0) + '</span>' +
+                    '</div>' +
+                    (target.studentName
+                        ? '<div style="margin-top:10px"><b>طالب الاختبار:</b> ' +
+                          escapeHtml(target.studentName) + ' — الهدف: ' +
+                          escapeHtml(target.targetLabel || '') + '</div>'
+                        : '') +
+                    '<div style="margin-top:10px"><b>سبب النتيجة:</b> ' +
+                        escapeHtml(result.rootCause || 'unknown') +
+                        (result.detail ? ' — ' + escapeHtml(result.detail) : '') +
+                    '</div>' +
+                    unmatchedHtml +
+                    eventsHtml +
+                    '<div class="msa-import-review-actions" style="margin-top:12px">' +
+                        '<button type="button" data-action="download-attendance-diagnostic">تنزيل تقرير JSON</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        q('[data-action="download-attendance-diagnostic"]', overlay)?.addEventListener('click', () => {
+            downloadAttendanceDiagnostic(report);
+        });
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+        });
+    }
+
+    async function runAttendanceSelfDiagnostic() {
+        if (attendanceImport.diagnosticRunning) return;
+
+        const match = refreshAttendanceImportMatch(true);
+        if (!match || match.lesson.status !== 'matched') {
+            toast('لا توجد حصة مستوردة مطابقة يمكن تشخيص تطبيقها.');
+            return;
+        }
+
+        attendanceImport.diagnosticRunning = true;
+        updateAttendanceImportUi();
+
+        const startedAt = new Date().toISOString();
+        const importedAbsentRecords = (match.group?.records || []).filter(diagnosticImportedAbsence);
+        const matchedAbsentEntries = (match.students?.supported || []).filter(entry => {
+            return entry.attendance?.targetKey === STATUS.ABSENT_EXCUSED.key ||
+                entry.attendance?.targetKey === STATUS.ABSENT_UNEXCUSED.key;
+        });
+        const unmatchedAbsentRecords = (match.students?.unmatchedFile || []).filter(diagnosticImportedAbsence);
+
+        const report = {
+            diagnostic: 'Madrasati Smart Attendance Self Diagnostic',
+            version: CONFIG.version,
+            startedAt,
+            page: {
+                pathname: location.pathname,
+                mode: state.mode,
+                contextKey: state.contextKey
+            },
+            lesson: {
+                date: match.group?.date || '',
+                classroom: match.group?.classroom || '',
+                period: match.group?.period || '',
+                fileName: attendanceImport.dataset?.fileName || ''
+            },
+            counts: {
+                pageStudents: state.students.length,
+                matchedStudents: match.students?.matchedCount || 0,
+                supportedStudents: match.students?.supported?.length || 0,
+                importedAbsent: importedAbsentRecords.length,
+                matchedAbsent: matchedAbsentEntries.length,
+                unmatchedAbsent: unmatchedAbsentRecords.length
+            },
+            unmatchedAbsentRecords: unmatchedAbsentRecords.map(record => ({
+                studentName: safeDiagnosticName(record.studentName),
+                status: cleanText(record.status || ''),
+                excuse: cleanText(record.excuse || ''),
+                sourceRow: record.sourceRow || ''
+            })),
+            target: null,
+            before: null,
+            after: [],
+            events: [],
+            result: {
+                rootCause: '',
+                detail: ''
+            }
+        };
+
+        const finish = () => {
+            report.finishedAt = new Date().toISOString();
+            attendanceImport.lastDiagnostic = report;
+            attendanceImport.diagnosticRunning = false;
+            updateAttendanceImportUi();
+            openAttendanceDiagnosticReport(report);
+            downloadAttendanceDiagnostic(report);
+            console.info('[Madrasati Smart Attendance] self diagnostic', report);
+        };
+
+        try {
+            if (!importedAbsentRecords.length) {
+                report.result.rootCause = 'no-absent-records';
+                finish();
+                return;
+            }
+
+            if (!matchedAbsentEntries.length) {
+                report.result.rootCause = 'absent-records-not-matched';
+                report.result.detail =
+                    'السكربت لم يصل إلى مرحلة الضغط لأن سجلات الغياب ليست ضمن الطلاب المطابقين القابلين للتطبيق.';
+                finish();
+                return;
+            }
+
+            const entry =
+                matchedAbsentEntries.find(item => readStudentStatus(item.student).main !== '12') ||
+                matchedAbsentEntries[0];
+
+            const student = entry.student;
+            const statusDef = STATUS_BY_KEY[entry.attendance.targetKey];
+
+            report.target = {
+                studentIndex: student.index,
+                studentName: safeDiagnosticName(student.name),
+                importedName: safeDiagnosticName(entry.record?.studentName),
+                targetKey: entry.attendance.targetKey,
+                targetLabel: entry.attendance.label,
+                confidence: entry.confidence || ''
+            };
+
+            report.before = diagnosticAttendanceSnapshot(student);
+
+            const main = findStudentStatusRadio(student, 'main', statusDef.main);
+            const label = nativeMainStatusLabel(student, statusDef);
+
+            if (!main || !label) {
+                report.result.rootCause = 'main-radio-not-found';
+                report.result.detail =
+                    'main=' + (main ? 'found' : 'missing') +
+                    ', label=' + (label ? 'found' : 'missing');
+                finish();
+                return;
+            }
+
+            const capture = event => {
+                const target = event.target;
+                if (!(target instanceof Element)) return;
+                if (
+                    student.row?.contains(target) ||
+                    target === main ||
+                    target === label
+                ) {
+                    report.events.push({
+                        at: Date.now(),
+                        type: event.type,
+                        isTrusted: !!event.isTrusted,
+                        target: target.id || target.getAttribute('for') || target.tagName,
+                        name: target.getAttribute('name') || '',
+                        value: target.getAttribute('value') || '',
+                        checked: 'checked' in target ? !!target.checked : null,
+                        className: cleanText(target.className || '')
+                    });
+                }
+            };
+
+            ['click', 'input', 'change'].forEach(type => document.addEventListener(type, capture, true));
+
+            try {
+                const attempted = clickNativeMainStatus(student, statusDef);
+                report.clickAttempt = {
+                    returned: attempted,
+                    labelText: cleanText(label.innerText || label.textContent || ''),
+                    labelClass: cleanText(label.className || ''),
+                    mainId: main.id || '',
+                    mainName: main.name || '',
+                    mainValue: main.value || ''
+                };
+
+                const waits = [0, 50, 150, 350, 700, 1200, 1700];
+                for (const ms of waits) {
+                    if (ms) await new Promise(resolve => setTimeout(resolve, ms - (waits[waits.indexOf(ms)-1] || 0)));
+                    report.after.push({
+                        delayMs: ms,
+                        snapshot: diagnosticAttendanceSnapshot(student)
+                    });
+                }
+            } finally {
+                ['click', 'input', 'change'].forEach(type => document.removeEventListener(type, capture, true));
+            }
+
+            const current = readStudentStatus(student);
+
+            if (current.main !== statusDef.main) {
+                report.result.rootCause = 'native-click-did-not-change-main';
+                report.result.detail =
+                    'محاولة label.click() نُفذت، لكن Attend[' + student.index +
+                    '] لم يتحول إلى ' + statusDef.main +
+                    '. إذا كانت الأحداث المسجلة trusted=false فغالبًا مدرستي تفرق بين نقرة المستخدم والنقرة البرمجية.';
+                finish();
+                return;
+            }
+
+            if (current.key === statusDef.key) {
+                report.result.rootCause = 'success';
+                report.result.detail = 'الحالة النهائية وصلت مباشرة إلى الهدف بعد الضغط الرئيسي.';
+                finish();
+                return;
+            }
+
+            const detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+            if (!detail || detail.disabled) {
+                report.result.rootCause = 'main-changed-detail-failed';
+                report.result.detail =
+                    'Attend أصبح ' + current.main +
+                    ' لكن سبب الغياب المطلوب غير متاح أو disabled.';
+                finish();
+                return;
+            }
+
+            const detailEvents = [];
+            const captureDetail = event => {
+                if (event.target === detail) {
+                    detailEvents.push({
+                        type: event.type,
+                        isTrusted: !!event.isTrusted,
+                        checked: !!detail.checked
+                    });
+                }
+            };
+            ['click', 'input', 'change'].forEach(type => document.addEventListener(type, captureDetail, true));
+
+            try {
+                clickNativeDetailStatus(student, statusDef);
+                await new Promise(resolve => setTimeout(resolve, 300));
+            } finally {
+                ['click', 'input', 'change'].forEach(type => document.removeEventListener(type, captureDetail, true));
+            }
+
+            report.detailEvents = detailEvents;
+            report.afterDetail = diagnosticAttendanceSnapshot(student);
+
+            const finalStatus = readStudentStatus(student);
+            if (finalStatus.key === statusDef.key) {
+                report.result.rootCause = 'success';
+                report.result.detail = 'نجح الضغط الرئيسي ثم سبب الغياب ووصلت الحالة النهائية للهدف.';
+            } else {
+                report.result.rootCause = 'main-changed-detail-failed';
+                report.result.detail =
+                    'Attend تغيّر إلى ' + finalStatus.main +
+                    ' لكن الحالة النهائية بقيت ' + (finalStatus.key || 'unknown') +
+                    ' والتفصيل=' + (finalStatus.detail || '');
+            }
+
+            finish();
+        } catch (error) {
+            report.result.rootCause = 'diagnostic-exception';
+            report.result.detail = String(error?.stack || error?.message || error);
+            finish();
+        }
+    }
+
     function updateAttendanceImportUi(root = q('#' + APP_ID)) {
         if (!root) return;
         ensureAttendanceImportLoaded();
@@ -4200,6 +4616,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const refreshBtn = q('[data-action="refresh-import-match"]', root);
         const registryBtn = q('[data-action="refresh-import-registry"]', root);
         const applyBtn = q('[data-action="apply-import-attendance"]', root);
+        const diagnosticBtn = q('[data-action="diagnose-import-apply"]', root);
         const clearBtn = q('[data-action="clear-import-attendance"]', root);
 
         if (!statusBox || !details) return;
@@ -4219,11 +4636,18 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             statusBox.textContent = 'لم يتم استيراد سجل حضور بعد. يدعم Excel وCSV ويبحث عن الأعمدة الأساسية تلقائيًا.';
             if (refreshBtn) refreshBtn.disabled = true;
             if (applyBtn) applyBtn.disabled = true;
+            if (diagnosticBtn) diagnosticBtn.disabled = true;
             if (clearBtn) clearBtn.hidden = true;
             return;
         }
 
         if (refreshBtn) refreshBtn.disabled = false;
+        if (diagnosticBtn) {
+            diagnosticBtn.disabled = attendanceImport.diagnosticRunning;
+            diagnosticBtn.textContent = attendanceImport.diagnosticRunning
+                ? '🧪 جاري التشخيص...'
+                : '🧪 تشخيص التطبيق';
+        }
         if (clearBtn) clearBtn.hidden = false;
 
         const fileSummary =
@@ -4256,6 +4680,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
             statusBox.textContent = fileSummary + ' — ' + match.lesson.message;
             if (applyBtn) applyBtn.disabled = true;
+            if (diagnosticBtn) diagnosticBtn.disabled = true;
 
             details.hidden = false;
             const id = match.identity;
@@ -4318,6 +4743,16 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
         if (!saveOk) lines.push('<div>🔒 يمكن مراجعة المطابقة، لكن تطبيق الملف معطل لأن حفظ الحصة غير متاح حاليًا في مدرستي.</div>');
         lines.push('<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>');
+
+        if (attendanceImport.lastDiagnostic) {
+            lines.push(
+                '<div class="msa-import-review-actions">' +
+                '<button type="button" class="msa-import-review-btn is-info" data-action="show-last-attendance-diagnostic">' +
+                '🧪 آخر تشخيص — ' + escapeHtml(attendanceImport.lastDiagnostic.result?.rootCause || 'عرض') +
+                '</button>' +
+                '</div>'
+            );
+        }
 
         if (attendanceImport.lastApply?.lessonKey === match.group.key) {
             lines.push(
@@ -4560,6 +4995,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                             <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
                             <button type="button" data-action="refresh-import-match" disabled>مطابقة الحصة</button>
                             <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>تطبيق حضور الملف</button>
+                            <button type="button" data-action="diagnose-import-apply" disabled>🧪 تشخيص التطبيق</button>
                             <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
                         </div>
                     </div>
@@ -4897,8 +5333,20 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
             const failuresButton = event.target.closest?.('[data-action="show-import-apply-failures"]');
             if (failuresButton) openImportApplyFailures();
+
+            const diagnosticButton = event.target.closest?.('[data-action="show-last-attendance-diagnostic"]');
+            if (diagnosticButton && attendanceImport.lastDiagnostic) {
+                openAttendanceDiagnosticReport(attendanceImport.lastDiagnostic);
+            }
         });
         q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
+        q('[data-action="diagnose-import-apply"]', root)?.addEventListener('click', async () => {
+            const ok = window.confirm(
+                'سيختبر التشخيص طالبًا واحدًا من الغائبين المطابقين داخل الصفحة فقط ولن يحفظ الحصة.\n\n' +
+                'إذا نجح الاختبار قد تتغير حالة الطالب في الصفحة مؤقتًا؛ يمكنك إعادة تحميل الصفحة قبل الحفظ.\n\nمتابعة؟'
+            );
+            if (ok) await runAttendanceSelfDiagnostic();
+        });
         q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
 
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
@@ -5116,7 +5564,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta6] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta7] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
