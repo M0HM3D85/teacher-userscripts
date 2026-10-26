@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.6
+// @version      1.5.7
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.6';
+  const VERSION = '1.5.7';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -311,6 +311,13 @@
   const studentNameKey = function(value){
  return norm(value).replace(/[\u200b-\u200d\u2060\ufeff]/g,'').replace(/[\u060c\u061b\u061f.,:()ـ\-\/_]+/g,' ').replace(/^(?:اسم\s*الطالب|الطالب|الطالبه)\s*/,'').replace(/\s+/g,' ').trim();
 };
+
+  const classKey = value => norm(value)
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g,'')
+    .replace(/[\[\]{}()\\/:.,،؛|_-]+/g,' ')
+    .replace(/^الفصل(?:\s+(?:المدرسي|الدراسي))?\s*/,'')
+    .replace(/\s+(?:الدرجة|الاجابة|الاجابات|ملاحظات|الحل|استعراض)(?:\s|$).*$/,'')
+    .replace(/\s+/g,' ').trim();
 
     const studentIdKey = function(value){
  const v=clean(value).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\s+/g,'');
@@ -745,9 +752,10 @@
      return k.includes(nameKey)&&(k.length-nameKey.length)<=65;
     });
    }
-   let student=null,method='',reason='',status='ready';
+   let student=null,method='',reason='',status='ready',classWarning='';
+   let verifiedIdMatch=false;
    if(idMatches.length===1) {
-    student=idMatches[0];method='رقم الطالب';
+    student=idMatches[0];method='رقم الطالب';verifiedIdMatch=true;
     // مثل استيراد الواجبات: هوية الطالب ذات الرقم الفريد موثوقة.
     // لا نرفضها لمجرد اختلاف الاسم المستخرج من بطاقة HTML.
     // نوقفها فقط عندما يثبت الاسم الفريد أنه يعود لطالب آخر داخل نفس المشروع.
@@ -759,7 +767,8 @@
    } else if(idMatches.length>1) {
     status='ambiguous';reason='معرف الطالب غير فريد في بيانات مدرستي';
    } else if(nameMatches.length===1) {
-    student=nameMatches[0];method=sid?'اسم فريد (رقم مختلف النظام)':'الاسم الفريد';
+    student=nameMatches[0];method=sid?'اسم فريد (رقم غير مطابق)':'الاسم الفريد';
+    if(sid){status='identity_conflict';reason='رقم الملف لا يطابق رقمًا في رصد المشروع؛ لن تُعتمد مطابقة الاسم وحده آليًا';}
    } else if(nameMatches.length>1) {
     status='ambiguous';reason='الاسم متكرر؛ لا يمكن اختيار الطالب تلقائيًا';
    } else {
@@ -774,23 +783,26 @@
    }else if(status==='ready'&&(!Number.isFinite(student?.totalGrade)||student.totalGrade<=0)){
     status='invalid';reason='الدرجة الكلية في مدرستي غير معروفة؛ لن يتم الحفظ دون تحقق';
    }
-   if(status==='ready'&&student&&className&&clean(student.className)&&norm(className)!==norm(student.className)){
-    status='identity_conflict';reason='الفصل في الملف يختلف عن الفصل المسجل للطالب في هذا المشروع';
+   // الرقم الفريد الموثوق يثبت الهوية؛ اختلاف نص الفصل تحذير للمراجعة، لا سبب للرفض.
+   if(student&&className&&clean(student.className)&&classKey(className)!==classKey(student.className)){
+     if(verifiedIdMatch)classWarning='تنبيه: نص الفصل مختلف؛ رقم الطالب فريد ومطابق، راجع الفصل';
+     else if(status==='ready'){status='identity_conflict';reason='الفصل في الملف يختلف عن الفصل المسجل للطالب في المشروع';}
    }
-   if(student&&status==='ready'){
-    const prior=matchedIds.get(String(student.studentId));
-    if(prior){
-     status='duplicate';reason=`هذا الطالب مكرر في صفوف الملف (الصف ${prior.sourceRow})`;
-     const prev=preview[prior.mark];
-     if(prev){prev.status='duplicate';prev.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;}
-    }else matchedIds.set(String(student.studentId),{sourceRow:i+1,mark:preview.length});
+   // لا نسمح بتكرار أي طالب، حتى إن كانت درجته الأولى مطابقة مسبقًا.
+   if(student){
+     const key=studentIdKey(student.studentId),prior=matchedIds.get(key);
+     if(prior){
+       status='duplicate';reason=`الطالب مكرر في صفوف Excel (الصف ${prior.sourceRow})`;
+       const prev=preview[prior.mark];
+       if(prev){prev.status='duplicate';prev.baseStatus='duplicate';prev.reason=`الطالب مكرر في صفوف Excel (الصف ${i+1})`;}
+     }else matchedIds.set(key,{sourceRow:i+1,mark:preview.length});
    }
    // نفس الواجبات: افصل «لا تغيير» عن «جاهز للحفظ».
    if(status==='ready'&&Number.isFinite(student?.grade)&&Math.abs(student.grade-grade)<1e-6
       &&(!state.importFeedback||!feedback||clean(student.feedback)===feedback)){
     status='unchanged';reason='الدرجة مطابقة للموجودة في مدرستي';
    }
-   preview.push({sourceRow:i+1,sid,name,className,grade,feedback,submissionStatus,student,method,status,baseStatus:status==='unchanged'?'ready':status,reason});
+   preview.push({sourceRow:i+1,sid,name,className,classWarning,grade,feedback,submissionStatus,student,method,status,baseStatus:status==='unchanged'?'ready':status,reason});
   }
   const numberNotes=preview.filter(x=>/^\d+(?:[.,]\d+)?$/.test(x.feedback)).length;
   state.importFeedback=false;
@@ -821,19 +833,21 @@
  const unmatched=rows.filter(r=>r.status==='unmatched').length;
  const invalid=rows.filter(r=>r.status==='invalid').length;
  const ambiguous=rows.filter(r=>['ambiguous','duplicate','identity_conflict'].includes(r.status)).length;
+ const classAlerts=rows.filter(r=>r.classWarning).length;
  const fileGrades=rows.map(r=>r.grade).filter(Number.isFinite);
  const maxFile=fileGrades.length?Math.max(...fileGrades):null;
  const platformLimits=[...new Set(state.students.map(s=>s.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
  const cap=platformLimits.length===1?fmt(platformLimits[0]):platformLimits.length?platformLimits.map(x=>fmt(x)).slice(0,5).join(' / '):'غير متاح';
  const notesWarning=state.importPreview.numericFeedbackCount?`<div class="${APP}-note">تنبيه: يوجد ${state.importPreview.numericFeedbackCount} صفًا يحتوي رقمًا في عمود الملاحظات (مثل 14). <b>لن تُنقل الملاحظات تلقائيًا</b> إلا إذا فعّلت الخيار أدناه.</div>`:'';
  host.innerHTML=`
- <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الصفوف: ${rows.length} · <b>جاهز للتغيير: ${ready.length}</b> · مطابق بالفعل: ${unchanged} · يحتاج مراجعة: ${bad} · غير مطابق: ${unmatched} · درجة غير صالحة: ${invalid} · ملتبس: ${ambiguous}</div>
+ <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الصفوف: ${rows.length} · <b>جاهز للتغيير: ${ready.length}</b> · مطابق بالفعل: ${unchanged} · يحتاج مراجعة: ${bad} · غير مطابق: ${unmatched} · درجة غير صالحة: ${invalid} · ملتبس: ${ambiguous} · تنبيه الفصل: ${classAlerts}</div>
  <div class="${APP}-note">أعلى درجة في الملف: <b>${maxFile===null?'—':fmt(maxFile)}</b> · الدرجة الكلية في مدرستي: <b>${esc(cap)}</b> · الطلاب المحملون: ${state.students.length}.</div>
+ ${classAlerts?`<div class="${APP}-note"><b>مراجعة الفصل:</b> ${classAlerts} طالبًا اختلف عرض الفصل لهم. طابقتهم الهوية الرقمية الفريدة؛ راجع فصل Excel وفصل مدرستي في الجدول قبل الحفظ.</div>`:''}
  ${notesWarning}
  <label class="${APP}-note" style="display:block;cursor:pointer"><input id="${APP}-import-feedback" type="checkbox" ${state.importFeedback?'checked':''}> استيراد الملاحظات أيضًا (اختياري، غير مفعّل افتراضيًا). إن لم تُفعّل هذا الخيار ستبقى ملاحظات مدرستي كما هي.</label>
  <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt" ${ready.length?'':'disabled'}>تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn" ${ready.length?'':'disabled'}>حفظ ${ready.length} درجة على مدرستي</button><button type="button" id="${APP}-preview-xlsx" class="${APP}-btn alt">تصدير المعاينة Excel</button></div>
- <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>الصف</th><th>الطالب في الملف</th><th>اسم مدرستي</th><th>رقم الطالب</th><th>الفصل</th><th>حالة التسليم</th><th>طريقة المطابقة</th><th>الدرجة الحالية</th><th>الدرجة الجديدة</th><th>الدرجة القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
- ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||r.student?.className||'—')}</td><td>${esc(r.submissionStatus||'غير محدد')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.student?.grade)?fmt(r.student.grade):'—'}</td><td><b>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</b></td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز للتطبيق</span>`:`<span class="${APP}-pill ${r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
+ <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>الصف</th><th>الطالب في الملف</th><th>اسم مدرستي</th><th>رقم الطالب</th><th>فصل Excel</th><th>فصل مدرستي</th><th>حالة التسليم</th><th>طريقة المطابقة</th><th>الدرجة الحالية</th><th>الدرجة الجديدة</th><th>الدرجة القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
+ ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||'—')}</td><td>${esc(r.student?.className||'—')}${r.classWarning?`<div style="font-size:10px;color:#975a16">${esc(r.classWarning)}</div>`:''}</td><td>${esc(r.submissionStatus||'غير محدد')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.student?.grade)?fmt(r.student.grade):'—'}</td><td><b>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</b></td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز للتطبيق</span>`:`<span class="${APP}-pill ${r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
  </tbody></table></div>`;
  document.getElementById(`${APP}-import-feedback`)?.addEventListener('change',e=>{state.importFeedback=!!e.target.checked;renderImportPreview();});
  document.getElementById(`${APP}-patch`)?.addEventListener('click',patchVisibleImport);
@@ -851,7 +865,9 @@
   'الاسم في مدرستي':r.student?.name||'',
   'رقم الملف':r.sid,
   'رقم مدرستي':r.student?.studentId||'',
-  'الفصل':r.className||r.student?.className||'',
+  'الفصل في الملف':r.className||'',
+  'الفصل في مدرستي':r.student?.className||'',
+  'تنبيه الفصل':r.classWarning||'',
   'حالة التسليم':r.submissionStatus||'',
   'طريقة المطابقة':r.method||'',
   'الدرجة الحالية':r.student?.grade??'',
