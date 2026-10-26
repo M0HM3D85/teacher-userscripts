@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.4-beta2
-// @description  نسخة اختبارية: بحث أسماء مرن، تقارير مناسبة لواجهة مدرستي الجديدة، وتنبيه واضح عند تعديل حضور محفوظ.
+// @version      0.3.4-beta3
+// @description  نسخة اختبارية: وضع تجريبي محلي غير محدود مع منع الحفظ، استعادة الحالة الأصلية، بحث أسماء مرن، وتقارير متوافقة مع واجهة مدرستي الجديدة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta3-test-mode/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta3-test-mode/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.4-beta2',
+        version: '0.3.4-beta3',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -121,7 +121,9 @@
         savedSignatures: new Map(),
         saveFailures: [],
         saveAllArmedUntil: 0,
-        saveDebugStep: ''
+        saveDebugStep: '',
+        testMode: false,
+        testBaseline: []
     };
 
     const q = (sel, root = document) => root.querySelector(sel);
@@ -205,6 +207,14 @@
 #${APP_ID}.msa-new-platform [data-filter="unset"],
 #${APP_ID}.msa-new-platform [data-stat="unset"] { display:none !important; }
 #${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(6,minmax(112px,1fr)); }
+#${APP_ID}.msa-test-mode { border-color:#d97706; box-shadow:0 0 0 3px rgba(217,119,6,.12), 0 8px 30px rgba(15,23,42,.08); }
+#${APP_ID}.msa-test-mode .msa-head { background:linear-gradient(135deg,#fff7ed,#fffbeb); }
+#${APP_ID} .msa-test-banner { display:none; padding:9px 12px; margin-bottom:10px; border:1px solid #f2c97d; border-radius:10px; background:#fff8e7; color:#8a4b08; font-size:12px; font-weight:800; }
+#${APP_ID}.msa-test-mode .msa-test-banner { display:block; }
+#${APP_ID} [data-action="test-toggle"].is-active { background:#b45309; color:#fff; border-color:#b45309; }
+#${APP_ID} [data-action="test-restore"] { display:none; }
+#${APP_ID}.msa-test-mode [data-action="test-restore"] { display:inline-block; }
+
 #${APP_ID} .msa-stats {
     display: grid;
     grid-template-columns: repeat(7, minmax(112px, 1fr));
@@ -979,9 +989,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         return radio.checked;
     }
 
-    function setStudentStatus(student, statusDef) {
+    function setStudentStatus(student, statusDef, options = {}) {
         const isNewPlatform = state.mode === 'batch-create' || state.mode === 'batch-update';
-        if (isNewPlatform && statusDef?.main === '34') return false;
+        if (isNewPlatform && statusDef?.main === '34' && !options.allowHiddenLate) return false;
 
         const idx = student.index;
 
@@ -2448,12 +2458,15 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     <small data-role="mode-label">أدوات مساعدة داخل صفحة التحضير</small>
                 </div>
                 <div class="msa-head-actions">
+                    <button type="button" data-action="test-toggle">🧪 وضع تجريبي</button>
+                    <button type="button" data-action="test-restore">↺ استعادة الأصل</button>
                     <button type="button" class="msa-report-btn" data-action="report">📋 تقرير الحصة</button>
                     <button type="button" data-action="toggle-panel">طي الأدوات</button>
                 </div>
             </div>
 
             <div class="msa-body">
+                <div class="msa-test-banner" data-role="test-banner">🧪 وضع الاختبار مفعّل: يمكنك التعديل بلا حدود داخل الصفحة، والحفظ الحقيقي محجوب حتى تطفئ الوضع.</div>
                 <div class="msa-stats">
                     <div class="msa-stat-card" data-filter="all" data-stat="total">
                         <span class="msa-stat-label">جميع الطلاب</span><span class="msa-stat-value">0</span>
@@ -2847,7 +2860,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.4-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.4-beta3] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
