@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.4-beta1
-// @description  نسخة اختبارية متوافقة مع تحديث التحضير الجديد في مدرستي: استمرار الإحصاءات بعد الحفظ، دعم UpdateAttendStudents، واستخدام الحفظ الجماعي الأصلي.
+// @version      0.3.4-beta2
+// @description  نسخة اختبارية: بحث أسماء مرن، تقارير مناسبة لواجهة مدرستي الجديدة، وتنبيه واضح عند تعديل حضور محفوظ.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -12,8 +12,8 @@
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta1-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta1-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-beta2-new-attendance-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +36,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.4-beta1',
+        version: '0.3.4-beta2',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -140,6 +140,10 @@
             .replace(/[^\p{L}\p{N}\s]/gu, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    function isNewPlatformMode() {
+        return state.mode === 'batch-create' || state.mode === 'batch-update';
     }
 
     function escapeAttr(value) {
@@ -1270,12 +1274,28 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
     function applyVisibility() {
         const queryText = normalizeArabic(state.query);
+        const queryTokens = queryText.split(/\s+/).filter(Boolean);
 
         for (const student of state.students) {
-            const matchesQuery =
-                !queryText ||
-                student.normalizedName.includes(queryText) ||
-                String(student.studentId).includes(queryText);
+            const normalizedName = student.normalizedName || '';
+            const studentId = String(student.studentId || '');
+
+            let matchesQuery = true;
+
+            if (queryTokens.length) {
+                const allNumeric = queryTokens.every(token => /^\d+$/.test(token));
+
+                if (allNumeric) {
+                    matchesQuery = studentId.includes(queryTokens.join('')) ||
+                        queryTokens.every(token => studentId.includes(token));
+                } else {
+                    // البحث لا يعتمد على ترتيب كلمات الاسم:
+                    // "أحمد عسيري" و"عسيري أحمد" يعيدان نفس الطالب.
+                    matchesQuery = queryTokens.every(token =>
+                        normalizedName.includes(token) || studentId.includes(token)
+                    );
+                }
+            }
 
             const visible = matchesQuery && studentMatchesFilter(student);
             student.row.classList.toggle('msa-row-hidden', !visible);
@@ -2557,8 +2577,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const searchInput = q('[data-role="search"]', root);
         if (searchInput) {
             searchInput.placeholder = state.mode === 'batch-update'
-                ? 'ابحث باسم الطالب...'
-                : 'ابحث باسم الطالب أو رقمه...';
+                ? 'ابحث بأي جزء من الاسم وبأي ترتيب...'
+                : 'ابحث بالاسم بأي ترتيب أو برقم الطالب...';
         }
 
         const bulkStatus = q('[data-role="bulk-status"]', root);
@@ -2587,7 +2607,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             if (saveHint) saveHint.textContent = 'تم اكتشاف الواجهة القديمة؛ «حفظ الكل» متاح للتوافق فقط.';
         } else if (state.mode === 'batch-update') {
             if (modeLabel) modeLabel.textContent = 'تعديل حضور محفوظ — نظام مدرستي الجديد';
-            if (saveHint) saveHint.textContent = 'استخدم زر «حفظ» الأصلي في مدرستي؛ ستعود الإحصائيات والتصفية تلقائيًا بعد الحفظ.';
+            if (saveHint) saveHint.textContent = '⚠️ تعديل حضور محفوظ قد يطلب «سبب التعديل»، وتوضح مدرستي أنه قد لا يمكن تعديله مرة أخرى اليوم. استخدم زر «حفظ» الأصلي.';
         } else {
             if (modeLabel) modeLabel.textContent = 'تحضير حصة جديدة — نظام مدرستي الجديد';
             if (saveHint) saveHint.textContent = 'مدرستي تبدأ الطلاب «حاضر» افتراضيًا؛ راجع الغياب ثم استخدم زر «حفظ» الأصلي.';
@@ -2803,7 +2823,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         updateAll();
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.4-beta1] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.4-beta2] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
