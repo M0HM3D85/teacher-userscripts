@@ -695,16 +695,68 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 .msa-report-group li { margin:3px 0; font-size:12px; }
 .msa-report-empty { color:#94a3b8; font-size:12px; }
 
-@media (min-width: 992px) and (min-height: 720px) {
-    #${APP_ID} { position:sticky; top:8px; z-index:850; }
+
+/* الواجهة النهائية: لوحة ضمن تدفق الصفحة لا تثبت فوق الطلاب مطلقًا. */
+#${APP_ID} {
+    position:static !important;
+    top:auto !important;
+    bottom:auto !important;
+    z-index:auto !important;
+    margin:0 0 10px;
+    border-radius:10px;
+    box-shadow:0 2px 10px rgba(15,23,42,.05);
+    overflow:visible;
 }
+#${APP_ID} .msa-head { padding:7px 10px; gap:6px 10px; border-radius:10px 10px 0 0; }
+#${APP_ID} .msa-title { font-size:13px; }
+#${APP_ID} .msa-save-state { margin:0; padding:3px 8px; font-size:10px; border-radius:7px; font-weight:700; max-width:210px; }
+#${APP_ID} .msa-body { padding:8px 10px 9px; }
+#${APP_ID} .msa-import-card { margin-bottom:7px; padding:7px 9px; border-radius:9px; }
+#${APP_ID} .msa-import-head { align-items:center; gap:7px; }
+#${APP_ID} .msa-import-title strong { font-size:12px; }
+#${APP_ID} .msa-import-actions { gap:5px; }
+#${APP_ID} .msa-import-status { margin-top:5px; padding:5px 7px; font-size:11px; line-height:1.45; }
+#${APP_ID} .msa-import-details { margin:5px 0 0; padding:6px; font-size:11px; }
+#${APP_ID} .msa-import-more { margin-top:4px; }
+#${APP_ID} .msa-import-more > summary, #${APP_ID} .msa-advanced-tools > summary {
+    display:list-item; cursor:pointer; color:#526476; font-size:11px; padding:4px 3px; width:max-content; max-width:100%;
+}
+#${APP_ID} .msa-inline-options { position:relative; font-size:11px; }
+#${APP_ID} .msa-inline-options > summary { cursor:pointer; list-style:none; border:1px solid #d9e2e8; padding:4px 8px; border-radius:7px; background:#fff; }
+#${APP_ID} .msa-inline-options > summary::-webkit-details-marker { display:none; }
+#${APP_ID} .msa-inline-options-content {
+    display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; padding:7px; background:#f8fafc; border:1px solid #dbe4ea; border-radius:7px;
+}
+#${APP_ID} .msa-advanced-tools { margin:0 0 4px; }
+#${APP_ID} .msa-advanced-tools .msa-row { margin:3px 0 5px; }
+#${APP_ID} .msa-stats { gap:5px; margin-bottom:6px; grid-template-columns:repeat(7,minmax(0,1fr)); }
+#${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(4,minmax(0,1fr)); }
+#${APP_ID}.msa-new-platform [data-stat="late-excused"],
+#${APP_ID}.msa-new-platform [data-stat="late-unexcused"],
+#${APP_ID}.msa-new-platform [data-filter="late"] { display:none !important; }
+#${APP_ID} .msa-stat-card { min-height:49px; padding:6px 9px; border-radius:8px; }
+#${APP_ID} .msa-stat-card::after { width:3px; }
+#${APP_ID} .msa-stat-label { font-size:10px; margin-bottom:2px; }
+#${APP_ID} .msa-stat-value { font-size:21px; }
+#${APP_ID} .msa-ready { padding:5px 9px; margin-bottom:5px; border-radius:8px; gap:7px; }
+#${APP_ID} .msa-ready-main { font-size:11px; }
+#${APP_ID} .msa-progress { height:5px; }
+#${APP_ID} .msa-row { margin-bottom:5px; gap:5px; }
+#${APP_ID} .msa-row button, #${APP_ID} .msa-head-actions button,
+#${APP_ID} .msa-import-actions button, #${APP_ID} .msa-row select {
+    min-height:28px; padding:4px 8px; font-size:11px;
+}
+#${APP_ID} .msa-search-row input { min-height:30px; }
+#${APP_ID} .msa-credit { margin-top:5px; font-size:9px; opacity:.67; }
+#${APP_ID} [hidden] { display:none !important; }
+
 @media (max-width: 1180px) {
     #${APP_ID} .msa-stats { grid-template-columns:repeat(4, minmax(110px, 1fr)); }
 }
 @media (max-width: 768px) {
     #${APP_ID} { position:static; }
     #${APP_ID} .msa-head, #${APP_ID} .msa-body { padding:11px; }
-    #${APP_ID} .msa-stats { grid-template-columns:repeat(2, minmax(120px,1fr)); }
+    #${APP_ID} .msa-stats, #${APP_ID}.msa-new-platform .msa-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
     #${APP_ID} button, #${APP_ID} select { flex:1 1 auto; }
     #${APP_ID} input[type="search"] { flex-basis:100%; }
     #${APP_ID} .msa-ready { grid-template-columns:1fr auto; }
@@ -4530,6 +4582,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         if (!statusBox || !details) return;
         if (detailsWrap) detailsWrap.hidden = !attendanceImport.dataset;
+        if (issueCount) issueCount.textContent = '';
+
         if (applyConfirm) {
             applyConfirm.hidden = !attendanceImport.applyConfirmationPending || attendanceImport.applyRunning;
         }
@@ -4682,6 +4736,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         lines.push('<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>');
 
         if (attendanceImport.lastApply?.lessonKey === match.group.key) {
+            if (detailsWrap && attendanceImport.lastApply.failed) detailsWrap.open = true;
+
             lines.push(
                 '<div>آخر تطبيق: ' +
                 attendanceImport.lastApply.success + ' نجح' +
@@ -4709,8 +4765,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             applyBtn.disabled = attendanceImport.applyRunning ||
                 !saveOk || !s.supported.length || s.ambiguous.length > 0;
             applyBtn.textContent = attendanceImport.applyRunning
-                ? 'جارٍ تطبيق حضور الملف...'
-                : 'تطبيق حضور الملف';
+                ? 'جارٍ التطبيق...'
+                : '✓ تطبيق الحضور';
             applyBtn.title = !saveOk
                 ? 'الحفظ غير متاح في مدرستي حاليًا.'
                 : s.ambiguous.length
@@ -5000,8 +5056,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             <div class="msa-head">
                 <div class="msa-title-wrap">
                     <div class="msa-title">⚡ التحضير الذكي لمدرستي</div>
-                    <small data-role="mode-label">أدوات مساعدة داخل صفحة التحضير</small>
                 </div>
+                <div class="msa-save-state is-unknown" data-role="save-state">جارٍ فحص الحفظ...</div>
                 <div class="msa-head-actions">
                     <button type="button" class="msa-primary" data-action="native-save-top">💾 حفظ</button>
                     <button type="button" class="msa-report-btn" data-action="report">📋 تقرير الحصة</button>
@@ -5009,25 +5065,23 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 </div>
             </div>
 
-            <div class="msa-save-state is-unknown" data-role="save-state">
-                جارٍ فحص إمكانية الحفظ والتعديل...
-            </div>
-
             <div class="msa-body">
                 <div class="msa-import-card" data-role="import-card">
                     <div class="msa-import-head">
                         <div class="msa-import-title">
                             <strong>📥 سجل الحضور المستورد</strong>
-                            <small>Excel/CSV — يطابق الحصة بالتاريخ + الفصل + رقم الحصة، ثم يطابق الطلاب قبل التطبيق.</small>
                         </div>
                         <div class="msa-import-actions">
-                            <button type="button" data-action="import-attendance">استيراد ملف</button>
-                            <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
-                            <button type="button" data-action="inspect-registry-names" disabled>🔎 فحص أسماء الدليل</button>
-                            <button type="button" data-action="refresh-import-match" disabled>مطابقة الحصة</button>
-                            <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>تطبيق حضور الملف</button>
-                            <button type="button" data-action="diagnose-import-apply" disabled>🧪 تشخيص التطبيق</button>
-                            <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
+                            <button type="button" data-action="import-attendance">📁 استيراد</button>
+                            <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>✓ تطبيق الحضور</button>
+                            <details class="msa-inline-options">
+                                <summary title="خيارات الملف">⋯ الخيارات</summary>
+                                <div class="msa-inline-options-content">
+                                    <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
+                                    <button type="button" data-action="refresh-import-match" disabled>إعادة المطابقة</button>
+                                    <button type="button" data-action="clear-import-attendance" hidden>مسح الملف المستورد</button>
+                                </div>
+                            </details>
                         </div>
                     </div>
                     <div data-role="import-apply-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
@@ -5039,46 +5093,35 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         </div>
                     </div>
                     <div data-role="import-apply-progress" role="status" hidden style="margin:8px 0;padding:9px 12px;border:1px solid #c4b5fd;border-radius:9px;background:#faf5ff;color:#4c1d95"></div>
-                    <div data-role="diagnostic-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
-                        <div>⚠️ <b>تأكيد اختبار الغياب</b>: سيختبر السكربت غياب طالب واحد مطابق داخل الصفحة فقط، دون حفظ الحصة. إذا نجح فقد تتغير حالة هذا الطالب في الصفحة؛ راجعها أو أعد تحميل الحصة قبل الحفظ.</div>
-                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
-                            <button type="button" class="msa-primary" data-action="confirm-attendance-diagnostic">✅ تنفيذ اختبار طالب واحد</button>
-                            <button type="button" data-action="cancel-attendance-diagnostic">إلغاء الاختبار</button>
-                        </div>
-                    </div>
                     <input type="file" data-role="import-file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
                     <div class="msa-import-status" data-role="import-status">لم يتم استيراد سجل حضور بعد.</div>
-                    <div class="msa-import-details" data-role="import-details" hidden></div>
+                    <details class="msa-import-more" data-role="import-details-wrap" hidden>
+                        <summary>تفاصيل السجل والمراجعة <span data-role="import-issues"></span></summary>
+                        <div class="msa-import-details" data-role="import-details" hidden></div>
+                    </details>
                 </div>
 
                 <div class="msa-stats">
                     <div class="msa-stat-card" data-filter="all" data-stat="total">
                         <span class="msa-stat-label">جميع الطلاب</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="all">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="present" data-stat="present">
                         <span class="msa-stat-label">حاضر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="present">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="absent-excused" data-stat="absent-excused">
                         <span class="msa-stat-label">غائب بعذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="absent-excused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="absent-unexcused" data-stat="absent-unexcused">
                         <span class="msa-stat-label">غائب بدون عذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="absent-unexcused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="late-excused" data-stat="late-excused">
                         <span class="msa-stat-label">متأخر بعذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="late-excused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="late-unexcused" data-stat="late-unexcused">
                         <span class="msa-stat-label">متأخر بدون عذر</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="late-unexcused">نسخ</button>
                     </div>
                     <div class="msa-stat-card" data-filter="unset" data-stat="unset">
                         <span class="msa-stat-label">غير محدد</span><span class="msa-stat-value">0</span>
-                        <button class="msa-stat-copy" type="button" data-copy-filter="unset">نسخ</button>
                     </div>
                 </div>
 
@@ -5088,8 +5131,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     <span class="msa-ready-count" data-role="ready-count">0/0</span>
                 </div>
 
-                <div class="msa-row">
-                    <button type="button" class="msa-primary" data-action="all-present">✓ تحضير الكل حاضر</button>
+                <div class="msa-row msa-main-actions">
+                    <button type="button" class="msa-primary" data-action="all-present">✓ الكل حاضر</button>
+                    <button type="button" data-action="undo" disabled>↶ تراجع</button>
+                </div>
+                <details class="msa-advanced-tools">
+                    <summary>أدوات التحديد الجماعي المتقدمة</summary>
+                    <div class="msa-row">
                     <button type="button" class="msa-secondary" data-action="unset-present">✓ غير المحددين ← حاضر</button>
 
                     <select data-role="bulk-status" aria-label="حالة جماعية">
@@ -5101,16 +5149,16 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     </select>
                     <button type="button" data-action="apply-bulk">تطبيق الحالة</button>
                     <button type="button" class="msa-soft-danger" data-action="clear">مسح التحديد</button>
-                    <button type="button" data-action="undo" disabled>↶ تراجع</button>
 
                     <span class="msa-spacer"></span>
                     <span class="msa-scope-group" aria-label="نطاق التطبيق">
                         <button type="button" class="msa-scope-btn is-active" data-scope="all">كل الطلاب</button>
                         <button type="button" class="msa-scope-btn" data-scope="visible">الظاهر فقط</button>
                     </span>
-                </div>
+                    </div>
+                </details>
 
-                <div class="msa-row">
+                <div class="msa-row msa-search-row">
                     <input type="search" data-role="search" placeholder="ابحث باسم الطالب أو رقمه..." autocomplete="off">
                     <select data-role="sort" aria-label="فرز الطلاب">
                         <option value="original">الترتيب الأصلي</option>
@@ -5145,12 +5193,6 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         <strong data-role="save-progress-text">جاهز للحفظ المتسلسل</strong>
                         <span data-role="save-count">التغييرات غير المحفوظة: 0</span>
                     </div>
-                </div>
-
-                <div class="msa-row">
-                    <span class="msa-hint" data-role="save-hint"></span>
-                    <span class="msa-spacer"></span>
-                    <span class="msa-shortcuts">اختصارات: / بحث · Alt+A تحضير الكل · Alt+Z تراجع · Alt+N التالي غير المحدد</span>
                 </div>
 
                 <div class="msa-credit">تطوير: <strong>M0HM3D85</strong> — © 2026 جميع الحقوق محفوظة</div>
@@ -5266,7 +5308,12 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                 box.classList.add('is-unknown');
             }
 
-            box.textContent = availability.message;
+            box.textContent = availability.key === 'available'
+                ? '✓ الحفظ متاح'
+                : availability.key === 'locked-today'
+                    ? '🔒 التعديل غدًا'
+                    : '⛔ الحفظ غير متاح';
+            box.title = availability.message;
         }
     }
 
