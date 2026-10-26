@@ -3014,7 +3014,17 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
     // صفحة ManageLecture تستخدم تحميلًا جزئيًا للحضور، لذلك نراقب ظهور/استبدال النموذج.
     let observerTimer = null;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(mutations => {
+        const relevant = mutations.some(mutation => {
+            const target = mutation.target?.nodeType === Node.ELEMENT_NODE
+                ? mutation.target
+                : mutation.target?.parentElement;
+
+            return !target?.closest?.('#' + APP_ID + ', .msa-report-overlay');
+        });
+
+        if (!relevant) return;
+
         clearTimeout(observerTimer);
         observerTimer = setTimeout(() => {
             init();
