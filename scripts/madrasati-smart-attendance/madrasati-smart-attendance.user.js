@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta13
+// @version      0.3.5-beta14
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta13-registry-name-inspector/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta13-registry-name-inspector/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta14-email-verified-excel-name/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta14-email-verified-excel-name/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta13',
+        version: '0.3.5-beta14',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -3260,11 +3260,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
     function loadIdentityBridge() {
         try {
             const parsed = JSON.parse(localStorage.getItem(ATTENDANCE_IDENTITY_BRIDGE_KEY) || '{}');
-            return parsed && typeof parsed === 'object'
-                ? { version: 1, students: parsed.students && typeof parsed.students === 'object' ? parsed.students : {} }
-                : { version: 1, students: {} };
+            return {
+                version: 2,
+                students: parsed?.students && typeof parsed.students === 'object' ? parsed.students : {},
+                emails: parsed?.emails && typeof parsed.emails === 'object' ? parsed.emails : {}
+            };
         } catch (_) {
-            return { version: 1, students: {} };
+            return { version: 2, students: {}, emails: {} };
         }
     }
 
@@ -3272,7 +3274,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         try {
             localStorage.setItem(
                 ATTENDANCE_IDENTITY_BRIDGE_KEY,
-                JSON.stringify(attendanceImport.identityBridge || { version: 1, students: {} })
+                JSON.stringify(
+                    attendanceImport.identityBridge ||
+                    { version: 2, students: {}, emails: {} }
+                )
             );
         } catch (_) {}
     }
@@ -3283,14 +3288,41 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (!studentId || !account) return;
 
         if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.students) attendanceImport.identityBridge.students = {};
+
         attendanceImport.identityBridge.students[studentId] = {
             account,
             userGuid: cleanText(registryStudent?.userGuid || ''),
-            officialName: cleanText(registryStudent?.name || student?.name || ''),
+            registryName: cleanText(registryStudent?.name || ''),
+            attendanceName: cleanText(student?.name || ''),
             className: cleanText(registryStudent?.className || ''),
             savedAt: new Date().toISOString()
         };
         saveIdentityBridge();
+    }
+
+    function rememberEmailAttendanceIdentity(record, student, registryStudent, method = '') {
+        const email = normalizeEmail(record?.email || registryStudent?.account);
+        if (!email || !student?.name) return;
+
+        if (!attendanceImport.identityBridge) attendanceImport.identityBridge = loadIdentityBridge();
+        if (!attendanceImport.identityBridge.emails) attendanceImport.identityBridge.emails = {};
+
+        attendanceImport.identityBridge.emails[email] = {
+            attendanceName: cleanText(student.name || ''),
+            studentId: normalizeStudentId(student.studentId),
+            registryName: cleanText(registryStudent?.name || ''),
+            userGuid: cleanText(registryStudent?.userGuid || ''),
+            className: cleanText(record?.classroom || registryStudent?.className || ''),
+            method: cleanText(method || ''),
+            savedAt: new Date().toISOString()
+        };
+
+        if (student.studentId && registryStudent?.account) {
+            rememberStudentIdentity(student, registryStudent);
+        } else {
+            saveIdentityBridge();
+        }
     }
 
     function parseRegistryStudentCard(card) {
@@ -3906,6 +3938,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
 
         const pageById = new Map();
         const pageByName = new Map();
+        const pageByCanonical = new Map();
+        const pageByCompact = new Map();
         const pageBySignature = new Map();
 
         for (const student of state.students) {
@@ -3913,6 +3947,8 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             if (id) add(pageById, id, student);
 
             add(pageByName, normalizePersonName(student.name), student);
+            add(pageByCanonical, canonicalPersonName(student.name), student);
+            add(pageByCompact, compactPersonName(student.name), student);
             add(pageBySignature, personNameSignature(student.name), student);
         }
 
@@ -3929,219 +3965,181 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             emailFoundInRegistry: 0,
             emailMissingInRegistry: 0,
             emailAmbiguousInRegistry: 0,
-            officialNameMatchedPage: 0,
-            officialNameMatchedCanonical: 0,
-            officialNameMatchedSimilarity: 0,
-            officialNameMissingPage: 0,
-            officialNameAmbiguousPage: 0,
-            matchedByStudentId: 0,
-            matchedByEmailBridge: 0,
-            matchedByFallbackName: 0
+            matchedByLearnedEmail: 0,
+            matchedByExcelExact: 0,
+            matchedByExcelCanonical: 0,
+            matchedByExcelCompact: 0,
+            matchedByExcelSignature: 0,
+            matchedByExcelSimilarity: 0,
+            matchedWithoutEmail: 0
         };
 
         const chooseAvailable = candidates =>
             (candidates || []).filter(student => !usedStudents.has(student));
 
-        const resolvePageFromRegistry = registryStudent => {
-            if (!registryStudent) {
-                return {
-                    student: null,
-                    reason: 'missing-registry-student',
-                    candidates: [],
-                    ranked: []
-                };
-            }
-
-            const exact = chooseAvailable(pageByName.get(normalizePersonName(registryStudent.name)) || []);
+        const resolveByExcelName = record => {
+            const exact = chooseAvailable(
+                pageByName.get(normalizePersonName(record.studentName)) || []
+            );
             if (exact.length === 1) {
-                return {
-                    student: exact[0],
-                    reason: 'official-name',
-                    candidates: exact,
-                    ranked: [{ student: exact[0], score: 1 }]
-                };
+                return { student: exact[0], method: 'excel-exact', score: 1, candidates: exact };
+            }
+            if (exact.length > 1) {
+                return { student: null, method: 'excel-exact-ambiguous', score: 1, candidates: exact };
             }
 
-            const canonical = canonicalPersonName(registryStudent.name);
-            const canonicalMatches = chooseAvailable(
-                state.students.filter(student => canonicalPersonName(student.name) === canonical)
-            );
-            if (canonical && canonicalMatches.length === 1) {
-                return {
-                    student: canonicalMatches[0],
-                    reason: 'official-name-canonical',
-                    candidates: canonicalMatches,
-                    ranked: [{ student: canonicalMatches[0], score: 0.99 }]
-                };
+            const canonicalKey = canonicalPersonName(record.studentName);
+            const canonical = chooseAvailable(pageByCanonical.get(canonicalKey) || []);
+            if (canonicalKey && canonical.length === 1) {
+                return { student: canonical[0], method: 'excel-canonical', score: 0.99, candidates: canonical };
+            }
+            if (canonical.length > 1) {
+                return { student: null, method: 'excel-canonical-ambiguous', score: 0.99, candidates: canonical };
             }
 
-            const compact = compactPersonName(registryStudent.name);
-            const compactMatches = chooseAvailable(
-                state.students.filter(student => compactPersonName(student.name) === compact)
-            );
-            if (compact && compactMatches.length === 1) {
-                return {
-                    student: compactMatches[0],
-                    reason: 'official-name-compact',
-                    candidates: compactMatches,
-                    ranked: [{ student: compactMatches[0], score: 0.98 }]
-                };
+            const compactKey = compactPersonName(record.studentName);
+            const compact = chooseAvailable(pageByCompact.get(compactKey) || []);
+            if (compactKey && compact.length === 1) {
+                return { student: compact[0], method: 'excel-compact', score: 0.98, candidates: compact };
+            }
+            if (compact.length > 1) {
+                return { student: null, method: 'excel-compact-ambiguous', score: 0.98, candidates: compact };
             }
 
-            const signatureMatches = chooseAvailable(
-                pageBySignature.get(personNameSignature(registryStudent.name)) || []
+            const signature = chooseAvailable(
+                pageBySignature.get(personNameSignature(record.studentName)) || []
             );
-            if (signatureMatches.length === 1) {
-                return {
-                    student: signatureMatches[0],
-                    reason: 'official-name-tokens',
-                    candidates: signatureMatches,
-                    ranked: [{ student: signatureMatches[0], score: 0.96 }]
-                };
+            if (signature.length === 1) {
+                return { student: signature[0], method: 'excel-signature', score: 0.96, candidates: signature };
+            }
+            if (signature.length > 1) {
+                return { student: null, method: 'excel-signature-ambiguous', score: 0.96, candidates: signature };
             }
 
             const availablePage = state.students.filter(student => !usedStudents.has(student));
-            const ranked = rankPageStudentsByName(registryStudent.name, availablePage);
+            const ranked = rankPageStudentsByName(record.studentName, availablePage);
             const best = ranked[0];
             const second = ranked[1];
 
-            // لا نعتمد التشابه إلا إذا كان قويًا وواضحًا عن ثاني أفضل اسم.
+            // تشابه احتياطي فقط، وبشرط أن يكون أفضل اسم واضحًا جدًا عن الثاني.
             if (
                 best &&
-                best.score >= 0.74 &&
-                (!second || best.score - second.score >= 0.12)
+                best.score >= 0.82 &&
+                (!second || best.score - second.score >= 0.14)
             ) {
                 return {
                     student: best.student,
-                    reason: 'official-name-unique-similarity',
+                    method: 'excel-unique-similarity',
+                    score: best.score,
                     candidates: [best.student],
                     ranked: ranked.slice(0, 3)
                 };
             }
 
-            const candidates = ranked
-                .filter(item => item.score >= 0.58)
-                .slice(0, 3)
-                .map(item => item.student);
-
             return {
                 student: null,
-                reason: best ? 'official-name-not-safe-enough' : 'official-name-not-in-page',
-                candidates,
+                method: best ? 'excel-name-not-safe-enough' : 'excel-name-not-found',
+                score: best?.score || 0,
+                candidates: ranked.filter(item => item.score >= 0.58).slice(0, 3).map(item => item.student),
                 ranked: ranked.slice(0, 3)
             };
         };
 
-        // المرحلة الأولى: سجل الملف نفسه هو نقطة البداية.
-        // email(file) -> MyStudents -> official Madrasati name -> attendance row.
         for (const record of records) {
             let student = null;
             let confidence = '';
             let registryStudent = null;
 
-            const importedStudentId = normalizeStudentId(record.studentId);
-            if (importedStudentId) {
-                const idCandidates = chooseAvailable(pageById.get(importedStudentId) || []);
-                if (idCandidates.length === 1) {
-                    student = idCandidates[0];
-                    confidence = 'id';
-                    stats.matchedByStudentId++;
-                }
-            }
+            const email = normalizeEmail(record.email);
+            let emailVerified = false;
 
-            if (!student) {
-                const email = normalizeEmail(record.email);
-                if (email) {
-                    stats.recordsWithEmail++;
-                    const registryCandidates = registryByEmail.get(email) || [];
+            if (email) {
+                stats.recordsWithEmail++;
+                const registryCandidates = registryByEmail.get(email) || [];
 
-                    if (registryCandidates.length === 1) {
-                        stats.emailFoundInRegistry++;
-                        registryStudent = registryCandidates[0];
-
-                        const resolved = resolvePageFromRegistry(registryStudent);
-                        if (resolved.student) {
-                            student = resolved.student;
-                            confidence = 'email→registry→' + resolved.reason;
-                            stats.officialNameMatchedPage++;
-                            if (resolved.reason === 'official-name-canonical' || resolved.reason === 'official-name-compact') {
-                                stats.officialNameMatchedCanonical++;
-                            }
-                            if (resolved.reason === 'official-name-unique-similarity') {
-                                stats.officialNameMatchedSimilarity++;
-                            }
-                            stats.matchedByEmailBridge++;
-                            rememberStudentIdentity(student, registryStudent);
-                        } else if (resolved.reason.includes('ambiguous')) {
-                            stats.officialNameAmbiguousPage++;
-                            bridgeFailures.push({
-                                record,
-                                registryStudent,
-                                reason: resolved.reason,
-                                candidates: resolved.candidates || [],
-                                ranked: resolved.ranked || []
-                            });
-                        } else {
-                            stats.officialNameMissingPage++;
-                            bridgeFailures.push({
-                                record,
-                                registryStudent,
-                                reason: resolved.reason,
-                                candidates: resolved.candidates || [],
-                                ranked: resolved.ranked || []
-                            });
-                        }
-                    } else if (registryCandidates.length > 1) {
-                        stats.emailAmbiguousInRegistry++;
-                        bridgeFailures.push({
-                            record,
-                            registryStudent: null,
-                            reason: 'email-ambiguous-in-registry',
-                            candidates: registryCandidates
-                        });
-                    } else {
-                        stats.emailMissingInRegistry++;
-                        bridgeFailures.push({
-                            record,
-                            registryStudent: null,
-                            reason: 'email-not-in-registry',
-                            candidates: []
-                        });
-                    }
-                }
-            }
-
-            // احتياط فقط: الاسم الموجود في ملف المصدر مباشرة.
-            if (!student) {
-                const exact = chooseAvailable(pageByName.get(normalizePersonName(record.studentName)) || []);
-                if (exact.length === 1) {
-                    student = exact[0];
-                    confidence = 'fallback-exact-name';
-                    stats.matchedByFallbackName++;
-                } else if (!exact.length) {
-                    const signature = chooseAvailable(
-                        pageBySignature.get(personNameSignature(record.studentName)) || []
-                    );
-                    if (signature.length === 1) {
-                        student = signature[0];
-                        confidence = 'fallback-name-tokens';
-                        stats.matchedByFallbackName++;
-                    } else if (signature.length > 1) {
-                        ambiguous.push({
-                            record,
-                            student: null,
-                            candidates: signature,
-                            reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
-                            confidence: 'fallback-name-tokens'
-                        });
-                    }
+                if (registryCandidates.length === 1) {
+                    stats.emailFoundInRegistry++;
+                    registryStudent = registryCandidates[0];
+                    emailVerified = true;
+                } else if (registryCandidates.length > 1) {
+                    stats.emailAmbiguousInRegistry++;
+                    bridgeFailures.push({
+                        record,
+                        registryStudent: null,
+                        reason: 'email-ambiguous-in-registry',
+                        candidates: registryCandidates,
+                        ranked: []
+                    });
                 } else {
+                    stats.emailMissingInRegistry++;
+                    bridgeFailures.push({
+                        record,
+                        registryStudent: null,
+                        reason: 'email-not-in-registry',
+                        candidates: [],
+                        ranked: []
+                    });
+                }
+            }
+
+            // إذا تعلمنا سابقًا البريد ↔ StudentId/اسم التحضير نستخدمه أولًا.
+            if (emailVerified) {
+                const learned = attendanceImport.identityBridge?.emails?.[email];
+                if (learned) {
+                    const learnedId = normalizeStudentId(learned.studentId);
+                    if (learnedId) {
+                        const idCandidates = chooseAvailable(pageById.get(learnedId) || []);
+                        if (idCandidates.length === 1) {
+                            student = idCandidates[0];
+                            confidence = 'email-verified→learned-studentId';
+                            stats.matchedByLearnedEmail++;
+                        }
+                    }
+
+                    if (!student && learned.attendanceName) {
+                        const learnedName = chooseAvailable(
+                            pageByName.get(normalizePersonName(learned.attendanceName)) || []
+                        );
+                        if (learnedName.length === 1) {
+                            student = learnedName[0];
+                            confidence = 'email-verified→learned-attendance-name';
+                            stats.matchedByLearnedEmail++;
+                        }
+                    }
+                }
+            }
+
+            // الاسم الكامل من Excel هو مفتاح ربط صف التحضير؛ البريد يثبت هوية السجل فقط.
+            if (!student) {
+                const resolved = resolveByExcelName(record);
+
+                if (resolved.student) {
+                    student = resolved.student;
+                    confidence = (emailVerified ? 'email-verified→' : 'name-only→') + resolved.method;
+
+                    if (resolved.method === 'excel-exact') stats.matchedByExcelExact++;
+                    else if (resolved.method === 'excel-canonical') stats.matchedByExcelCanonical++;
+                    else if (resolved.method === 'excel-compact') stats.matchedByExcelCompact++;
+                    else if (resolved.method === 'excel-signature') stats.matchedByExcelSignature++;
+                    else if (resolved.method === 'excel-unique-similarity') stats.matchedByExcelSimilarity++;
+
+                    if (!emailVerified) stats.matchedWithoutEmail++;
+                } else if (resolved.method.includes('ambiguous')) {
                     ambiguous.push({
                         record,
                         student: null,
-                        candidates: exact,
-                        reason: 'أكثر من طالب في صفحة مدرستي يطابق اسم سجل الملف.',
-                        confidence: 'fallback-exact-name'
+                        candidates: resolved.candidates || [],
+                        ranked: resolved.ranked || [],
+                        reason: 'أكثر من صف في صفحة التحضير يطابق اسم Excel بعد التطبيع.',
+                        confidence: resolved.method
+                    });
+                } else {
+                    bridgeFailures.push({
+                        record,
+                        registryStudent,
+                        reason: resolved.method,
+                        candidates: resolved.candidates || [],
+                        ranked: resolved.ranked || []
                     });
                 }
             }
@@ -4149,6 +4147,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             if (student && !usedStudents.has(student)) {
                 usedStudents.add(student);
                 usedRecords.add(record);
+
+                if (emailVerified) {
+                    rememberEmailAttendanceIdentity(record, student, registryStudent, confidence);
+                }
+
                 const attendance = normalizeImportedAttendance(record);
                 entries.push({
                     student,
@@ -4164,14 +4167,19 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             .filter(student => !usedStudents.has(student))
             .map(student => ({
                 ...student,
-                reason: 'لم يجد السكربت سجلًا مطابقًا لهذا الطالب بعد المرور بمسار البريد ثم الاسم الاحتياطي.'
+                reason: 'لا يوجد سجل حضور مطابق لهذا الطالب بعد التحقق بالبريد ومطابقة اسم Excel مع صفحة التحضير.'
             }));
 
         const unmatchedFile = records.filter(record => !usedRecords.has(record));
+        const unresolvedBridgeFailures = bridgeFailures.filter(item => !usedRecords.has(item.record));
+
         const supported = entries.filter(entry => entry.attendance.kind === 'supported');
         const review = entries.filter(entry => entry.attendance.kind !== 'supported');
         const convertedLate = supported.filter(entry => entry.attendance.convertedFrom === 'late');
-        const emailMatched = entries.filter(entry => String(entry.confidence || '').startsWith('email→registry→'));
+
+        const emailMatched = entries.filter(entry =>
+            String(entry.confidence || '').startsWith('email-verified→')
+        );
 
         stats.matchedTotal = entries.length;
         stats.unmatchedFile = unmatchedFile.length;
@@ -4186,7 +4194,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             unmatchedPage,
             unmatchedFile,
             ambiguous,
-            bridgeFailures,
+            bridgeFailures: unresolvedBridgeFailures,
             bridgeStats: stats,
             matchedCount: entries.length
         };
@@ -4292,7 +4300,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (kind === 'unmatched-file') return 'سجلات موجودة في ملف الحصة ولا يوجد لها طالب مطابق في صفحة مدرستي';
         if (kind === 'ambiguous') return 'مطابقات مبهمة';
         if (kind === 'late-converted') return 'طلاب متأخرون في الملف وسيعاملون كحاضرين في مدرستي';
-        if (kind === 'bridge-failures') return 'تعثر جسر الاسم بين دليل مدرستي وصفحة الحصة';
+        if (kind === 'bridge-failures') return 'تعثر ربط اسم Excel بصفحة الحصة';
         return 'تفاصيل المطابقة';
     }
 
@@ -4650,7 +4658,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         '<button type="button" class="msa-primary" data-action="copy-registry-name-inspection">📋 نسخ الفحص</button>' +
                     '</div>' +
                     '<div style="margin-top:8px;font-size:10px;color:#64748b">' +
-                        'لا يعرض الفحص البريد أو السجل المدني؛ الأسماء فقط لتحديد مصدر اختلاف الربط.' +
+                        'لا يعرض الفحص البريد أو السجل المدني؛ اسم MyStudents للتشخيص فقط ولا يستخدم كمفتاح نهائي لصف التحضير.' +
                     '</div>' +
                 '</div>' +
             '</div>';
@@ -5256,7 +5264,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             ' — ✅ تمت مطابقة الحصة: ' +
             match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period +
             '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length +
-            ' — ربط البريد: ' + s.emailMatched.length + '.';
+            ' — هوية مؤكدة بالبريد: ' + s.emailMatched.length + '.';
 
         const lines = [];
         lines.push(
@@ -5274,11 +5282,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '<div><b>مسار الربط:</b> ' +
             '<span class="msa-import-chip">سجلات الحصة ' + (bridgeStats.lessonRecords ?? match.group.records.length) + '</span>' +
             '<span class="msa-import-chip">بريد في الملف ' + (bridgeStats.recordsWithEmail ?? 0) + '</span>' +
-            '<span class="msa-import-chip">البريد وجد في الدليل ' + (bridgeStats.emailFoundInRegistry ?? 0) + '</span>' +
-            '<span class="msa-import-chip">الاسم الرسمي وجد في الحصة ' + (bridgeStats.officialNameMatchedPage ?? 0) + '</span>' +
-            '<span class="msa-import-chip">تطبيع الاسم ' + (bridgeStats.officialNameMatchedCanonical ?? 0) + '</span>' +
-            '<span class="msa-import-chip">تشابه آمن ' + (bridgeStats.officialNameMatchedSimilarity ?? 0) + '</span>' +
-            '<span class="msa-import-chip">احتياط بالاسم ' + (bridgeStats.matchedByFallbackName ?? 0) + '</span>' +
+            '<span class="msa-import-chip">البريد مؤكد بالدليل ' + (bridgeStats.emailFoundInRegistry ?? 0) + '</span>' +
+            '<span class="msa-import-chip">هوية متعلمة ' + (bridgeStats.matchedByLearnedEmail ?? 0) + '</span>' +
+            '<span class="msa-import-chip">اسم Excel مباشر ' + (bridgeStats.matchedByExcelExact ?? 0) + '</span>' +
+            '<span class="msa-import-chip">اسم Excel بعد التطبيع ' +
+                ((bridgeStats.matchedByExcelCanonical ?? 0) + (bridgeStats.matchedByExcelCompact ?? 0) + (bridgeStats.matchedByExcelSignature ?? 0)) +
+            '</span>' +
+            '<span class="msa-import-chip">تشابه آمن ' + (bridgeStats.matchedByExcelSimilarity ?? 0) + '</span>' +
             '</div>'
         );
 
@@ -5293,13 +5303,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             '</div>'
         );
 
-        if ((bridgeStats.emailMissingInRegistry ?? 0) || (bridgeStats.officialNameMissingPage ?? 0) || (bridgeStats.officialNameAmbiguousPage ?? 0)) {
+        if (s.bridgeFailures?.length || s.ambiguous?.length) {
             lines.push(
                 '<div style="margin-top:6px;color:#9a3412">' +
-                '⚠️ تعثر الربط: ' +
-                'بريد غير موجود في الدليل ' + (bridgeStats.emailMissingInRegistry ?? 0) +
-                ' — اسم رسمي غير موجود في الحصة ' + (bridgeStats.officialNameMissingPage ?? 0) +
-                ' — اسم رسمي مبهم ' + (bridgeStats.officialNameAmbiguousPage ?? 0) +
+                '⚠️ تعثر الربط النهائي: ' +
+                (s.bridgeFailures?.length || 0) + ' غير محسوم' +
+                (s.ambiguous?.length ? ' — ' + s.ambiguous.length + ' مبهم' : '') +
+                '. البريد يستخدم لإثبات الهوية، والاسم الكامل من Excel هو مفتاح صف التحضير.' +
                 '</div>'
             );
         }
@@ -5309,7 +5319,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         if (s.unmatchedPage.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-danger" data-import-review="unmatched-page">❌ في مدرستي وليس الملف ' + s.unmatchedPage.length + ' — عرض</button>');
         if (s.unmatchedFile.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="unmatched-file">ℹ️ في الملف وليس مدرستي ' + s.unmatchedFile.length + ' — عرض</button>');
         if (s.ambiguous.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-warning" data-import-review="ambiguous">⚠️ مطابقة مبهمة ' + s.ambiguous.length + ' — عرض</button>');
-        if (s.bridgeFailures?.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="bridge-failures">🔗 تعثر جسر الاسم ' + s.bridgeFailures.length + ' — عرض</button>');
+        if (s.bridgeFailures?.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-info" data-import-review="bridge-failures">🔗 تعثر ربط الاسم ' + s.bridgeFailures.length + ' — عرض</button>');
         if (s.convertedLate.length) reviewButtons.push('<button type="button" class="msa-import-review-btn is-ok" data-import-review="late-converted">⏱ متأخر → حاضر ' + s.convertedLate.length + ' — عرض</button>');
         if (reviewButtons.length) lines.push('<div class="msa-import-review-actions">' + reviewButtons.join('') + '</div>');
 
@@ -6158,7 +6168,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta13] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta14] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
