@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.1
+// @version      1.5.2
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.1
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.5.2
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.5.1
+// Madrasati Projects & Activities Intelligence — v1.5.2
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -313,6 +313,14 @@
  }
  return fallback;
 };
+
+  // إعادة الدالة الأساسية لاستخراج الفصل من بطاقة الطالب.
+  const classFromBlock = block => {
+    const text = clean(block?.innerText || block?.textContent || '');
+    return text.match(/الفصل\s+المدرسي\s*:\s*(.+?)(?=\s+(?:الدرجة|الإجابة|ملاحظ|الحل|استعراض|$))/i)?.[1]?.trim()
+      || text.match(/الفصل\s+المدرسي\s*:\s*([^|\n]+)/i)?.[1]?.trim()
+      || '';
+  };
 
     const nameFromBlock = function(block,fields,studentId) {
  const optionName=studentNameFromSelect(studentId);
