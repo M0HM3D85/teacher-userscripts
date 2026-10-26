@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta4
+// @version      0.3.5-beta5
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta4-status-normalization/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta4-status-normalization/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta5-native-click/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta5-native-click/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta4',
+        version: '0.3.5-beta5',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -1192,20 +1192,77 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function attendanceRadioLabel(radio) {
+        if (!radio) return null;
+
+        if (radio.id) {
+            const byFor =
+                q('label[for="' + escapeAttr(radio.id) + '"]', studentControlRoot(radio)) ||
+                q('label[for="' + escapeAttr(radio.id) + '"]');
+            if (byFor) return byFor;
+        }
+
+        return radio.closest?.('label') ||
+            radio.parentElement?.querySelector?.('label') ||
+            null;
+    }
+
+    function studentControlRoot(radio) {
+        return radio?.closest?.('tr, .student-row, .row, .card, li, form') || document;
+    }
+
+    function notifyAttendanceRadio(radio) {
+        if (!radio) return;
+
+        radio.dispatchEvent(new Event('input', { bubbles: true }));
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const jq = window.jQuery;
+        if (jq?.fn?.jquery) {
+            try {
+                jq(radio).triggerHandler('input');
+                jq(radio).triggerHandler('change');
+            } catch (_) {}
+        }
+    }
+
     function dispatchRadio(radio) {
         if (!radio || radio.disabled) return false;
         if (radio.checked) return true;
 
-        try {
-            radio.click();
-        } catch (_) {}
+        // مدرستي تعرض أحيانًا input مخفيًا ويكون التفاعل الحقيقي عبر label.
+        // نحاول ضغط نفس العنصر المرئي الذي يضغطه المستخدم أولاً.
+        const label = attendanceRadioLabel(radio);
+        if (label && !label.matches?.('[aria-disabled="true"], .disabled')) {
+            try { label.click(); } catch (_) {}
+        }
 
-        if (radio.checked) return true;
+        if (!radio.checked) {
+            try { radio.click(); } catch (_) {}
+        }
 
-        radio.checked = true;
-        radio.dispatchEvent(new Event('input', { bubbles: true }));
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        if (!radio.checked) {
+            radio.checked = true;
+            notifyAttendanceRadio(radio);
+        } else {
+            // نضمن وصول change حتى لو كان label هو الذي غيّر checked.
+            notifyAttendanceRadio(radio);
+        }
+
         return radio.checked;
+    }
+
+    async function waitForAttendanceState(student, predicate, timeoutMs = 1200) {
+        const started = Date.now();
+        let last = readStudentStatus(student);
+
+        while (Date.now() - started <= timeoutMs) {
+            last = readStudentStatus(student);
+            if (predicate(last)) return { ok: true, status: last };
+            await new Promise(resolve => setTimeout(resolve, 40));
+        }
+
+        return { ok: false, status: last };
     }
 
     function findStudentStatusRadio(student, kind, value) {
@@ -1266,36 +1323,62 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
         dispatchRadio(main);
 
-        // نعطي معالج مدرستي فرصة لإظهار/تمكين سبب الغياب وتعيين «بدون عذر» الافتراضي.
-        const delays = [0, 35, 90, 180];
+        // ننتظر مدرستي نفسها حتى تعالج اختيار «غائب» وتحدّث سبب الغياب.
+        const mainWait = await waitForAttendanceState(
+            student,
+            current =>
+                current.key === statusDef.key ||
+                current.main === statusDef.main,
+            1200
+        );
 
-        for (const delay of delays) {
-            if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+        if (mainWait.status?.key === statusDef.key) {
+            return { ok: true, reason: 'main-handler-completed' };
+        }
 
-            const current = readStudentStatus(student);
-            if (current.key === statusDef.key) {
-                return { ok: true, reason: 'main-handler-completed' };
-            }
+        // بعد أن تصبح الحالة الرئيسية صحيحة نختار سبب الغياب المطلوب.
+        let detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
 
-            const detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
-            if (detail && !detail.disabled) {
-                dispatchRadio(detail);
-                await new Promise(resolve => setTimeout(resolve, 20));
+        if (!detail || detail.disabled) {
+            const detailReady = await waitForAttendanceState(
+                student,
+                () => {
+                    detail = findStudentStatusRadio(student, 'detail', statusDef.detail);
+                    return !!detail && !detail.disabled;
+                },
+                1200
+            );
 
-                const verified = readStudentStatus(student);
-                if (verified.key === statusDef.key) {
-                    return { ok: true, reason: 'detail-selected' };
-                }
+            if (!detailReady.ok && (!detail || detail.disabled)) {
+                const current = readStudentStatus(student);
+                return {
+                    ok: false,
+                    reason: 'detail-radio-unavailable-after-main',
+                    actualKey: current.key,
+                    actualMain: current.main,
+                    actualDetail: current.detail
+                };
             }
         }
 
-        const finalStatus = readStudentStatus(student);
+        dispatchRadio(detail);
+
+        const verified = await waitForAttendanceState(
+            student,
+            current => current.key === statusDef.key,
+            1200
+        );
+
+        if (verified.ok) {
+            return { ok: true, reason: 'verified-after-native-click' };
+        }
+
         return {
             ok: false,
-            reason: 'verification-failed',
-            actualKey: finalStatus.key,
-            actualMain: finalStatus.main,
-            actualDetail: finalStatus.detail
+            reason: 'verification-failed-after-native-click',
+            actualKey: verified.status?.key || '',
+            actualMain: verified.status?.main || '',
+            actualDetail: verified.status?.detail || ''
         };
     }
 
@@ -5011,7 +5094,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta5] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
