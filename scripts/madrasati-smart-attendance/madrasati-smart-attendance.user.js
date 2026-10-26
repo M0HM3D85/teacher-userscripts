@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.4
-// @description  إدارة ذكية للحضور في مدرستي مع إحصاءات وتقارير وبحث مرن، وزر حفظ علوي مرتبط بالحفظ الأصلي مع بيان حالة إمكانية التعديل.
+// @version      0.3.5-beta1
+// @description  نسخة اختبارية: استيراد عام لسجلات الحضور من Excel/CSV ومطابقة الحصة والطلاب تلقائيًا، مع الإحصاءات والتقارير والحفظ الأصلي.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -10,10 +10,11 @@
 // @license      All Rights Reserved
 // @match        https://schools.madrasati.sa/SchoolSchedule/Schedule/ManageLecture*
 // @grant        none
+// @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-final/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.4-final/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta1-attendance-import/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta1-attendance-import/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -36,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.4',
+        version: '0.3.5-beta1',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -99,6 +100,21 @@
 
     const MAX_UNDO = 5;
     const boundEventRoots = new WeakSet();
+
+    const ATTENDANCE_IMPORT_STORAGE_KEY = 'msa-attendance-import-v1';
+    const ATTENDANCE_IMPORT_DATA_VERSION = 1;
+    const ATTENDANCE_IMPORT_MAX_ROWS = 30000;
+    const ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT = 4200000;
+
+    let attendanceImport = {
+        loaded: false,
+        dataset: null,
+        index: null,
+        currentMatch: null,
+        lastSignature: '',
+        lastError: '',
+        lastApply: null
+    };
 
     let state = {
         form: null,
@@ -230,6 +246,77 @@
     color:#475569;
 }
 
+#${APP_ID} .msa-import-card {
+    margin-bottom:12px;
+    padding:12px;
+    border:1px solid #dbe4ea;
+    border-radius:12px;
+    background:#fbfdff;
+}
+#${APP_ID} .msa-import-head {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+}
+#${APP_ID} .msa-import-title {
+    display:flex;
+    flex-direction:column;
+    gap:3px;
+}
+#${APP_ID} .msa-import-title strong { font-size:13px; color:#18312a; }
+#${APP_ID} .msa-import-title small { font-size:11px; color:#64748b; line-height:1.45; }
+#${APP_ID} .msa-import-actions { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+#${APP_ID} .msa-import-status {
+    margin-top:9px;
+    padding:9px 10px;
+    border-radius:9px;
+    background:#f8fafc;
+    border:1px solid #e2e8f0;
+    font-size:11px;
+    line-height:1.65;
+    color:#334155;
+}
+#${APP_ID} .msa-import-status.is-match {
+    background:#f0fdf4;
+    border-color:#bbebc9;
+    color:#166534;
+}
+#${APP_ID} .msa-import-status.is-warning {
+    background:#fff7ed;
+    border-color:#fed7aa;
+    color:#9a3412;
+}
+#${APP_ID} .msa-import-status.is-error {
+    background:#fef2f2;
+    border-color:#fecaca;
+    color:#991b1b;
+}
+#${APP_ID} .msa-import-details {
+    margin-top:8px;
+    padding:8px 10px;
+    border-radius:9px;
+    background:#fff;
+    border:1px dashed #d6e0e6;
+    font-size:11px;
+    line-height:1.65;
+    color:#475569;
+}
+#${APP_ID} .msa-import-details b { color:#1f2937; }
+#${APP_ID} .msa-import-details ul { margin:5px 0 0; padding-inline-start:20px; }
+#${APP_ID} .msa-import-chip {
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    padding:2px 7px;
+    margin:2px 2px;
+    border-radius:999px;
+    background:#eef2f7;
+    color:#475569;
+    font-size:10px;
+    font-weight:800;
+}
 #${APP_ID} .msa-body { padding: 14px 16px 15px; }
 #${APP_ID}.is-collapsed .msa-body { display: none; }
 #${APP_ID}.msa-new-platform [data-action="unset-present"],
@@ -1381,6 +1468,7 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         if (['priority', 'unset-first', 'absent-first', 'late-first'].includes(state.sort)) applySort();
         updateSaveAllUi();
         updateSaveAvailabilityUi();
+        updateAttendanceImportUi();
     }
 
     function toast(message) {
@@ -2471,6 +2559,1064 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         runSaveQueue(targets, true);
     }
 
+
+    function importHeaderKey(value) {
+        return normalizeArabic(toEnglishDigits(cleanText(value || '')));
+    }
+
+    const IMPORT_FIELD_ALIASES = Object.freeze({
+        date: [
+            'التاريخ', 'تاريخ', 'تاريخ الحصه', 'تاريخ الحضور',
+            'date', 'lesson date', 'attendance date', 'session date'
+        ],
+        classroom: [
+            'الفصل', 'الشعبه', 'الفصل الدراسي', 'اسم الفصل', 'اسم الشعبه',
+            'class', 'classroom', 'section', 'class name'
+        ],
+        period: [
+            'رقم الحصه', 'الحصه', 'رقم الحصه الدراسيه', 'ترتيب الحصه',
+            'period', 'period number', 'slot', 'slot number', 'lesson number', 'lecture number'
+        ],
+        studentName: [
+            'اسم الطالب', 'الطالب', 'اسم الطالبه', 'student name', 'student', 'learner name'
+        ],
+        studentId: [
+            'رقم الطالب', 'معرف الطالب', 'رقم الهويه', 'هوية الطالب',
+            'student id', 'student number', 'learner id'
+        ],
+        status: [
+            'حاله الحضور', 'حالة الحضور', 'الحضور', 'وضع الحضور',
+            'attendance status', 'attendance', 'presence status', 'status'
+        ],
+        excuse: [
+            'العذر', 'حاله العذر', 'نوع العذر', 'excuse', 'excuse status', 'excused'
+        ],
+        reason: [
+            'سبب العذر', 'تفاصيل العذر', 'مبرر الغياب', 'excuse reason', 'reason', 'absence reason'
+        ],
+        subject: [
+            'الماده', 'اسم الماده', 'subject', 'subject name', 'course'
+        ],
+        lesson: [
+            'الدرس', 'عنوان الدرس', 'موضوع الدرس', 'lesson', 'lesson title', 'topic'
+        ]
+    });
+
+    function headerFieldScore(header, field) {
+        const h = importHeaderKey(header);
+        if (!h) return 0;
+
+        const aliases = IMPORT_FIELD_ALIASES[field] || [];
+        let best = 0;
+
+        for (const alias of aliases) {
+            const a = importHeaderKey(alias);
+            if (!a) continue;
+            if (h === a) best = Math.max(best, 100);
+            else if (a.length >= 4 && (h.includes(a) || a.includes(h))) best = Math.max(best, 70);
+        }
+
+        if (field === 'date' && h.includes('تاريخ')) best = Math.max(best, 75);
+        if (field === 'classroom' && (h.includes('فصل') || h.includes('شعب'))) best = Math.max(best, 75);
+        if (field === 'period' && h.includes('حصه')) best = Math.max(best, h.includes('رقم') ? 90 : 72);
+        if (field === 'studentName' && h.includes('اسم') && (h.includes('طالب') || h.includes('student'))) best = Math.max(best, 90);
+        if (field === 'studentId' && (h.includes('معرف') || h.includes('هويه')) && h.includes('طالب')) best = Math.max(best, 85);
+        if (field === 'status' && h.includes('حضور') && (h.includes('حاله') || h === 'الحضور')) best = Math.max(best, 92);
+        if (field === 'excuse' && h.includes('عذر') && !h.includes('سبب')) best = Math.max(best, 90);
+        if (field === 'reason' && h.includes('سبب') && h.includes('عذر')) best = Math.max(best, 95);
+        if (field === 'subject' && h.includes('ماده')) best = Math.max(best, 90);
+        if (field === 'lesson' && (h.includes('درس') || h.includes('موضوع'))) best = Math.max(best, 82);
+
+        return best;
+    }
+
+    function detectImportColumnMap(headerRow) {
+        const fields = ['date', 'classroom', 'period', 'studentName', 'status', 'studentId', 'excuse', 'reason', 'subject', 'lesson'];
+        const required = new Set(['date', 'classroom', 'period', 'studentName', 'status']);
+        const used = new Set();
+        const map = {};
+        let score = 0;
+        let requiredCount = 0;
+
+        for (const field of fields) {
+            let bestIndex = -1;
+            let bestScore = 0;
+
+            for (let i = 0; i < headerRow.length; i++) {
+                if (used.has(i)) continue;
+                const s = headerFieldScore(headerRow[i], field);
+                if (s > bestScore) {
+                    bestScore = s;
+                    bestIndex = i;
+                }
+            }
+
+            const threshold = required.has(field) ? 70 : 80;
+            if (bestIndex >= 0 && bestScore >= threshold) {
+                map[field] = bestIndex;
+                used.add(bestIndex);
+                score += bestScore;
+                if (required.has(field)) requiredCount++;
+            }
+        }
+
+        return { map, score, requiredCount };
+    }
+
+    function findAttendanceSheetLayout(workbook) {
+        let best = null;
+
+        for (const sheetName of workbook.SheetNames || []) {
+            const sheet = workbook.Sheets[sheetName];
+            if (!sheet) continue;
+
+            const rows = window.XLSX.utils.sheet_to_json(sheet, {
+                header: 1,
+                defval: '',
+                raw: true,
+                blankrows: false
+            });
+
+            const scanRows = Math.min(rows.length, 25);
+            for (let rowIndex = 0; rowIndex < scanRows; rowIndex++) {
+                const row = Array.isArray(rows[rowIndex]) ? rows[rowIndex] : [];
+                const detected = detectImportColumnMap(row);
+
+                if (detected.requiredCount < 5) continue;
+
+                const candidate = {
+                    sheetName,
+                    rows,
+                    headerRowIndex: rowIndex,
+                    headerRow: row.map(value => cleanText(value)),
+                    map: detected.map,
+                    score: detected.score
+                };
+
+                if (!best || candidate.score > best.score) best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    function normalizeImportDate(value) {
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+            const y = value.getFullYear();
+            const m = String(value.getMonth() + 1).padStart(2, '0');
+            const d = String(value.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + d;
+        }
+
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            try {
+                const parsed = window.XLSX?.SSF?.parse_date_code?.(value);
+                if (parsed?.y && parsed?.m && parsed?.d) {
+                    return String(parsed.y).padStart(4, '0') + '-' +
+                        String(parsed.m).padStart(2, '0') + '-' +
+                        String(parsed.d).padStart(2, '0');
+                }
+            } catch (_) {}
+        }
+
+        const raw = toEnglishDigits(cleanText(value || ''));
+        if (!raw) return '';
+
+        let match = raw.match(/\b(20\d{2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\b/);
+        if (match) {
+            return match[1] + '-' + match[2].padStart(2, '0') + '-' + match[3].padStart(2, '0');
+        }
+
+        match = raw.match(/\b(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(20\d{2})\b/);
+        if (match) {
+            return match[3] + '-' + match[2].padStart(2, '0') + '-' + match[1].padStart(2, '0');
+        }
+
+        return '';
+    }
+
+    function normalizePeriodNumber(value) {
+        if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+
+        const rawDigits = toEnglishDigits(cleanText(value || ''));
+        const digitMatch = rawDigits.match(/\b(\d{1,2})\b/);
+        if (digitMatch) return String(Number(digitMatch[1]));
+
+        const text = normalizeArabic(rawDigits);
+        const words = [
+            [['الاول', 'الاولي', 'اول', 'اولي', 'first'], '1'],
+            [['الثاني', 'الثانيه', 'ثاني', 'ثانيه', 'second'], '2'],
+            [['الثالث', 'الثالثه', 'ثالث', 'ثالثه', 'third'], '3'],
+            [['الرابع', 'الرابعه', 'رابع', 'رابعه', 'fourth'], '4'],
+            [['الخامس', 'الخامسه', 'خامس', 'خامسه', 'fifth'], '5'],
+            [['السادس', 'السادسه', 'سادس', 'سادسه', 'sixth'], '6'],
+            [['السابع', 'السابعه', 'سابع', 'سابعه', 'seventh'], '7'],
+            [['الثامن', 'الثامنه', 'ثامن', 'ثامنه', 'eighth'], '8'],
+            [['التاسع', 'التاسعه', 'تاسع', 'تاسعه', 'ninth'], '9'],
+            [['العاشر', 'العاشره', 'عاشر', 'عاشره', 'tenth'], '10']
+        ];
+
+        for (const [aliases, num] of words) {
+            if (aliases.some(alias => text.includes(alias))) return num;
+        }
+
+        return '';
+    }
+
+    function classroomParts(value) {
+        const text = normalizeArabic(toEnglishDigits(cleanText(value || '')));
+        const tokens = text.split(' ').filter(Boolean);
+
+        const gradeMap = {
+            'الاول': '1', 'اول': '1', 'الاولي': '1', 'اولي': '1',
+            'الثاني': '2', 'ثاني': '2', 'الثانيه': '2', 'ثانيه': '2',
+            'الثالث': '3', 'ثالث': '3', 'الثالثه': '3', 'ثالثه': '3',
+            'الرابع': '4', 'رابع': '4', 'الرابعه': '4', 'رابعه': '4',
+            'الخامس': '5', 'خامس': '5', 'الخامسه': '5', 'خامسه': '5',
+            'السادس': '6', 'سادس': '6', 'السادسه': '6', 'سادسه': '6'
+        };
+
+        const levelMap = {
+            'ابتدائي': 'ابتدائي',
+            'الابتدائي': 'ابتدائي',
+            'متوسط': 'متوسط',
+            'المتوسط': 'متوسط',
+            'ثانوي': 'ثانوي',
+            'الثانوي': 'ثانوي'
+        };
+
+        const sectionMap = {
+            'ا': '1', 'أ': '1', '1': '1',
+            'ب': '2', '2': '2',
+            'ج': '3', '3': '3',
+            'د': '4', '4': '4',
+            'ه': '5', '5': '5',
+            'و': '6', '6': '6'
+        };
+
+        let grade = '';
+        let level = '';
+        let section = '';
+        let levelIndex = -1;
+
+        for (let i = 0; i < tokens.length; i++) {
+            if (!grade && gradeMap[tokens[i]]) grade = gradeMap[tokens[i]];
+            if (!level && levelMap[tokens[i]]) {
+                level = levelMap[tokens[i]];
+                levelIndex = i;
+            }
+        }
+
+        const sectionCandidates = levelIndex >= 0 ? tokens.slice(levelIndex + 1) : tokens.slice(1);
+        for (const token of sectionCandidates) {
+            if (sectionMap[token]) {
+                section = sectionMap[token];
+                break;
+            }
+        }
+
+        const key = grade && level
+            ? [grade, level, section || '-'].join('|')
+            : text;
+
+        return { text, tokens, grade, level, section, key };
+    }
+
+    function classroomSimilarity(a, b) {
+        const x = classroomParts(a);
+        const y = classroomParts(b);
+
+        if (!x.text || !y.text) return 0;
+        if (x.text === y.text) return 1;
+
+        if (x.grade && x.level && y.grade && y.level) {
+            if (x.grade !== y.grade || x.level !== y.level) return 0;
+            if (x.section && y.section) return x.section === y.section ? 1 : 0.08;
+            return 0.84;
+        }
+
+        const xs = new Set(x.tokens);
+        const ys = new Set(y.tokens);
+        const intersection = [...xs].filter(token => ys.has(token)).length;
+        const union = new Set([...xs, ...ys]).size || 1;
+        return intersection / union;
+    }
+
+    function simpleTextSimilarity(a, b) {
+        const x = normalizeArabic(a || '');
+        const y = normalizeArabic(b || '');
+        if (!x || !y) return 0;
+        if (x === y) return 1;
+        if (x.includes(y) || y.includes(x)) return 0.82;
+
+        const xs = new Set(x.split(' ').filter(Boolean));
+        const ys = new Set(y.split(' ').filter(Boolean));
+        const intersection = [...xs].filter(token => ys.has(token)).length;
+        const union = new Set([...xs, ...ys]).size || 1;
+        return intersection / union;
+    }
+
+    function normalizePersonName(value) {
+        return normalizeArabic(value || '')
+            .split(' ')
+            .filter(token => token && token !== 'الطالب' && token !== 'الطالبه')
+            .join(' ');
+    }
+
+    function personNameSignature(value) {
+        return normalizePersonName(value)
+            .split(' ')
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'ar'))
+            .join('|');
+    }
+
+    function normalizeStudentId(value) {
+        return toEnglishDigits(cleanText(value || '')).replace(/\s+/g, '');
+    }
+
+    function normalizeImportedAttendance(record) {
+        const status = normalizeArabic(record.status || '');
+        const excuse = normalizeArabic(record.excuse || '');
+        const reason = cleanText(record.reason || '');
+        const combined = cleanText(status + ' ' + excuse);
+
+        const hasExcuse = (
+            (combined.includes('بعذر') && !combined.includes('بدون عذر')) ||
+            combined.includes('مع عذر') ||
+            excuse === 'نعم' ||
+            excuse === 'yes' ||
+            excuse === 'excused'
+        );
+
+        const hasNoExcuse = (
+            combined.includes('بدون عذر') ||
+            combined.includes('غير معذور') ||
+            excuse === 'لا' ||
+            excuse === 'no' ||
+            excuse === 'unexcused'
+        );
+
+        if (
+            status.includes('حاضر') ||
+            status === 'حضور' ||
+            status === 'present' ||
+            status === 'attended'
+        ) {
+            return { kind: 'supported', targetKey: STATUS.PRESENT.key, label: 'حاضر' };
+        }
+
+        if (
+            status.includes('غائب') ||
+            status.includes('غياب') ||
+            status === 'absent' ||
+            status === 'absence'
+        ) {
+            if (hasExcuse) {
+                return { kind: 'supported', targetKey: STATUS.ABSENT_EXCUSED.key, label: 'غائب بعذر' };
+            }
+            if (hasNoExcuse) {
+                return { kind: 'supported', targetKey: STATUS.ABSENT_UNEXCUSED.key, label: 'غائب بدون عذر' };
+            }
+            return {
+                kind: 'review',
+                targetKey: '',
+                label: 'غائب — العذر غير محدد',
+                reason: reason || 'لم يحدد الملف هل الغياب بعذر أو بدون عذر.'
+            };
+        }
+
+        if (
+            status.includes('متاخر') ||
+            status.includes('تاخر') ||
+            status === 'late' ||
+            status === 'tardy'
+        ) {
+            const targetKey = hasExcuse ? STATUS.LATE_EXCUSED.key : hasNoExcuse ? STATUS.LATE_UNEXCUSED.key : '';
+            if (isNewPlatformMode()) {
+                return {
+                    kind: 'unsupported',
+                    targetKey: '',
+                    label: hasExcuse ? 'متأخر بعذر' : hasNoExcuse ? 'متأخر بدون عذر' : 'متأخر',
+                    reason: 'واجهة مدرستي الحالية لا تتيح إنشاء حالة متأخر جديدة.'
+                };
+            }
+            if (targetKey) return { kind: 'supported', targetKey, label: STATUS_BY_KEY[targetKey].label };
+            return { kind: 'review', targetKey: '', label: 'متأخر — العذر غير محدد' };
+        }
+
+        if (status.includes('مستاذن') || status.includes('استئذان') || status.includes('مستاذن')) {
+            return {
+                kind: 'unsupported',
+                targetKey: '',
+                label: 'مستأذن',
+                reason: 'لا توجد حالة مستأذن مباشرة في نموذج الحضور الحالي في مدرستي.'
+            };
+        }
+
+        if (status.includes('هروب')) {
+            return {
+                kind: 'unsupported',
+                targetKey: '',
+                label: 'هروب',
+                reason: 'لا توجد حالة هروب مباشرة في نموذج الحضور الحالي في مدرستي.'
+            };
+        }
+
+        return {
+            kind: 'review',
+            targetKey: '',
+            label: cleanText(record.status || '') || 'حالة غير معروفة',
+            reason: 'لم يتعرف السكربت على حالة الحضور في الملف.'
+        };
+    }
+
+    function lessonKeyForRecord(record) {
+        return [
+            record.date,
+            normalizePeriodNumber(record.period),
+            classroomParts(record.classroom).key
+        ].join('|');
+    }
+
+    function buildAttendanceImportIndex(dataset) {
+        const groups = new Map();
+        const byDatePeriod = new Map();
+
+        for (const record of dataset?.records || []) {
+            const period = normalizePeriodNumber(record.period);
+            const classInfo = classroomParts(record.classroom);
+            if (!record.date || !period || !classInfo.key) continue;
+
+            const key = [record.date, period, classInfo.key].join('|');
+            let group = groups.get(key);
+
+            if (!group) {
+                group = {
+                    key,
+                    date: record.date,
+                    period,
+                    classroom: record.classroom,
+                    classKey: classInfo.key,
+                    subject: record.subject || '',
+                    lesson: record.lesson || '',
+                    records: []
+                };
+                groups.set(key, group);
+
+                const dpKey = record.date + '|' + period;
+                if (!byDatePeriod.has(dpKey)) byDatePeriod.set(dpKey, []);
+                byDatePeriod.get(dpKey).push(group);
+            }
+
+            group.records.push(record);
+            if (!group.subject && record.subject) group.subject = record.subject;
+            if (!group.lesson && record.lesson) group.lesson = record.lesson;
+        }
+
+        return { groups, byDatePeriod, lessonCount: groups.size };
+    }
+
+    function importedStatusCounts(records) {
+        const out = {
+            total: records.length,
+            present: 0,
+            absentExcused: 0,
+            absentUnexcused: 0,
+            late: 0,
+            leave: 0,
+            other: 0
+        };
+
+        for (const record of records) {
+            const status = normalizeImportedAttendance(record);
+            if (status.targetKey === STATUS.PRESENT.key) out.present++;
+            else if (status.targetKey === STATUS.ABSENT_EXCUSED.key) out.absentExcused++;
+            else if (status.targetKey === STATUS.ABSENT_UNEXCUSED.key) out.absentUnexcused++;
+            else if (status.label.startsWith('متأخر')) out.late++;
+            else if (status.label === 'مستأذن') out.leave++;
+            else out.other++;
+        }
+
+        return out;
+    }
+
+    function parseAttendanceWorkbook(workbook, fileName) {
+        const layout = findAttendanceSheetLayout(workbook);
+        if (!layout) {
+            throw new Error(
+                'لم أجد ورقة تحتوي الأعمدة الأساسية: التاريخ، الفصل، رقم الحصة، اسم الطالب، حالة الحضور.'
+            );
+        }
+
+        const records = [];
+        let invalidRows = 0;
+
+        for (let i = layout.headerRowIndex + 1; i < layout.rows.length; i++) {
+            const row = Array.isArray(layout.rows[i]) ? layout.rows[i] : [];
+            const get = field => layout.map[field] == null ? '' : row[layout.map[field]];
+
+            const rawDate = get('date');
+            const classroom = cleanText(get('classroom'));
+            const period = normalizePeriodNumber(get('period'));
+            const studentName = cleanText(get('studentName'));
+            const status = cleanText(get('status'));
+
+            const hasAny = [rawDate, classroom, period, studentName, status].some(value => cleanText(value) !== '');
+            if (!hasAny) continue;
+
+            const date = normalizeImportDate(rawDate);
+            if (!date || !classroom || !period || !studentName || !status) {
+                invalidRows++;
+                continue;
+            }
+
+            records.push({
+                date,
+                classroom,
+                period,
+                subject: cleanText(get('subject')),
+                lesson: cleanText(get('lesson')),
+                studentName,
+                studentId: normalizeStudentId(get('studentId')),
+                status,
+                excuse: cleanText(get('excuse')),
+                reason: cleanText(get('reason')),
+                sourceRow: i + 1
+            });
+
+            if (records.length > ATTENDANCE_IMPORT_MAX_ROWS) {
+                throw new Error('الملف يتجاوز الحد الحالي وهو ' + ATTENDANCE_IMPORT_MAX_ROWS.toLocaleString('en-US') + ' سجل حضور.');
+            }
+        }
+
+        if (!records.length) {
+            throw new Error('تم التعرف على الأعمدة، لكن لم أجد سجلات حضور صالحة داخل الورقة.');
+        }
+
+        const tempDataset = { records };
+        const tempIndex = buildAttendanceImportIndex(tempDataset);
+
+        const mapping = {};
+        for (const [field, index] of Object.entries(layout.map)) {
+            mapping[field] = layout.headerRow[index] || ('عمود ' + (index + 1));
+        }
+
+        return {
+            version: ATTENDANCE_IMPORT_DATA_VERSION,
+            fileName: fileName || 'attendance.xlsx',
+            importedAt: new Date().toISOString(),
+            sheetName: layout.sheetName,
+            headerRow: layout.headerRowIndex + 1,
+            mapping,
+            recordCount: records.length,
+            lessonCount: tempIndex.lessonCount,
+            invalidRows,
+            records
+        };
+    }
+
+    function persistAttendanceImportDataset(dataset) {
+        const serialized = JSON.stringify(dataset);
+
+        if (serialized.length > ATTENDANCE_IMPORT_STORAGE_SOFT_LIMIT) {
+            localStorage.removeItem(ATTENDANCE_IMPORT_STORAGE_KEY);
+            return {
+                persisted: false,
+                warning: 'تم استيراد الملف لهذه الصفحة، لكن حجمه كبير ولن يُحفظ بين الصفحات. يمكن لاحقًا نقل التخزين إلى IndexedDB للملفات الضخمة.'
+            };
+        }
+
+        try {
+            localStorage.setItem(ATTENDANCE_IMPORT_STORAGE_KEY, serialized);
+            return { persisted: true, warning: '' };
+        } catch (_) {
+            return {
+                persisted: false,
+                warning: 'تم استيراد الملف لهذه الصفحة، لكن تعذر حفظه محليًا في المتصفح.'
+            };
+        }
+    }
+
+    function loadAttendanceImportDataset() {
+        try {
+            const raw = localStorage.getItem(ATTENDANCE_IMPORT_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (parsed?.version !== ATTENDANCE_IMPORT_DATA_VERSION || !Array.isArray(parsed.records)) return null;
+            return parsed;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function ensureAttendanceImportLoaded() {
+        if (attendanceImport.loaded) return;
+        attendanceImport.loaded = true;
+        attendanceImport.dataset = loadAttendanceImportDataset();
+        attendanceImport.index = attendanceImport.dataset
+            ? buildAttendanceImportIndex(attendanceImport.dataset)
+            : null;
+    }
+
+    function currentImportLessonIdentity() {
+        const meta = getSessionMeta();
+        const date = normalizeImportDate(meta.date);
+        const period = normalizePeriodNumber(meta.lectureId || meta.lecture);
+        const classroom = cleanText(meta.classroom || '');
+        const subject = cleanText(meta.subject || '');
+
+        return { meta, date, period, classroom, subject };
+    }
+
+    function findImportedLesson(identity) {
+        const index = attendanceImport.index;
+        if (!index || !identity.date || !identity.period) {
+            return {
+                status: 'missing-meta',
+                message: 'تعذر قراءة تاريخ الحصة أو رقمها من صفحة مدرستي.'
+            };
+        }
+
+        const candidates = index.byDatePeriod.get(identity.date + '|' + identity.period) || [];
+        if (!candidates.length) {
+            return {
+                status: 'not-found',
+                message: 'لا توجد في الملف حصة بتاريخ ' + identity.date + ' ورقم الحصة ' + identity.period + '.'
+            };
+        }
+
+        const ranked = candidates.map(group => {
+            const classScore = classroomSimilarity(identity.classroom, group.classroom);
+            const subjectScore = simpleTextSimilarity(identity.subject, group.subject);
+            return {
+                group,
+                classScore,
+                subjectScore,
+                score: classScore * 100 + subjectScore * 12
+            };
+        }).sort((a, b) => b.score - a.score);
+
+        const best = ranked[0];
+        const second = ranked[1];
+
+        if (!identity.classroom) {
+            if (candidates.length === 1 && best.subjectScore >= 0.8) {
+                return { status: 'matched', group: best.group, classScore: 0, subjectScore: best.subjectScore, warning: 'تمت المطابقة بالوقت والمادة لأن اسم الفصل لم يُقرأ.' };
+            }
+            return {
+                status: 'missing-class',
+                message: 'وجدت حصصًا في نفس التاريخ والرقم، لكن تعذر قراءة اسم الفصل من مدرستي بأمان.'
+            };
+        }
+
+        if (best.classScore < 0.72) {
+            return {
+                status: 'not-found',
+                message: 'وجدت حصة في نفس التاريخ والرقم، لكن الفصل لا يطابق الملف. الفصل في مدرستي: ' + identity.classroom + '.'
+            };
+        }
+
+        if (second && Math.abs(best.score - second.score) < 4 && best.classScore < 1) {
+            return {
+                status: 'ambiguous',
+                message: 'وجدت أكثر من حصة محتملة في الملف ولم أستطع اختيار الفصل بأمان.'
+            };
+        }
+
+        return {
+            status: 'matched',
+            group: best.group,
+            classScore: best.classScore,
+            subjectScore: best.subjectScore,
+            warning: best.classScore < 1 ? 'تمت مطابقة الفصل بعد توحيد مسماه.' : ''
+        };
+    }
+
+    function matchImportedStudents(group) {
+        const records = group.records || [];
+        const byId = new Map();
+        const byName = new Map();
+        const bySignature = new Map();
+
+        const add = (map, key, record) => {
+            if (!key) return;
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(record);
+        };
+
+        for (const record of records) {
+            add(byId, normalizeStudentId(record.studentId), record);
+            add(byName, normalizePersonName(record.studentName), record);
+            add(bySignature, personNameSignature(record.studentName), record);
+        }
+
+        const used = new Set();
+        const entries = [];
+        const unmatchedPage = [];
+        const ambiguous = [];
+
+        for (const student of state.students) {
+            const studentId = normalizeStudentId(student.studentId);
+            const name = normalizePersonName(student.name);
+            const signature = personNameSignature(student.name);
+
+            let candidates = [];
+            let confidence = '';
+
+            if (studentId && (byId.get(studentId) || []).length) {
+                candidates = byId.get(studentId);
+                confidence = 'id';
+            } else if ((byName.get(name) || []).length) {
+                candidates = byName.get(name);
+                confidence = 'exact-name';
+            } else if ((bySignature.get(signature) || []).length) {
+                candidates = bySignature.get(signature);
+                confidence = 'name-tokens';
+            }
+
+            const available = candidates.filter(record => !used.has(record));
+
+            if (available.length === 1) {
+                const record = available[0];
+                used.add(record);
+                const attendance = normalizeImportedAttendance(record);
+                entries.push({ student, record, confidence, attendance });
+            } else if (available.length > 1) {
+                ambiguous.push({
+                    student,
+                    candidates: available,
+                    reason: 'أكثر من سجل في الملف يطابق الطالب.'
+                });
+            } else {
+                unmatchedPage.push(student);
+            }
+        }
+
+        const unmatchedFile = records.filter(record => !used.has(record));
+        const supported = entries.filter(entry => entry.attendance.kind === 'supported');
+        const review = entries.filter(entry => entry.attendance.kind !== 'supported');
+
+        return {
+            entries,
+            supported,
+            review,
+            unmatchedPage,
+            unmatchedFile,
+            ambiguous,
+            matchedCount: entries.length
+        };
+    }
+
+    function refreshAttendanceImportMatch(force = false) {
+        ensureAttendanceImportLoaded();
+
+        if (!attendanceImport.dataset || !attendanceImport.index) {
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            updateAttendanceImportUi();
+            return null;
+        }
+
+        const identity = currentImportLessonIdentity();
+        const signature = [
+            attendanceImport.dataset.importedAt,
+            identity.date,
+            identity.period,
+            normalizeArabic(identity.classroom),
+            normalizeArabic(identity.subject),
+            state.contextKey
+        ].join('|');
+
+        if (!force && attendanceImport.currentMatch && attendanceImport.lastSignature === signature) {
+            updateAttendanceImportUi();
+            return attendanceImport.currentMatch;
+        }
+
+        const lesson = findImportedLesson(identity);
+        let match = { identity, lesson, signature };
+
+        if (lesson.status === 'matched') {
+            const students = matchImportedStudents(lesson.group);
+            match = {
+                ...match,
+                group: lesson.group,
+                students,
+                importedCounts: importedStatusCounts(lesson.group.records)
+            };
+        }
+
+        attendanceImport.currentMatch = match;
+        attendanceImport.lastSignature = signature;
+        updateAttendanceImportUi();
+        return match;
+    }
+
+    function sampleNames(items, mapper, limit = 6) {
+        return items.slice(0, limit).map(mapper).filter(Boolean);
+    }
+
+    function updateAttendanceImportUi(root = q('#' + APP_ID)) {
+        if (!root) return;
+        ensureAttendanceImportLoaded();
+
+        const statusBox = q('[data-role="import-status"]', root);
+        const details = q('[data-role="import-details"]', root);
+        const refreshBtn = q('[data-action="refresh-import-match"]', root);
+        const applyBtn = q('[data-action="apply-import-attendance"]', root);
+        const clearBtn = q('[data-action="clear-import-attendance"]', root);
+
+        if (!statusBox || !details) return;
+
+        statusBox.classList.remove('is-match', 'is-warning', 'is-error');
+        details.hidden = true;
+        details.innerHTML = '';
+
+        const dataset = attendanceImport.dataset;
+        if (!dataset) {
+            statusBox.textContent = 'لم يتم استيراد سجل حضور بعد. يدعم Excel وCSV ويبحث عن الأعمدة الأساسية تلقائيًا.';
+            if (refreshBtn) refreshBtn.disabled = true;
+            if (applyBtn) applyBtn.disabled = true;
+            if (clearBtn) clearBtn.hidden = true;
+            return;
+        }
+
+        if (refreshBtn) refreshBtn.disabled = false;
+        if (clearBtn) clearBtn.hidden = false;
+
+        const fileSummary =
+            '📄 ' + dataset.fileName +
+            ' — الورقة: ' + dataset.sheetName +
+            ' — ' + dataset.recordCount.toLocaleString('en-US') + ' سجل' +
+            ' — ' + dataset.lessonCount.toLocaleString('en-US') + ' حصة';
+
+        const match = attendanceImport.currentMatch;
+        if (!match) {
+            statusBox.textContent = fileSummary + ' — جارٍ مطابقة الحصة الحالية.';
+            if (applyBtn) applyBtn.disabled = true;
+            return;
+        }
+
+        if (match.lesson.status !== 'matched') {
+            statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
+            statusBox.textContent = fileSummary + ' — ' + match.lesson.message;
+            if (applyBtn) applyBtn.disabled = true;
+
+            details.hidden = false;
+            const id = match.identity;
+            details.innerHTML =
+                '<b>هوية الحصة المقروءة من مدرستي:</b> ' +
+                '<span class="msa-import-chip">' + escapeHtml(id.date || 'تاريخ غير معروف') + '</span>' +
+                '<span class="msa-import-chip">' + escapeHtml(id.classroom || 'فصل غير معروف') + '</span>' +
+                '<span class="msa-import-chip">الحصة ' + escapeHtml(id.period || '?') + '</span>';
+            return;
+        }
+
+        const s = match.students;
+        const c = match.importedCounts;
+        const saveOk = saveAvailability().available;
+
+        statusBox.classList.add('is-match');
+        statusBox.textContent =
+            fileSummary +
+            ' — ✅ تمت مطابقة الحصة: ' +
+            match.group.date + ' — ' + match.group.classroom + ' — الحصة ' + match.group.period +
+            '. مطابقة الطلاب: ' + s.matchedCount + '/' + state.students.length + '.';
+
+        const unsupportedNames = sampleNames(
+            s.review,
+            item => item.student.name + ' (' + item.attendance.label + ')'
+        );
+        const missingPageNames = sampleNames(s.unmatchedPage, item => item.name);
+        const missingFileNames = sampleNames(s.unmatchedFile, item => item.studentName);
+
+        const lines = [];
+        lines.push(
+            '<div><b>سجل الحصة:</b> ' +
+            '<span class="msa-import-chip">حاضر ' + c.present + '</span>' +
+            '<span class="msa-import-chip">غائب بعذر ' + c.absentExcused + '</span>' +
+            '<span class="msa-import-chip">غائب بدون عذر ' + c.absentUnexcused + '</span>' +
+            (c.late ? '<span class="msa-import-chip">متأخر ' + c.late + '</span>' : '') +
+            (c.leave ? '<span class="msa-import-chip">مستأذن ' + c.leave + '</span>' : '') +
+            '</div>'
+        );
+        lines.push(
+            '<div><b>المطابقة:</b> ' +
+            '<span class="msa-import-chip">قابل للتطبيق ' + s.supported.length + '</span>' +
+            '<span class="msa-import-chip">مراجعة ' + s.review.length + '</span>' +
+            '<span class="msa-import-chip">غير موجود بالملف ' + s.unmatchedPage.length + '</span>' +
+            '<span class="msa-import-chip">غير موجود بمدرستي ' + s.unmatchedFile.length + '</span>' +
+            '</div>'
+        );
+
+        if (match.lesson.warning) lines.push('<div>ℹ️ ' + escapeHtml(match.lesson.warning) + '</div>');
+        if (!saveOk) lines.push('<div>🔒 يمكن مراجعة المطابقة، لكن تطبيق الملف معطل لأن حفظ الحصة غير متاح حاليًا في مدرستي.</div>');
+        if (unsupportedNames.length) lines.push('<div>⚠️ يحتاج مراجعة: ' + escapeHtml(unsupportedNames.join('، ')) + (s.review.length > unsupportedNames.length ? '…' : '') + '</div>');
+        if (missingPageNames.length) lines.push('<div>⚠️ طلاب في مدرستي بلا سجل مطابق: ' + escapeHtml(missingPageNames.join('، ')) + (s.unmatchedPage.length > missingPageNames.length ? '…' : '') + '</div>');
+        if (missingFileNames.length) lines.push('<div>ℹ️ سجلات في الملف بلا طالب مطابق في الصفحة: ' + escapeHtml(missingFileNames.join('، ')) + (s.unmatchedFile.length > missingFileNames.length ? '…' : '') + '</div>');
+
+        if (attendanceImport.lastApply?.lessonKey === match.group.key) {
+            lines.push(
+                '<div>آخر تطبيق: ' +
+                attendanceImport.lastApply.success + ' نجح' +
+                (attendanceImport.lastApply.failed ? '، ' + attendanceImport.lastApply.failed + ' تعذر تطبيقه' : '') +
+                ' — ' + escapeHtml(attendanceImport.lastApply.at) +
+                '</div>'
+            );
+        }
+
+        details.innerHTML = lines.join('');
+        details.hidden = false;
+
+        if (applyBtn) {
+            applyBtn.disabled = !saveOk || !s.supported.length || s.ambiguous.length > 0;
+            applyBtn.title = !saveOk
+                ? 'الحفظ غير متاح في مدرستي حاليًا.'
+                : s.ambiguous.length
+                    ? 'يوجد تطابق مبهم ويجب مراجعته.'
+                    : 'يطبق الحالات المدعومة فقط ولا يحفظ تلقائيًا.';
+        }
+    }
+
+    async function importAttendanceFile(file) {
+        if (!file) return;
+        if (!window.XLSX) {
+            toast('تعذر تحميل قارئ Excel. أعد تحميل الصفحة ثم حاول مرة أخرى.');
+            return;
+        }
+
+        const root = q('#' + APP_ID);
+        const statusBox = q('[data-role="import-status"]', root);
+        if (statusBox) {
+            statusBox.classList.remove('is-match', 'is-warning', 'is-error');
+            statusBox.textContent = 'جاري قراءة الملف وتحليل الأعمدة والحصص...';
+        }
+
+        try {
+            const data = await file.arrayBuffer();
+            const workbook = window.XLSX.read(data, {
+                type: 'array',
+                cellDates: true,
+                cellNF: false,
+                cellText: false
+            });
+
+            const dataset = parseAttendanceWorkbook(workbook, file.name);
+            const storage = persistAttendanceImportDataset(dataset);
+
+            attendanceImport.loaded = true;
+            attendanceImport.dataset = dataset;
+            attendanceImport.index = buildAttendanceImportIndex(dataset);
+            attendanceImport.currentMatch = null;
+            attendanceImport.lastSignature = '';
+            attendanceImport.lastError = '';
+            attendanceImport.lastApply = null;
+
+            refreshAttendanceImportMatch(true);
+
+            let message =
+                'تم استيراد ' + dataset.recordCount.toLocaleString('en-US') +
+                ' سجل حضور من ' + dataset.lessonCount.toLocaleString('en-US') +
+                ' حصة.';
+            if (dataset.invalidRows) message += ' تم تجاهل ' + dataset.invalidRows + ' صف غير مكتمل.';
+            if (storage.warning) message += ' ' + storage.warning;
+            toast(message);
+        } catch (error) {
+            attendanceImport.lastError = String(error?.message || error);
+            if (statusBox) {
+                statusBox.classList.add('is-error');
+                statusBox.textContent = 'تعذر استيراد الملف: ' + attendanceImport.lastError;
+            }
+            toast('تعذر استيراد ملف الحضور.');
+            console.error('[Madrasati Smart Attendance] Attendance import failed:', error);
+        }
+    }
+
+    function clearAttendanceImport() {
+        if (!attendanceImport.dataset) return;
+        if (!window.confirm('سيتم مسح سجل الحضور المستورد من هذا المتصفح. هل تريد المتابعة؟')) return;
+
+        try { localStorage.removeItem(ATTENDANCE_IMPORT_STORAGE_KEY); } catch (_) {}
+        attendanceImport.loaded = true;
+        attendanceImport.dataset = null;
+        attendanceImport.index = null;
+        attendanceImport.currentMatch = null;
+        attendanceImport.lastSignature = '';
+        attendanceImport.lastApply = null;
+        updateAttendanceImportUi();
+        toast('تم مسح سجل الحضور المستورد.');
+    }
+
+    function applyAttendanceImport() {
+        const match = refreshAttendanceImportMatch(true);
+        if (!match || match.lesson.status !== 'matched') {
+            toast('لم يتم العثور على حصة مطابقة يمكن تطبيقها.');
+            return;
+        }
+
+        const availability = saveAvailability();
+        if (!availability.available) {
+            toast(availability.message);
+            return;
+        }
+
+        const s = match.students;
+        if (s.ambiguous.length) {
+            toast('يوجد تطابق طلاب مبهم. لن يتم التطبيق قبل حله.');
+            return;
+        }
+
+        if (!s.supported.length) {
+            toast('لا توجد حالات مدعومة قابلة للتطبيق من الملف.');
+            return;
+        }
+
+        const warnings = [];
+        if (s.review.length) warnings.push(s.review.length + ' حالة تحتاج مراجعة ولن تطبق');
+        if (s.unmatchedPage.length) warnings.push(s.unmatchedPage.length + ' طالب في مدرستي بلا سجل مطابق');
+        if (s.unmatchedFile.length) warnings.push(s.unmatchedFile.length + ' سجل في الملف بلا طالب مطابق');
+
+        const confirmation =
+            'سيتم تطبيق حضور الملف على ' + s.supported.length + ' طالب في الحصة الحالية.' +
+            (warnings.length ? '\n\nتنبيه: ' + warnings.join('، ') + '.' : '') +
+            '\n\nلن يتم الحفظ تلقائيًا. ستراجع النتيجة ثم تضغط زر الحفظ بنفسك.';
+
+        if (!window.confirm(confirmation)) return;
+
+        pushUndo();
+        let success = 0;
+        let failed = 0;
+
+        state.suspendUpdates = true;
+        try {
+            for (const entry of s.supported) {
+                const statusDef = STATUS_BY_KEY[entry.attendance.targetKey];
+                if (statusDef && setStudentStatus(entry.student, statusDef)) success++;
+                else failed++;
+            }
+        } finally {
+            state.suspendUpdates = false;
+        }
+
+        updateAll();
+
+        attendanceImport.lastApply = {
+            lessonKey: match.group.key,
+            success,
+            failed,
+            at: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
+        };
+
+        updateAttendanceImportUi();
+
+        const c = stats();
+        toast(
+            'تم تطبيق ' + success + ' حالة من الملف' +
+            (failed ? '، وتعذر تطبيق ' + failed : '') +
+            '. راجع الإحصاءات قبل الحفظ. الحاضر: ' + c.present + '، الغائب: ' + c.absent + '.'
+        );
+    }
+
     function buildToolbar() {
         const root = document.createElement('section');
         root.id = APP_ID;
@@ -2493,6 +3639,24 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             </div>
 
             <div class="msa-body">
+                <div class="msa-import-card" data-role="import-card">
+                    <div class="msa-import-head">
+                        <div class="msa-import-title">
+                            <strong>📥 سجل الحضور المستورد</strong>
+                            <small>Excel/CSV — يطابق الحصة بالتاريخ + الفصل + رقم الحصة، ثم يطابق الطلاب قبل التطبيق.</small>
+                        </div>
+                        <div class="msa-import-actions">
+                            <button type="button" data-action="import-attendance">استيراد ملف</button>
+                            <button type="button" data-action="refresh-import-match" disabled>مطابقة الحصة</button>
+                            <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>تطبيق حضور الملف</button>
+                            <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
+                        </div>
+                    </div>
+                    <input type="file" data-role="import-file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+                    <div class="msa-import-status" data-role="import-status">لم يتم استيراد سجل حضور بعد.</div>
+                    <div class="msa-import-details" data-role="import-details" hidden></div>
+                </div>
+
                 <div class="msa-stats">
                     <div class="msa-stat-card" data-filter="all" data-stat="total">
                         <span class="msa-stat-label">جميع الطلاب</span><span class="msa-stat-value">0</span>
@@ -2733,8 +3897,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             return;
         }
 
-        button.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        setTimeout(() => button.click(), 120);
+        button.click();
     }
 
     function updateModeUi(root) {
@@ -2799,6 +3962,21 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="undo"]', root).addEventListener('click', undoLast);
         q('[data-action="report"]', root).addEventListener('click', openReport);
         q('[data-action="native-save-top"]', root)?.addEventListener('click', triggerNativeSave);
+
+        const importFileInput = q('[data-role="import-file"]', root);
+        q('[data-action="import-attendance"]', root)?.addEventListener('click', () => importFileInput?.click());
+        importFileInput?.addEventListener('change', async event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) await importAttendanceFile(file);
+        });
+        q('[data-action="refresh-import-match"]', root)?.addEventListener('click', () => {
+            refreshAttendanceImportMatch(true);
+            toast('تمت إعادة فحص مطابقة الحصة الحالية مع الملف.');
+        });
+        q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
+        q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
+
         q('[data-action="next-unset"]', root).addEventListener('click', focusNextUnset);
 
         q('[data-action="save-all"]', root)?.addEventListener('click', saveAllChanges);
@@ -2964,7 +4142,11 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const sameContext =
             oldRoot && document.contains(oldRoot) && state.contextKey === context.contextKey && sameRows;
 
-        if (sameContext) return true;
+        if (sameContext) {
+            refreshAttendanceImportMatch();
+            updateSaveAvailabilityUi(oldRoot);
+            return true;
+        }
         if (oldRoot) oldRoot.remove();
 
         state = {
@@ -2994,9 +4176,10 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         bindNativeSaveTracking();
         updateModeUi(root);
         updateAll();
+        refreshAttendanceImportMatch(true);
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.4] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta1] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
