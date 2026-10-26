@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta11
+// @version      0.3.5-beta13
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta11-name-bridge/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta13-registry-name-inspector/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta13-registry-name-inspector/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta11',
+        version: '0.3.5-beta13',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -4473,6 +4473,198 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         });
     }
 
+
+    function buildRegistryNameInspection(limit = 10) {
+        const match = attendanceImport.currentMatch;
+        const records = match?.lesson?.status === 'matched'
+            ? (match.group?.records || [])
+            : [];
+        const registryStudents = attendanceImport.registry?.students || [];
+
+        if (!records.length || !registryStudents.length) {
+            return {
+                total: 0,
+                matchedEmails: 0,
+                rows: [],
+                message: 'لا توجد حصة مطابقة أو دليل طلاب جاهز للفحص.'
+            };
+        }
+
+        const byEmail = new Map();
+        for (const student of registryStudents) {
+            const email = normalizeEmail(student.accountNormalized || student.account);
+            if (!email) continue;
+            if (!byEmail.has(email)) byEmail.set(email, []);
+            byEmail.get(email).push(student);
+        }
+
+        const rows = [];
+        let matchedEmails = 0;
+
+        for (const record of records) {
+            const email = normalizeEmail(record.email);
+            if (!email) continue;
+
+            const registryMatches = byEmail.get(email) || [];
+            if (registryMatches.length !== 1) continue;
+
+            matchedEmails++;
+            const registryStudent = registryMatches[0];
+            const ranked = rankPageStudentsByName(registryStudent.name, state.students);
+            const best = ranked[0] || null;
+
+            const exact =
+                !!best &&
+                normalizePersonName(registryStudent.name) === normalizePersonName(best.student?.name);
+
+            const canonical =
+                !!best &&
+                canonicalPersonName(registryStudent.name) === canonicalPersonName(best.student?.name);
+
+            rows.push({
+                fileName: cleanText(record.studentName || ''),
+                registryName: cleanText(registryStudent.name || ''),
+                attendanceName: cleanText(best?.student?.name || ''),
+                score: best?.score ?? 0,
+                exact,
+                canonical,
+                sourceRow: record.sourceRow || ''
+            });
+        }
+
+        rows.sort((a, b) => {
+            if (a.exact !== b.exact) return a.exact ? 1 : -1;
+            if (a.canonical !== b.canonical) return a.canonical ? 1 : -1;
+            return a.score - b.score;
+        });
+
+        return {
+            total: rows.length,
+            matchedEmails,
+            rows: rows.slice(0, Math.max(1, limit)),
+            message: rows.length
+                ? 'يعرض أسوأ ' + Math.min(limit, rows.length) + ' حالات من أصل ' + rows.length + ' سجل مرتبط بالبريد.'
+                : 'لم أجد سجلات مرتبطة بالبريد يمكن مقارنتها.'
+        };
+    }
+
+    function registryNameInspectionText(inspection) {
+        const lines = [
+            'فحص أسماء دليل مدرستي',
+            inspection.message || '',
+            ''
+        ];
+
+        for (const [index, item] of (inspection.rows || []).entries()) {
+            lines.push(
+                (index + 1) + ') ' +
+                'Excel: ' + (item.fileName || '—') +
+                ' | MyStudents: ' + (item.registryName || '—') +
+                ' | التحضير: ' + (item.attendanceName || '—') +
+                ' | التشابه: ' + Math.round((item.score || 0) * 100) + '%'
+            );
+        }
+
+        return lines.join('\n');
+    }
+
+    async function copyRegistryNameInspection(inspection) {
+        const text = registryNameInspectionText(inspection);
+
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                toast('تم نسخ فحص أسماء الدليل.');
+                return;
+            }
+        } catch (_) {}
+
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+            textarea.remove();
+            toast('تم نسخ فحص أسماء الدليل.');
+        } catch (_) {
+            toast('تعذر النسخ التلقائي؛ يمكنك تصوير الجدول وإرساله.');
+        }
+    }
+
+    function openRegistryNameInspector() {
+        const root = q('#' + APP_ID);
+        if (!root) return;
+
+        const inspection = buildRegistryNameInspection(10);
+        closeImportReview();
+
+        const rowsHtml = inspection.rows.length
+            ? '<table class="msa-import-review-table"><thead><tr>' +
+                '<th>#</th><th>اسم Excel</th><th>الاسم المستخرج من MyStudents</th>' +
+                '<th>أقرب اسم في صفحة التحضير</th><th>التشابه</th><th>ملاحظة</th>' +
+              '</tr></thead><tbody>' +
+              inspection.rows.map((item, index) => {
+                  const note = item.exact
+                      ? 'مطابق حرفيًا بعد التطبيع'
+                      : item.canonical
+                          ? 'مطابق بعد حذف بن/ابن/بنت'
+                          : item.score >= 0.74
+                              ? 'قريب لكن غير حرفي'
+                              : 'اختلاف واضح يحتاج فحص';
+
+                  return '<tr>' +
+                      '<td>' + (index + 1) + '</td>' +
+                      '<td>' + escapeHtml(item.fileName || '—') + '</td>' +
+                      '<td>' + escapeHtml(item.registryName || '—') + '</td>' +
+                      '<td>' + escapeHtml(item.attendanceName || '—') + '</td>' +
+                      '<td>' + escapeHtml(Math.round((item.score || 0) * 100) + '%') + '</td>' +
+                      '<td>' + escapeHtml(note) + '</td>' +
+                  '</tr>';
+              }).join('') +
+              '</tbody></table>'
+            : '<div class="msa-import-review-empty">' +
+                escapeHtml(inspection.message || 'لا توجد بيانات للفحص.') +
+              '</div>';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'msa-import-review-overlay';
+        overlay.dataset.role = 'import-review-overlay';
+        overlay.innerHTML =
+            '<div class="msa-import-review-dialog" role="dialog" aria-modal="true">' +
+                '<div class="msa-import-review-head">' +
+                    '<strong>🔎 فحص أسماء دليل مدرستي</strong>' +
+                    '<button type="button" data-action="close-import-review">إغلاق</button>' +
+                '</div>' +
+                '<div class="msa-import-review-body">' +
+                    '<div style="margin-bottom:9px">' + escapeHtml(inspection.message || '') + '</div>' +
+                    '<div style="margin-bottom:9px">' +
+                        '<span class="msa-import-chip">البريد المرتبط ' + inspection.matchedEmails + '</span>' +
+                        '<span class="msa-import-chip">المقارنات ' + inspection.total + '</span>' +
+                    '</div>' +
+                    rowsHtml +
+                    '<div class="msa-import-review-actions" style="margin-top:10px">' +
+                        '<button type="button" class="msa-primary" data-action="copy-registry-name-inspection">📋 نسخ الفحص</button>' +
+                    '</div>' +
+                    '<div style="margin-top:8px;font-size:10px;color:#64748b">' +
+                        'لا يعرض الفحص البريد أو السجل المدني؛ الأسماء فقط لتحديد مصدر اختلاف الربط.' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+
+        root.appendChild(overlay);
+        q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        q('[data-action="copy-registry-name-inspection"]', overlay)?.addEventListener('click', () => {
+            copyRegistryNameInspection(inspection);
+        });
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) closeImportReview();
+        });
+    }
+
     async function refreshAttendanceRegistry(force = true) {
         attendanceImport.registryError = '';
         try {
@@ -4966,6 +5158,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const details = q('[data-role="import-details"]', root);
         const refreshBtn = q('[data-action="refresh-import-match"]', root);
         const registryBtn = q('[data-action="refresh-import-registry"]', root);
+        const inspectNamesBtn = q('[data-action="inspect-registry-names"]', root);
         const applyBtn = q('[data-action="apply-import-attendance"]', root);
         const diagnosticBtn = q('[data-action="diagnose-import-apply"]', root);
         const clearBtn = q('[data-action="clear-import-attendance"]', root);
@@ -4986,6 +5179,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             clearImportRowMarkers();
             statusBox.textContent = 'لم يتم استيراد سجل حضور بعد. يدعم Excel وCSV ويبحث عن الأعمدة الأساسية تلقائيًا.';
             if (refreshBtn) refreshBtn.disabled = true;
+            if (inspectNamesBtn) inspectNamesBtn.disabled = true;
             if (applyBtn) applyBtn.disabled = true;
             if (diagnosticBtn) diagnosticBtn.disabled = true;
             if (clearBtn) clearBtn.hidden = true;
@@ -4993,6 +5187,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         if (refreshBtn) refreshBtn.disabled = false;
+        if (inspectNamesBtn) {
+            inspectNamesBtn.disabled = !attendanceImport.registry?.students?.length;
+        }
         if (diagnosticBtn) {
             diagnosticBtn.disabled = attendanceImport.diagnosticRunning;
             diagnosticBtn.textContent = attendanceImport.diagnosticRunning
@@ -5023,6 +5220,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             details.hidden = false;
             details.innerHTML = '<div class="msa-import-registry">🔗 ' + escapeHtml(registryText) + '</div>';
             if (applyBtn) applyBtn.disabled = true;
+            if (inspectNamesBtn) inspectNamesBtn.disabled = true;
             return;
         }
 
@@ -5031,6 +5229,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             statusBox.classList.add(match.lesson.status === 'not-found' ? 'is-warning' : 'is-error');
             statusBox.textContent = fileSummary + ' — ' + match.lesson.message;
             if (applyBtn) applyBtn.disabled = true;
+            if (inspectNamesBtn) inspectNamesBtn.disabled = true;
             if (diagnosticBtn) diagnosticBtn.disabled = true;
 
             details.hidden = false;
@@ -5047,6 +5246,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const s = match.students;
         const counts = match.importedCounts;
         const saveOk = saveAvailability().available;
+        if (inspectNamesBtn) inspectNamesBtn.disabled = !attendanceImport.registry?.students?.length;
 
         markImportRows(match);
 
@@ -5378,6 +5578,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                         <div class="msa-import-actions">
                             <button type="button" data-action="import-attendance">استيراد ملف</button>
                             <button type="button" data-action="refresh-import-registry">تحديث دليل الطلاب</button>
+                            <button type="button" data-action="inspect-registry-names" disabled>🔎 فحص أسماء الدليل</button>
                             <button type="button" data-action="refresh-import-match" disabled>مطابقة الحصة</button>
                             <button type="button" class="msa-primary" data-action="apply-import-attendance" disabled>تطبيق حضور الملف</button>
                             <button type="button" data-action="diagnose-import-apply" disabled>🧪 تشخيص التطبيق</button>
@@ -5705,6 +5906,9 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         q('[data-action="refresh-import-registry"]', root)?.addEventListener('click', async () => {
             await refreshAttendanceRegistry(true);
         });
+        q('[data-action="inspect-registry-names"]', root)?.addEventListener('click', () => {
+            openRegistryNameInspector();
+        });
         q('[data-action="refresh-import-match"]', root)?.addEventListener('click', async () => {
             if (!attendanceImport.registry?.students?.length) {
                 await refreshAttendanceRegistry(false);
@@ -5954,7 +6158,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta11] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta13] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
