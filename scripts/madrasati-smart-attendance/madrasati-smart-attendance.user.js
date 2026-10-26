@@ -706,9 +706,22 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         let mode = '';
         let students = [];
 
-        // الوضع 1: التحضير الأولي — بيانات الطالب مفهرسة List[i].StudentName
+        const saveForm =
+            q('#SaveAttendStudents') ||
+            q('#UpdateAttendStudents') ||
+            qa('form').find(form =>
+                /\/SchoolSchedule\/AttendStudents\/SaveAttendStudents/i.test(form.action || '')
+            ) ||
+            null;
+
+        const isUpdate =
+            saveForm?.id === 'UpdateAttendStudents' ||
+            String(q('input[name="isUpdate"]', saveForm || document)?.value || '').toLowerCase() === 'true';
+
+        // النظام الجديد - التحضير الأولي: بيانات الطالب ما زالت مفهرسة داخل List[i].
         const indexedNameInputs = qa(
-            'input[name^="List["][name$=".StudentName"]'
+            'input[name^="List["][name$=".StudentName"]',
+            saveForm || document
         );
 
         if (indexedNameInputs.length) {
@@ -716,11 +729,22 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
                 .map(makeStudentFromIndexedNameInput)
                 .filter(Boolean);
 
-            if (students.length) mode = 'batch-form';
+            if (students.length) mode = isUpdate ? 'batch-update' : 'batch-create';
         }
 
-        // الوضع 2: الحضور محفوظ مسبقًا — كل صف مستقل وله زر .btnSendAttend
-        if (!students.length) {
+        // النظام الجديد - بعد الحفظ: الاسم لم يعد موجودًا كحقل، لكنه ظاهر داخل صف الطالب.
+        if (!students.length && isUpdate) {
+            const candidateRows = qa('tr.attend-row, table tbody tr', saveForm || document);
+
+            students = candidateRows
+                .map(makeStudentFromBatchUpdateRow)
+                .filter(Boolean);
+
+            if (students.length) mode = 'batch-update';
+        }
+
+        // توافق احتياطي مع الواجهة القديمة ذات الحفظ الفردي.
+        if (!students.length && qa('.btnSendAttend').length) {
             const candidateRows = qa('table tbody tr');
 
             students = candidateRows
@@ -738,7 +762,9 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
 
         const form =
             firstRow.closest('form') ||
+            saveForm ||
             q('#SaveAttendStudents') ||
+            q('#UpdateAttendStudents') ||
             qa('form').find(f =>
                 /SaveAttendStudents/i.test(f.action || '') ||
                 q('input[name^="List["][name$=".AttendStatusId"]', f)
@@ -756,15 +782,14 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             ? [...parents][0]
             : null;
 
-        const eventRoot =
-            form ||
-            table ||
-            sortParent ||
-            document;
+        const eventRoot = form || table || sortParent || document;
 
+        const updateValue = String(q('input[name="isUpdate"]', form || document)?.value || '');
         const contextKey = [
             mode,
-            ...students.map(s => `${s.index}:${s.studentId}:${s.name}`)
+            form?.id || '',
+            updateValue,
+            ...students.map(s => s.index + ':' + s.studentId + ':' + s.name)
         ].join('|');
 
         return {
@@ -778,7 +803,6 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
             students
         };
     }
-
     function rawStudentStatus(student) {
         const idx = student.index;
 
