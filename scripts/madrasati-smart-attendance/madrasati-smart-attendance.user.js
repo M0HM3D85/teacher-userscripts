@@ -547,6 +547,90 @@ body.msa-save-lock .msa-student-row button { pointer-events:none !important; }
         };
     }
 
+    function cleanStudentNameCandidate(value = '') {
+        return String(value || '')
+            .replace(/\s+/g, ' ')
+            .replace(/\b(?:حاضر|غائب|متأخر|بعذر|بدون\s+عذر)\b/g, ' ')
+            .replace(/[0-9٠-٩۰-۹]+/g, ' ')
+            .replace(/[|•·]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function extractVisibleStudentName(row) {
+        if (!row) return '';
+
+        const direct = row.getAttribute('data-student-name') || row.dataset?.studentName || '';
+        if (direct) return cleanStudentNameCandidate(direct);
+
+        const candidates = [];
+        const selectors = 'td, th, [data-student-name], .student-name, .studentName, .student_name';
+
+        for (const el of qa(selectors, row)) {
+            if (el.closest?.('.absence-div, .delay-div, .ratings')) continue;
+
+            const raw = cleanStudentNameCandidate(el.innerText || el.textContent || '');
+            if (!raw) continue;
+
+            const arabicChars = (raw.match(/[\u0600-\u06FF]/g) || []).length;
+            const words = raw.split(/\s+/).filter(Boolean).length;
+
+            if (arabicChars < 4 || words < 2) continue;
+
+            candidates.push({
+                value: raw,
+                score: arabicChars + Math.min(words, 8) * 8 - Math.max(0, raw.length - 80)
+            });
+        }
+
+        if (!candidates.length) {
+            const raw = cleanStudentNameCandidate(row.innerText || row.textContent || '');
+            const arabicChars = (raw.match(/[\u0600-\u06FF]/g) || []).length;
+            const words = raw.split(/\s+/).filter(Boolean).length;
+            return arabicChars >= 4 && words >= 2 ? raw : '';
+        }
+
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0].value;
+    }
+
+    function makeStudentFromBatchUpdateRow(row, domIndex) {
+        const mainRadio = q('input[type="radio"][name^="Attend["]', row);
+        if (!mainRadio) return null;
+
+        const match = mainRadio.name.match(/^Attend\[(\d+)\]$/);
+        if (!match) return null;
+
+        const index = Number(match[1]);
+        const detailName = 'List[' + index + '].AttendStatusId';
+        const detailRadio = q('input[type="radio"][name="' + escapeAttr(detailName) + '"]', row);
+        if (!detailRadio) return null;
+
+        const name = extractVisibleStudentName(row);
+        if (!name) return null;
+
+        const studentIdName = 'List[' + index + '].StudentId';
+        const studentIdInput =
+            q('input[name="' + escapeAttr(studentIdName) + '"]', row) ||
+            q('input[type="hidden"][name="StudentId"]', row);
+
+        row.classList.add('msa-student-row');
+        row.dataset.msaIndex = String(index);
+
+        if (!row.dataset.msaOriginalOrder) {
+            row.dataset.msaOriginalOrder = String(domIndex);
+        }
+
+        return {
+            index,
+            row,
+            studentId: studentIdInput?.value || '',
+            name,
+            normalizedName: normalizeArabic(name),
+            originalOrder: Number(row.dataset.msaOriginalOrder),
+            layout: 'batch-update'
+        };
+    }
     function makeStudentFromRow(row, domIndex) {
         const mainRadio = q(
             'input[type="radio"][name^="Attend["]',
