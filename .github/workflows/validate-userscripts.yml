@@ -32,3 +32,6 @@ jobs:
             echo "Checking $file"
             node --check "$file"
           done < <(find scripts -name '*.user.js' -print0)
+
+      - name: Functional smoke tests for the unified Madrasati userscript
+        run: node tools/test-madrasati-unified.mjs
