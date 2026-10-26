@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Teaching Tasks Intelligence | مدير الواجبات والأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      2.0.0-beta1
+// @version      2.0.0-beta2
 // @description  مدير موحد للواجبات والأنشطة والمشاريع: بحث وإحصائيات وتحليل وتقارير PDF/Excel/CSV واستيراد درجات بمعاينة وحفظ متحقق، حسب القسم.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -18,7 +18,7 @@
 
 /*
  =========================================================================
- Madrasati Teaching Tasks Intelligence — unified 2.0.0-beta1
+ Madrasati Teaching Tasks Intelligence — unified 2.0.0-beta2
  المدير الموحد للواجبات والأنشطة والمشاريع
  
  دمج محافظ لمكوّنات السكربتين في ملف واحد:
@@ -40,7 +40,7 @@
 
 (() => {
   'use strict';
-  const UNIFIED_VERSION = '2.0.0-beta1';
+  const UNIFIED_VERSION = '2.0.0-beta2';
   const route = String(location.pathname || '');
   const assignmentsPage = /^\/Teacher\/Assignments\//i.test(route);
   const projectsPage = /^\/Projects\/Projects\//i.test(route);
@@ -2979,7 +2979,7 @@ ${bodyHtml}
   'use strict';
 
   const APP = 'MAI';
-  const VERSION = '2.0.0-beta1';
+  const VERSION = '2.0.0-beta2';
   const BASE_REQUIRED_VERSION = '1.1.7';
   const ENHANCED_CACHE_KEY = 'MAI_ENHANCED_ANALYSIS_V5';
   const PANEL_COLLAPSE_KEY = 'MAI_PANEL_COLLAPSED_V1';
@@ -6622,7 +6622,7 @@ ${bodyHtml}
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '2.0.0-beta1';
+  const VERSION = '2.0.0-beta2';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -7371,7 +7371,7 @@ ${bodyHtml}
     if(prior){
      status='duplicate';reason=`هذا الطالب مكرر في صفوف الملف (الصف ${prior.sourceRow})`;
      const prev=preview[prior.mark];
-     if(prev){prev.status='duplicate';prev.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;}
+     if(prev){prev.status='duplicate';prev.baseStatus='duplicate';prev.reason=`هذا الطالب مكرر في صفوف الملف (الصف ${i+1})`;}
     }else matchedIds.set(String(student.studentId),{sourceRow:i+1,mark:preview.length});
    }
    // نفس الواجبات: افصل «لا تغيير» عن «جاهز للحفظ».
