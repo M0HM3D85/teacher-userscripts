@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta7
+// @version      0.3.5-beta8
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta7-self-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta7-self-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta8-diagnostic-report-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta8-diagnostic-report-ui/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta7',
+        version: '0.3.5-beta8',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -4263,6 +4263,42 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
     }
 
+    async function copyAttendanceDiagnostic(report, textarea = null) {
+        const text = JSON.stringify(report, null, 2);
+
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                toast('تم نسخ تقرير التشخيص JSON.');
+                return true;
+            }
+        } catch (_) {}
+
+        try {
+            const box = textarea || document.createElement('textarea');
+            const temporary = !textarea;
+            if (temporary) {
+                box.style.position = 'fixed';
+                box.style.opacity = '0';
+                box.style.pointerEvents = 'none';
+                document.body.appendChild(box);
+            }
+            box.value = text;
+            box.focus();
+            box.select();
+            const ok = document.execCommand('copy');
+            if (temporary) box.remove();
+
+            if (ok) {
+                toast('تم نسخ تقرير التشخيص JSON.');
+                return true;
+            }
+        } catch (_) {}
+
+        toast('تعذر النسخ التلقائي. حدّد النص من مربع التقرير وانسخه يدويًا.');
+        return false;
+    }
+
     function diagnosticSummaryText(report) {
         const counts = report?.counts || {};
         const result = report?.result || {};
@@ -4309,6 +4345,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const target = report.target || {};
         const unmatched = report.unmatchedAbsentRecords || [];
         const events = report.events || [];
+        const jsonText = JSON.stringify(report, null, 2);
 
         const unmatchedHtml = unmatched.length
             ? '<div style="margin-top:10px"><b>غائبون في الملف لم تتم مطابقتهم:</b><ul>' +
@@ -4361,16 +4398,34 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                     unmatchedHtml +
                     eventsHtml +
                     '<div class="msa-import-review-actions" style="margin-top:12px">' +
-                        '<button type="button" data-action="download-attendance-diagnostic">تنزيل تقرير JSON</button>' +
+                        '<button type="button" class="msa-primary" data-action="copy-attendance-diagnostic">نسخ JSON</button>' +
+                        '<button type="button" data-action="download-attendance-diagnostic">تنزيل التقرير يدويًا</button>' +
+                    '</div>' +
+                    '<details style="margin-top:12px">' +
+                        '<summary style="cursor:pointer;font-weight:800">عرض JSON كامل داخل الصفحة</summary>' +
+                        '<textarea data-role="attendance-diagnostic-json" readonly ' +
+                            'style="width:100%;min-height:260px;margin-top:8px;direction:ltr;text-align:left;font:11px/1.5 monospace;white-space:pre;border:1px solid #cbd5e1;border-radius:8px;padding:8px">' +
+                            escapeHtml(jsonText) +
+                        '</textarea>' +
+                    '</details>' +
+                    '<div style="margin-top:8px;font-size:10px;color:#64748b">' +
+                        'إذا منع المتصفح التنزيل، اضغط «نسخ JSON» وأرسل النص هنا مباشرة.' +
                     '</div>' +
                 '</div>' +
             '</div>';
 
         root.appendChild(overlay);
+
+        const textarea = q('[data-role="attendance-diagnostic-json"]', overlay);
+
         q('[data-action="close-import-review"]', overlay)?.addEventListener('click', closeImportReview);
+        q('[data-action="copy-attendance-diagnostic"]', overlay)?.addEventListener('click', async () => {
+            await copyAttendanceDiagnostic(report, textarea);
+        });
         q('[data-action="download-attendance-diagnostic"]', overlay)?.addEventListener('click', () => {
             downloadAttendanceDiagnostic(report);
         });
+
         overlay.addEventListener('click', event => {
             if (event.target === overlay) closeImportReview();
         });
@@ -4441,7 +4496,6 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             attendanceImport.diagnosticRunning = false;
             updateAttendanceImportUi();
             openAttendanceDiagnosticReport(report);
-            downloadAttendanceDiagnostic(report);
             console.info('[Madrasati Smart Attendance] self diagnostic', report);
         };
 
@@ -5564,7 +5618,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta7] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta8] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
