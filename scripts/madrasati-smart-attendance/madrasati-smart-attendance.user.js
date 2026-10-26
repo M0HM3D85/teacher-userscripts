@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Smart Attendance | التحضير الذكي لمدرستي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      0.3.5-beta15
+// @version      0.3.5-beta16
 // @description  نسخة اختبارية: استيراد حضور Excel/CSV مع ربط الطلاب بالبريد عبر دليل مدرستي، مراجعة تفصيلية للحالات غير المطابقة، وتحويل المتأخر إلى حاضر في الواجهة الحديثة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -13,8 +13,8 @@
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
 // @run-at       document-idle
 // @noframes
-// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta15-live-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
-// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta15-live-diagnostic/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @downloadURL  https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta16-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
+// @updateURL    https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/msa-v0.3.5-beta16-inline-confirm/scripts/madrasati-smart-attendance/madrasati-smart-attendance.user.js
 // ==/UserScript==
 
 
@@ -37,7 +37,7 @@
 
     const SCRIPT_META = Object.freeze({
         name: 'Madrasati Smart Attendance | التحضير الذكي لمدرستي',
-        version: '0.3.5-beta15',
+        version: '0.3.5-beta16',
         author: 'Mohammed Almalki (M0HM3D85)',
         handle: 'M0HM3D85',
         greasyFork: 'https://greasyfork.org/en/users/1636459-m0hm3d85',
@@ -124,6 +124,7 @@
         identityBridge: null,
         lastDiagnostic: null,
         diagnosticRunning: false,
+        diagnosticConfirmationPending: false,
         diagnosticTrace: [],
         diagnosticStage: '',
         diagnosticError: ''
@@ -4977,6 +4978,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         attendanceImport.diagnosticRunning = true;
+        attendanceImport.diagnosticConfirmationPending = false;
         resetAttendanceDiagnosticTrace();
         traceAttendanceDiagnostic('🧪 بدأ التشخيص داخل السكربت.');
 
@@ -5341,9 +5343,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         const inspectNamesBtn = q('[data-action="inspect-registry-names"]', root);
         const applyBtn = q('[data-action="apply-import-attendance"]', root);
         const diagnosticBtn = q('[data-action="diagnose-import-apply"]', root);
+        const diagnosticConfirm = q('[data-role="diagnostic-confirm"]', root);
         const clearBtn = q('[data-action="clear-import-attendance"]', root);
 
         if (!statusBox || !details) return;
+        if (diagnosticConfirm) {
+            diagnosticConfirm.hidden = !attendanceImport.diagnosticConfirmationPending || attendanceImport.diagnosticRunning;
+        }
 
         statusBox.classList.remove('is-match', 'is-warning', 'is-error');
         details.hidden = true;
@@ -5792,6 +5798,13 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
                             <button type="button" data-action="clear-import-attendance" hidden>مسح الملف</button>
                         </div>
                     </div>
+                    <div data-role="diagnostic-confirm" role="alert" hidden style="margin:8px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:9px;background:#fffbeb;color:#713f12">
+                        <div>⚠️ <b>تأكيد اختبار الغياب</b>: سيختبر السكربت غياب طالب واحد مطابق داخل الصفحة فقط، دون حفظ الحصة. إذا نجح فقد تتغير حالة هذا الطالب في الصفحة؛ راجعها أو أعد تحميل الحصة قبل الحفظ.</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+                            <button type="button" class="msa-primary" data-action="confirm-attendance-diagnostic">✅ تنفيذ اختبار طالب واحد</button>
+                            <button type="button" data-action="cancel-attendance-diagnostic">إلغاء الاختبار</button>
+                        </div>
+                    </div>
                     <input type="file" data-role="import-file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
                     <div class="msa-import-status" data-role="import-status">لم يتم استيراد سجل حضور بعد.</div>
                     <div class="msa-import-details" data-role="import-details" hidden></div>
@@ -6141,21 +6154,23 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
             }
         });
         q('[data-action="apply-import-attendance"]', root)?.addEventListener('click', applyAttendanceImport);
-        q('[data-action="diagnose-import-apply"]', root)?.addEventListener('click', async () => {
+        q('[data-action="diagnose-import-apply"]', root)?.addEventListener('click', () => {
+            if (attendanceImport.diagnosticRunning) return;
+            attendanceImport.diagnosticConfirmationPending = true;
             resetAttendanceDiagnosticTrace();
             traceAttendanceDiagnostic('🧪 تم استلام أمر التشخيص من الزر.');
-
-            const ok = window.confirm(
-                'سيختبر التشخيص طالبًا واحدًا من الغائبين المطابقين داخل الصفحة فقط ولن يحفظ الحصة.\n\n' +
-                'إذا نجح الاختبار قد تتغير حالة الطالب في الصفحة مؤقتًا؛ يمكنك إعادة تحميل الصفحة قبل الحفظ.\n\nمتابعة؟'
-            );
-
-            if (!ok) {
-                traceAttendanceDiagnostic('تم إلغاء التشخيص من المستخدم.', 'warning');
-                return;
-            }
-
+            traceAttendanceDiagnostic('بانتظار تأكيد الاختبار من اللوحة؛ لم يتغير أي حضور بعد.');
+        });
+        q('[data-action="confirm-attendance-diagnostic"]', root)?.addEventListener('click', async () => {
+            if (!attendanceImport.diagnosticConfirmationPending || attendanceImport.diagnosticRunning) return;
+            attendanceImport.diagnosticConfirmationPending = false;
+            updateAttendanceImportUi();
             await runAttendanceSelfDiagnostic();
+        });
+        q('[data-action="cancel-attendance-diagnostic"]', root)?.addEventListener('click', () => {
+            if (!attendanceImport.diagnosticConfirmationPending) return;
+            attendanceImport.diagnosticConfirmationPending = false;
+            traceAttendanceDiagnostic('تم إلغاء الاختبار من لوحة السكربت قبل التنفيذ؛ لم تتغير حالة أي طالب.', 'warning');
         });
         q('[data-action="clear-import-attendance"]', root)?.addEventListener('click', clearAttendanceImport);
 
@@ -6374,7 +6389,7 @@ body{font-family:Arial,Tahoma,sans-serif;color:#172033;margin:28px;direction:rtl
         }
 
         console.info(
-            `[Madrasati Smart Attendance v0.3.5-beta15] جاهز — تم اكتشاف ${state.students.length} طالب.`,
+            `[Madrasati Smart Attendance v0.3.5-beta16] جاهز — تم اكتشاف ${state.students.length} طالب.`,
             {
                 mode: state.mode,
                 lectureId: new URLSearchParams(location.search).get('lectureId'),
