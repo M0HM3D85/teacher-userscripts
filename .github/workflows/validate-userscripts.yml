@@ -46,3 +46,6 @@ jobs:
 
       - name: Independent projects pagination and roster-completeness tests
         run: node tools/test-madrasati-projects-pagination.mjs
+
+      - name: Project grade status, zero decision, and automatic comments regression tests
+        run: node tools/test-madrasati-projects-grading.mjs
