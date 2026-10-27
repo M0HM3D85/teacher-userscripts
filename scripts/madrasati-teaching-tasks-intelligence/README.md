@@ -2,7 +2,13 @@
 ### Madrasati Teaching Tasks Intelligence
 
 **الإصدار الحالي:** `2.0.0-beta6`  
-**الحالة:** نسخة تجريبية موحّدة؛ تحتاج تحققًا داخل مدرستي قبل اعتمادها بدل النسختين المنفصلتين.
+**الحالة:** أُوقف العمل على الدمج وأُرشفت هذه النسخة بناءً على قرار فصل السكربتين، لتجنّب التأثير في الواجبات المستقرة.
+
+**النسخة الموحدة لم تعد موصى بها للاستخدام.** عطّلها في Tampermonkey واستعمل:
+- [مدير الواجبات المنفصل v1.4.8](https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js)
+- [مدير الأنشطة والمشاريع المنفصل v1.5.9](https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js)
+
+سيجري تطوير قسم المشاريع واختبار حفظ درجاته بصورة مستقلة، دون تعديل وظائف الواجبات.
 
 سكريبت **واحد** لـ Tampermonkey يدمج الكود الفعلي لكلٍ من مدير الواجبات ومدير الأنشطة والمشاريع في ملف واحد. لا يحتاج تثبيت سكربت إضافي في Tampermonkey. تُحمّل نواة الواجبات المستقرة v1.1.7 تلقائيًا من إصدار GitHub المثبّت على commit محدد باستخدام `@require`، كما في سكربت الواجبات المستقر؛ والمكوّنان الآخران مدمجان في السكربت.
 
