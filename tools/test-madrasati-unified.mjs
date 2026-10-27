@@ -3,18 +3,18 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const source = readFileSync('scripts/madrasati-teaching-tasks-intelligence/madrasati-teaching-tasks-intelligence.user.js', 'utf8');
-const version = '2.0.0-beta4';
+const version = '2.0.0-beta5';
 const assertIncludes = (needle, label = needle) => assert(source.includes(needle), 'Missing: ' + label);
 
-assert.match(source, /^\/\/ @version\s+2\.0\.0-beta4\s*$/m);
+assert.match(source, /^\/\/ @version\s+2\.0\.0-beta5\s*$/m);
 assert.equal((source.match(/^\/\/ ==UserScript==/gm) || []).length, 1, 'Exactly one userscript header');
 for (const route of ['/Teacher/Assignments/*','/Projects/Projects/*','/SchoolManagment/Actions/MyStudents*']) assertIncludes(route);
-assert.equal((source.match(/^\/\/ @require\s+/gm) || []).length, 1, 'No other script dependency');
-assert(!source.includes('@require      https://cdn.jsdelivr.net/gh/'), 'Do not depend on a separate userscript');
-for (const name of ['MadrasatiAssignmentIntelligence =','MadrasatiAssignmentIntelligenceEnhanced =','MadrasatiProjectsIntelligence =','MadrasatiTeachingTasksIntelligence =']) assertIncludes(name);
+assert.equal((source.match(/^\/\/ @require\s+/gm) || []).length, 2, 'XLSX and pinned assignment core required');
+assert(source.includes('@require      https://cdn.jsdelivr.net/gh/M0HM3D85/teacher-userscripts@2c779aed06435d7e99ba94a3212ac40bf20317f1/'), 'Stable assignment core is pinned to its original commit');
+for (const name of ['MadrasatiAssignmentIntelligenceEnhanced =','MadrasatiProjectsIntelligence =','MadrasatiTeachingTasksIntelligence =']) assertIncludes(name);
 for (const name of ['const classFromBlock =','const readImportFile =','const ensureImportModal =','const filteredIndexAssignments =','const postProjectRows =']) assertIncludes(name);
-assertIncludes('const VERSION = \'1.1.7\'', 'Stable assignment core preserved');
-assert.equal((source.match(/const VERSION = '2\.0\.0-beta4'/g)||[]).length, 2, 'Both visible module versions match unified version');
+assert(!source.includes('const VERSION = \'1.1.7\''), 'Do not reinitialize pinned assignment core inside unified script');
+assert.equal((source.match(/const VERSION = '2\.0\.0-beta5'/g)||[]).length, 2, 'Both visible module versions match unified version');
 new vm.Script(source, { filename: 'madrasati-unified.user.js' });
 
 // Read helper functions directly from the actual project module; no reimplementation.
@@ -106,8 +106,8 @@ const projectStudents=Array.from({length:73},(_,i)=>row(
   String(1000000001+i),'اسم مدرستي '+(i+1),null,i%2?'الثالث المتوسط أ':'الثالث المتوسط ب'
 ));
 app.state.students=projectStudents;
-const bulkCsv='اسم الطالب,رقم الطالب,الفصل,الحالة,الدرجة,ملاحظات\\n'
- +projectStudents.slice(0,72).map((r,i)=>['اسم ملف '+(i+1),r.studentId,'الثالث المتوسط ب','تم التسليم','20','14'].join(',')).join('\\n');
+const bulkCsv='اسم الطالب,رقم الطالب,الفصل,الحالة,الدرجة,ملاحظات\n'
+ +projectStudents.slice(0,72).map((r,i)=>['اسم ملف '+(i+1),r.studentId,'الثالث المتوسط ب','تم التسليم','20','14'].join(',')).join('\n');
 await app.readImportFile({name:'72-project-grades.csv',text:async()=>bulkCsv});
 assert.equal(app.state.importPreview?.rows.length,72,'All imported rows must be present');
 assert.equal(app.state.students.length,73,'Total platform roster must stay at 73');
