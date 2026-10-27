@@ -40,3 +40,6 @@ jobs:
 
       - name: Assignment import apply-button regression test
         run: node tools/test-madrasati-assignment-apply.mjs
+
+      - name: Project grade confirmation overlay regression test
+        run: node tools/test-madrasati-project-confirm.mjs
