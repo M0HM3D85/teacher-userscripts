@@ -439,7 +439,7 @@
    let added=merge(rows);
    if(page>1&&(!rows.length||!added)&&mode==='camel'){
     const alt=await request(page,'legacy'),other=merge(alt);
-    if(other>0){rows=alt;added=other;mode='legacy';}
+    if(alt.length){rows=alt;added=other;mode='legacy';}
    }
    if(rows.length&&added)lastPage=page;
    if(!rows.length){complete=!expected||byId.size>=expected;reason=complete?'empty_page':'roster_shortfall';break;}
