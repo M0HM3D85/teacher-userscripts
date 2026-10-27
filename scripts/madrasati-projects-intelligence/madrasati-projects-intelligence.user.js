@@ -571,8 +571,8 @@
     if (f.sort === 'grade_desc') rows.sort((a, b) => (Number.isFinite(b.grade) ? b.grade : -Infinity) - (Number.isFinite(a.grade) ? a.grade : -Infinity) || compareNames(a.name, b.name));
     else if (f.sort === 'grade_asc') rows.sort((a, b) => (Number.isFinite(a.grade) ? a.grade : Infinity) - (Number.isFinite(b.grade) ? b.grade : Infinity) || compareNames(a.name, b.name));
     else if (f.sort === 'name_desc') rows.sort((a, b) => compareNames(b.name, a.name));
-    else if (f.sort === 'submission_submitted') rows.sort((a, b) => Number(b.hasAnswer) - Number(a.hasAnswer) || compareNames(a.name, b.name));
-    else if (f.sort === 'submission_not_submitted') rows.sort((a, b) => Number(a.hasAnswer) - Number(b.hasAnswer) || compareNames(a.name, b.name));
+    else if (f.sort === 'submission_submitted') rows.sort((a,b)=>({submitted:0,not_submitted:1,unknown:2}[classifyProjectSubmission(a).key]-{submitted:0,not_submitted:1,unknown:2}[classifyProjectSubmission(b).key])||compareNames(a.name,b.name));
+    else if (f.sort === 'submission_not_submitted') rows.sort((a,b)=>({not_submitted:0,unknown:1,submitted:2}[classifyProjectSubmission(a).key]-{not_submitted:0,unknown:1,submitted:2}[classifyProjectSubmission(b).key])||compareNames(a.name,b.name));
     else if (f.sort === 'level_high') rows.sort((a,b) => ((Number.isFinite(b.grade)&&b.totalGrade>0)?b.grade/b.totalGrade:-1)-((Number.isFinite(a.grade)&&a.totalGrade>0)?a.grade/a.totalGrade:-1) || compareNames(a.name,b.name));
     else if (f.sort === 'level_low') rows.sort((a,b) => ((Number.isFinite(a.grade)&&a.totalGrade>0)?a.grade/a.totalGrade:Infinity)-((Number.isFinite(b.grade)&&b.totalGrade>0)?b.grade/b.totalGrade:Infinity) || compareNames(a.name,b.name));
     else rows.sort((a, b) => compareNames(a.name, b.name));
@@ -1082,7 +1082,7 @@
         gradeInput.value = r.grade;
         gradeInput.dispatchEvent(new Event('input', { bubbles: true }));
         gradeInput.dispatchEvent(new Event('change', { bubbles: true }));
-        if (feedback && state.importFeedback && r.feedback) feedback.value = r.feedback;
+        if(feedback && r.nextFeedback!==undefined && clean(feedback.value)!==clean(r.nextFeedback)){feedback.value=r.nextFeedback;feedback.dispatchEvent(new Event('change',{bubbles:true}));}
         count++;
       }
     });
@@ -1209,12 +1209,13 @@
     const saveImport = async function(){
  if(!state.fetchAudit?.complete)return toast('لم يثبت اكتمال جميع صفحات الطلاب، تم إيقاف الحفظ الجماعي لحماية درجات المشروع.','error');
  const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
+ if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))return toast('يوجد طلاب بدرجة صفر وحالة تسليم غير محسومة. اختر سلّم أو لم يسلّم أولًا.','error');
  if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
- const noteLabel=state.importFeedback?'مع الملاحظات':'مع الحفاظ على ملاحظات مدرستي';
- if(!await confirmProjectImport(`سيتم حفظ ${ready.length} درجة في المشروع «${state.activityTitle}» (${noteLabel}).\nسيتم تنزيل نسخة احتياطية قبل الحفظ، ثم التحقق من الدرجات من مدرستي.\n\nمتابعة؟`))return;
- const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:state.importFeedback?r.feedback:r.student.feedback}));
- downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,rows:backup});
+ const counts={submittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length,notSubmittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length,autoNotes:ready.filter(r=>r.feedbackSource==='auto').length,changed:ready.filter(r=>Number.isFinite(r.student?.grade)).length};
+ if(!await confirmProjectImport(`تأكيد رصد درجات المشروع «${state.activityTitle}»\n\nالطلاب الجاهزون للرصد: ${ready.length}\nدرجات موجودة ستتغير أو تُحدَّث: ${counts.changed}\nسلّم وحصل على صفر: ${counts.submittedZero}\nلم يسلّم وسيرصد له صفر: ${counts.notSubmittedZero}\nملاحظات تلقائية: ${counts.autoNotes}\n\nستُنزّل نسخة احتياطية قبل الحفظ وسيتحقق السكربت من أول دفعة.\n\nهل تؤكد رصد هؤلاء الطلاب؟`))return;
+ const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:r.nextFeedback}));
+ downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,autoNotesGenerated:state.autoFeedback,rows:backup});
  setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
  let posted=0;
  try{
@@ -1226,7 +1227,7 @@
   const changes=ready.map(r=>{
     const student=latestById.get(studentIdKey(r.student.studentId));
     if(!Number.isFinite(student.totalGrade)||student.totalGrade<=0||r.grade>student.totalGrade)throw new Error(`تغير الحد الأعلى لدرجة ${r.student.name}. أُوقف الحفظ.`);
-    const feedback=state.importFeedback?(r.feedback||student.feedback||''):(student.feedback||'');
+    const feedback=r.nextFeedback??student.feedback??'';
     return {...student,grade:r.grade,feedback,rawFields:{...student.rawFields,Grade:String(r.grade),feedBack:feedback}};
   });
   for(let i=0;i<changes.length;i+=10){
@@ -1238,7 +1239,7 @@
     const firstFetch=await fetchAllStudents();
     if(!state.fetchAudit?.complete)throw new Error('فقد التحقق من اكتمال الصفحات بعد الدفعة الأولى؛ توقفت الدفعات التالية.');
     const firstMap=new Map(firstFetch.map(r=>[String(r.studentId),r]));
-    const miss=batch.filter(r=>!Number.isFinite(firstMap.get(String(r.studentId))?.grade)||Math.abs(firstMap.get(String(r.studentId)).grade-r.grade)>1e-4);
+    const miss=batch.filter(r=>{const current=firstMap.get(String(r.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4||clean(current.feedback)!==clean(r.feedback);});
     state.students=firstFetch;
     if(miss.length)throw new Error(`أرسلت أول ${batch.length} سجلات، لكن مدرستي لم يؤكد ${miss.length} درجة. أوقفت بقية الدفعات تلقائيًا. راجع نتائج المشروع ولا تكرر الحفظ قبل التأكد.`);
    }
@@ -1248,7 +1249,7 @@
   const after=await fetchAllStudents();
   if(!state.fetchAudit?.complete)throw new Error('تعذر تأكيد اكتمال الرصد بعد الحفظ؛ يجب مراجعة الدرجات في مدرستي.');
   const map=new Map(after.map(r=>[String(r.studentId),r]));
-  const mismatch=ready.filter(r=>!Number.isFinite(map.get(String(r.student.studentId))?.grade)||Math.abs(map.get(String(r.student.studentId)).grade-r.grade)>1e-4);
+  const mismatch=ready.filter(r=>{const current=map.get(String(r.student.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4||clean(current.feedback)!==clean(r.nextFeedback);});
   state.students=after;
   if(mismatch.length){
    renderGradeBody();
