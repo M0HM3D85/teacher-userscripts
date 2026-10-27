@@ -77,4 +77,39 @@ assert.equal(imp.feedbackSource,'auto');
 assert(!imp.nextFeedback.includes('14'),'Numeric note must not be used as commentary');
 assert.match(imp.nextFeedback,/لم|غير مسل/);
 assert(host.innerHTML.includes('تأكيد رصد 1 طالبًا على مدرستي'));
+
+const statsStart=source.indexOf('  const band = row => {');
+const statsEnd=source.indexOf('  const metric =',statsStart);
+assert(statsStart>=0&&statsEnd>statsStart,'Need production project classification, analytics and level functions');
+const toStats=new Function('state','APP','clean','norm','classifyProjectSubmission','zeroDecisionCounts','fmt','pct','compareNames','esc',
+ source.slice(statsStart,statsEnd)+'return {summary,detailedStats,band};');
+const api=toStats(state,APP,clean,norm,h.classifyProjectSubmission,h.zeroDecisionCounts,fmt,
+ (a,b)=>b?100*a/b:0,(a,b)=>String(a).localeCompare(String(b),'ar'),esc);
+const analysed=[
+ {...row(0,'تم التسليم'),className:'الثالث'},
+ {...row(0,'لم يتم تسليم المشروع'),className:'الثالث'},
+ {...row(null,'','false'),className:'الثالث'},
+ {...row(0,'','true','3'),className:'الثالث'},
+ {...row(18,'','true'),className:'الثالث'}
+];
+const output=api.detailedStats(analysed);
+assert.equal(output.total,5);
+assert.equal(output.submitted,2);
+assert.equal(output.notSubmitted,2);
+assert.equal(output.unknown,1);
+assert.equal(output.submittedZero,1);
+assert.equal(output.notSubmittedZero,1);
+assert.equal(output.notSubmittedUnscored,1);
+assert.equal(output.graded,4,'Manually assigned absent zero is graded, unlike a blank grade');
+assert.equal(output.avg,22.5,'Overall grade mean includes posted zeros, as in assignment reports');
+assert.equal(output.median,0,'Median and mean must use same pool of recorded scores');
+assert.equal(output.levels.not_submitted,2,'Absentees must not appear under Weak');
+assert.equal(output.levels.unverified,1);
+assert.equal(output.levels.excellent,1);
+assert.equal(output.levels.weak,1);
+assert.equal(output.buckets.reduce((a,b)=>a+b.count,0),2,'Grade-level histogram includes submitted students only');
+assert.equal(api.band(analysed[1]),'not_submitted');
+assert.equal(api.band(analysed[3]),'unverified');
+assert(source.includes("'التسليم': classifyProjectSubmission(r).label"),'Excel export must have proper status');
+assert(source.includes("classifyProjectSubmission(r).label"),'PDF and CSV use the same status classification');
 console.log('✓ Project grading: six submission cases, zero decision, percentage comments, numeric note handling, preview count and save guards.');
