@@ -49,3 +49,6 @@ jobs:
 
       - name: Project grade status, zero decision, and automatic comments regression tests
         run: node tools/test-madrasati-projects-grading.mjs
+
+      - name: First-page notes-only grading and form feedback field regression
+        run: node tools/test-madrasati-projects-first-page-notes.mjs
