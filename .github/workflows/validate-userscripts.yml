@@ -43,3 +43,6 @@ jobs:
 
       - name: Project grade confirmation overlay regression test
         run: node tools/test-madrasati-project-confirm.mjs
+
+      - name: Independent projects pagination and roster-completeness tests
+        run: node tools/test-madrasati-projects-pagination.mjs
