@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const source = readFileSync('scripts/madrasati-teaching-tasks-intelligence/madrasati-teaching-tasks-intelligence.user.js', 'utf8');
-const version = '2.0.0-beta5';
+const version = '2.0.0-beta6';
 const assertIncludes = (needle, label = needle) => assert(source.includes(needle), 'Missing: ' + label);
 
 assert.match(source, /^\/\/ @version\s+2\.0\.0-beta5\s*$/m);
