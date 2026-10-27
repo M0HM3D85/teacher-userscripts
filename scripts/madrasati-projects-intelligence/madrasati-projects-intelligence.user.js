@@ -615,14 +615,14 @@
   const gradePercent = r => Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade,r.totalGrade) : null;
   const detailedStats = rows => {
     const s = summary(rows);
-    const percents = rows.map(gradePercent).filter(Number.isFinite).sort((a,b) => a-b);
+    const percents = rows.filter(r=>classifyProjectSubmission(r).key==='submitted').map(gradePercent).filter(Number.isFinite).sort((a,b) => a-b);
     s.median = percents.length ? (percents[Math.floor((percents.length-1)/2)] + percents[Math.ceil((percents.length-1)/2)])/2 : null;
     s.low = percents.length ? percents[0] : null;
     s.levels = Object.fromEntries(levelKeys.map(k => [k,rows.filter(r => band(r) === k).length]));
     s.byClass = [...new Set(rows.map(r=>r.className || 'غير محدد'))].sort(compareNames).map(name => {
       const rs = rows.filter(r=>(r.className||'غير محدد')===name);
       const scored = rs.map(gradePercent).filter(Number.isFinite);
-      return { name, total:rs.length,submitted:rs.filter(r=>classifyProjectSubmission(r).key==='submitted').length,graded:scored.length,avg:scored.length?scored.reduce((a,b)=>a+b,0)/scored.length:null };
+      return { name, total:rs.length,submitted:rs.filter(r=>classifyProjectSubmission(r).key==='submitted').length,notSubmitted:rs.filter(r=>classifyProjectSubmission(r).key==='not_submitted').length,unknown:rs.filter(r=>classifyProjectSubmission(r).key==='unknown').length,graded:scored.length,avg:scored.length?scored.reduce((a,b)=>a+b,0)/scored.length:null };
     });
     s.buckets = [
       { label:'90–100%', count:percents.filter(v=>v>=90).length, kind:'excellent' },
@@ -642,9 +642,9 @@
     return `<div class="${APP}-chart-grid">
       <div class="${APP}-chart"><h4>توزيع التقديرات</h4>${bars(levelKeys.map(k=>({label:bandLabel(k),count:s.levels[k],kind:k})),maxLevel)}</div>
       <div class="${APP}-chart"><h4>توزيع الدرجات المئوية</h4>${bars(s.buckets,Math.max(1,...s.buckets.map(b=>b.count)))}</div>
-      <div class="${APP}-chart"><h4>نسبة التسليم والرصد</h4>${bars([{label:'سلّم',count:s.submitted,kind:'excellent'},{label:'لم يسلّم',count:s.notSubmitted,kind:'weak'},{label:'درجة مرصودة',count:s.graded,kind:'verygood'},{label:'غير مرصود',count:s.ungraded,kind:'none'}],Math.max(1,s.total))}</div>
+      <div class="${APP}-chart"><h4>نسبة التسليم والرصد</h4>${bars([{label:'سلّم',count:s.submitted,kind:'excellent'},{label:'لم يسلّم',count:s.notSubmitted,kind:'weak'},{label:'غير محسوم',count:s.unknown,kind:'none'},{label:'سلّم وأخذ صفر',count:s.submittedZero,kind:'pass'},{label:'لم يسلّم ورُصد صفر',count:s.notSubmittedZero,kind:'weak'},{label:'درجة مرصودة',count:s.graded,kind:'verygood'},{label:'غير مرصود',count:s.ungraded,kind:'none'}],Math.max(1,s.total))}</div>
       <div class="${APP}-chart"><h4>متوسط الأداء حسب الفصل</h4>${classes.length?bars(classes.map(c=>({label:c.name,count:c.avg||0,suffix:'%',kind:'good'})),100):'لا توجد فصول'}</div>
-    </div><div class="${APP}-subhead">مقارنة الفصول</div><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>الفصل</th><th>الطلاب</th><th>سلّم</th><th>لم يسلّم</th><th>مرصود</th><th>نسبة التسليم</th><th>متوسط الأداء</th></tr></thead><tbody>${classes.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.total}</td><td>${c.submitted}</td><td>${c.total-c.submitted}</td><td>${c.graded}</td><td>${fmt(pct(c.submitted,c.total))}%</td><td>${c.avg===null?'—':fmt(c.avg)+'%'}</td></tr>`).join('')}</tbody></table></div>`;
+    </div><div class="${APP}-subhead">مقارنة الفصول</div><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>الفصل</th><th>الطلاب</th><th>سلّم</th><th>لم يسلّم</th><th>مرصود</th><th>نسبة التسليم</th><th>متوسط الأداء</th></tr></thead><tbody>${classes.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.total}</td><td>${c.submitted}</td><td>${c.notSubmitted}</td><td>${c.graded}</td><td>${fmt(pct(c.submitted,c.total))}%</td><td>${c.avg===null?'—':fmt(c.avg)+'%'}</td></tr>`).join('')}</tbody></table></div>`;
   };
 
   const paintStudentsPage = function paintStudentsPage(rows,tbody){
@@ -673,7 +673,7 @@
     const rows = filteredRows();
     const s = detailedStats(rows);
     const m = document.getElementById(`${APP}-dynamic-metrics`);
-    if (m) m.innerHTML = [metric(s.total,'الطلاب المعروضون'),metric(s.submitted,'سلّم'),metric(s.notSubmitted,'لم يسلّم'),metric(`${fmt(s.submissionRate)}%`,'نسبة التسليم'),metric(s.graded,'درجات مرصودة'),metric(s.avg===null?'—':`${fmt(s.avg)}%`,'متوسط الأداء'),metric(s.high===null?'—':`${fmt(s.high)}%`,'أعلى أداء'),metric(s.low===null?'—':`${fmt(s.low)}%`,'أقل أداء')].join('');
+    if (m) m.innerHTML = [metric(s.total,'الطلاب المعروضون'),metric(s.submitted,'سلّم'),metric(s.notSubmitted,'لم يسلّم'),metric(s.unknown,'غير محسوم'),metric(s.submittedZero,'سلّم وأخذ صفر'),metric(s.notSubmittedZero,'لم يسلّم ورُصد صفر'),metric(s.notSubmittedUnscored,'لم يسلّم بلا درجة'),metric(`${fmt(s.submissionRate)}%`,'نسبة التسليم'),metric(s.graded,'درجات مرصودة'),metric(s.avg===null?'—':`${fmt(s.avg)}%`,'متوسط الأداء'),metric(s.high===null?'—':`${fmt(s.high)}%`,'أعلى أداء'),metric(s.low===null?'—':`${fmt(s.low)}%`,'أقل أداء')].join('');
     const count=document.getElementById(`${APP}-shown-count`);
     if (count) count.textContent=`عرض ${rows.length} من ${state.students.length} طالبًا`;
     const tbody=document.getElementById(`${APP}-students-tbody`);
@@ -684,7 +684,7 @@
     if(context) context.textContent=`${filterContext()} · تم جلب ${state.students.length}${state.totalExpected ? ` من ${state.totalExpected}`:''} طالبًا`;
     const report=document.getElementById(`${APP}-report-host`);
     if(report) report.innerHTML=`<div class="${APP}-report-grid">${[
-      ['متوسط الأداء',s.avg===null?'—':fmt(s.avg)+'%'],['الوسيط',s.median===null?'—':fmt(s.median)+'%'],['أعلى درجة',s.high===null?'—':fmt(s.high)+'%'],['أقل درجة',s.low===null?'—':fmt(s.low)+'%'],['نسبة الرصد',fmt(s.gradingRate)+'%'],['عدد الفصول',s.byClass.length],['تقدير ممتاز',s.levels.excellent],['تقدير ضعيف',s.levels.weak]
+      ['متوسط الأداء',s.avg===null?'—':fmt(s.avg)+'%'],['الوسيط',s.median===null?'—':fmt(s.median)+'%'],['أعلى درجة',s.high===null?'—':fmt(s.high)+'%'],['أقل درجة',s.low===null?'—':fmt(s.low)+'%'],['نسبة الرصد',fmt(s.gradingRate)+'%'],['غير محسوم',s.unknown],['سلّم وأخذ صفر',s.submittedZero],['لم يسلّم ورُصد صفر',s.notSubmittedZero],['لم يسلّم بلا درجة',s.notSubmittedUnscored],['عدد الفصول',s.byClass.length],['تقدير ممتاز',s.levels.excellent],['تقدير ضعيف',s.levels.weak]
     ].map(([k,v])=>`<div class="${APP}-report-stat"><b>${esc(v)}</b>${esc(k)}</div>`).join('')}</div><div class="${APP}-note">التقرير يتبع البحث والفصل والتسليم والتقدير تمامًا، ويمكن تصديره من شريط الأدوات. المتوسط يحسب من الدرجات المتاحة فقط، ولا يستبدل الدرجات الناقصة بأصفار.</div>`;
   };
 
