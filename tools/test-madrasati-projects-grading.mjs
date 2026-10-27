@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const source=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
-assert.match(source,/^\/\/ @version\s+1\.6\.0$/m);
+assert.match(source,/^\/\/ @version\s+1\.6\.1-beta1$/m);
 new vm.Script(source,{filename:'projects-grading.user.js'});
 assert(source.includes("if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))"),'Unresolved zero must block saving');
 assert(source.includes('if(!state.fetchAudit?.complete)'),'Incomplete roster blocks saving');
