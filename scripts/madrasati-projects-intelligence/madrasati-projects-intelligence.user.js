@@ -969,47 +969,76 @@
  finally{setBusy(false);}
 };
 
-    const renderImportPreview = function(){
+  const renderImportPreview = function newRenderImportPreview(){
  const host=document.getElementById(`${APP}-import-preview`);
  if(!host||!state.importPreview)return;
  const rows=state.importPreview.rows;
- // إبقاء معاينة «لا تغيير / جاهز» متزامنة مع خيار استيراد الملاحظات.
- rows.forEach(r=>{
-   if(r.baseStatus!=='ready')return;
-   const gradeSame=Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-6;
-   const feedbackSame=!r.feedback||clean(r.student?.feedback)===clean(r.feedback);
-   if(gradeSame&&(!state.importFeedback||feedbackSame)){r.status='unchanged';r.reason='الدرجة مطابقة للموجودة في مدرستي';}
-   else{r.status='ready';r.reason='';}
- });
- const ready=rows.filter(r=>r.status==='ready');
- const unchanged=rows.filter(r=>r.status==='unchanged').length;
- const bad=rows.length-ready.length-unchanged;
- const unmatched=rows.filter(r=>r.status==='unmatched').length;
- const invalid=rows.filter(r=>r.status==='invalid').length;
- const ambiguous=rows.filter(r=>['ambiguous','duplicate','identity_conflict'].includes(r.status)).length;
- const classAlerts=rows.filter(r=>r.classWarning).length;
- const fileGrades=rows.map(r=>r.grade).filter(Number.isFinite);
- const maxFile=fileGrades.length?Math.max(...fileGrades):null;
- const platformLimits=[...new Set(state.students.map(s=>s.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
- const cap=platformLimits.length===1?fmt(platformLimits[0]):platformLimits.length?platformLimits.map(x=>fmt(x)).slice(0,5).join(' / '):'غير متاح';
- const notesWarning=state.importPreview.numericFeedbackCount?`<div class="${APP}-note">تنبيه: يوجد ${state.importPreview.numericFeedbackCount} صفًا يحتوي رقمًا في عمود الملاحظات (مثل 14). <b>لن تُنقل الملاحظات تلقائيًا</b> إلا إذا فعّلت الخيار أدناه.</div>`:'';
+ for(const r of rows){
+  if(r.baseStatus!=='ready'&&r.baseStatus!=='zero_decision')continue;
+  const status=resolvedImportCode(r);
+  const feedback=nextProjectFeedback(r);
+  r.nextFeedback=feedback.text;
+  r.feedbackSource=feedback.source;
+  r.feedbackBand=feedback.band;
+  r.feedbackPercent=feedback.percent;
+  if(importZeroNeedsDecision(r.grade,status)){
+   r.status='zero_decision';
+   r.reason='الصفر بدون حالة تسليم: اختر سلّم أو لم يسلّم';
+   continue;
+  }
+  const sameGrade=Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-6;
+  const sameFeedback=clean(r.student?.feedback)===clean(r.nextFeedback);
+  r.status=sameGrade&&sameFeedback?'unchanged':'ready';
+  r.reason=r.status==='unchanged'?'الدرجة والملاحظة مطابقتان في مدرستي':'';
+ }
+ const ready=rows.filter(r=>r.status==='ready'),unchanged=rows.filter(r=>r.status==='unchanged');
+ const pending=rows.filter(r=>r.status==='zero_decision'),rejected=rows.filter(r=>!['ready','unchanged','zero_decision'].includes(r.status));
+ const numericNotes=state.importPreview.numericFeedbackCount||0;
+ const classWarning=rows.filter(r=>r.classWarning).length;
+ const autoCount=ready.filter(r=>r.feedbackSource==='auto').length;
+ const submittedZero=ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length;
+ const notSubmittedZero=ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length;
+ const changed=ready.filter(r=>Number.isFinite(r.student?.grade)).length;
+ const canApply=!!state.fetchAudit?.complete&&ready.length>0&&pending.length===0;
+ const limits=[...new Set(state.students.map(r=>r.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
+ const val=r=>Number.isFinite(r)?fmt(r):'—';
  host.innerHTML=`
- <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الصفوف: ${rows.length} · <b>جاهز للتغيير: ${ready.length}</b> · مطابق بالفعل: ${unchanged} · يحتاج مراجعة: ${bad} · غير مطابق: ${unmatched} · درجة غير صالحة: ${invalid} · ملتبس: ${ambiguous} · تنبيه الفصل: ${classAlerts}</div>
- <div class="${APP}-note">أعلى درجة في الملف: <b>${maxFile===null?'—':fmt(maxFile)}</b> · الدرجة الكلية في مدرستي: <b>${esc(cap)}</b> · الطلاب المحملون: ${state.students.length}.</div>
- ${classAlerts?`<div class="${APP}-note"><b>مراجعة الفصل:</b> ${classAlerts} طالبًا اختلف عرض الفصل لهم. طابقتهم الهوية الرقمية الفريدة؛ راجع فصل Excel وفصل مدرستي في الجدول قبل الحفظ.</div>`:''}
- ${notesWarning}
- <label class="${APP}-note" style="display:block;cursor:pointer"><input id="${APP}-import-feedback" type="checkbox" ${state.importFeedback?'checked':''}> استيراد الملاحظات أيضًا (اختياري، غير مفعّل افتراضيًا). إن لم تُفعّل هذا الخيار ستبقى ملاحظات مدرستي كما هي.</label>
- <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt" ${(state.fetchAudit?.complete&&ready.length)?'':'disabled'}>تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn" ${(state.fetchAudit?.complete&&ready.length)?'':'disabled'}>حفظ ${ready.length} درجة على مدرستي</button><button type="button" id="${APP}-preview-xlsx" class="${APP}-btn alt">تصدير المعاينة Excel</button></div>
- <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>الصف</th><th>الطالب في الملف</th><th>اسم مدرستي</th><th>رقم الطالب</th><th>فصل Excel</th><th>فصل مدرستي</th><th>حالة التسليم</th><th>طريقة المطابقة</th><th>الدرجة الحالية</th><th>الدرجة الجديدة</th><th>الدرجة القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
- ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||'—')}</td><td>${esc(r.student?.className||'—')}${r.classWarning?`<div style="font-size:10px;color:#975a16">${esc(r.classWarning)}</div>`:''}</td><td>${esc(r.submissionStatus||'غير محدد')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.student?.grade)?fmt(r.student.grade):'—'}</td><td><b>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</b></td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز للتطبيق</span>`:`<span class="${APP}-pill ${r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
- </tbody></table></div>`;
+  <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الطلاب في الملف: ${rows.length} · جاهز للرصد: <b>${ready.length}</b> · مطابق: ${unchanged.length} · مرفوض للمراجعة: ${rejected.length} · صفر يحتاج قرار: <b>${pending.length}</b></div>
+  <div class="${APP}-note">الدرجة القصوى للمشروع في مدرستي: ${esc(limits.length?limits.map(val).join(' / '):'غير معروفة')} · الطلاب المحملون: ${state.students.length} · عدد تغيير الدرجات الموجودة: ${changed} · سلّم وأخذ صفر: ${submittedZero} · لم يسلّم ورُصد له صفر: ${notSubmittedZero} · ملاحظات ستُولّد: ${autoCount}</div>
+  ${classWarning?`<div class="${APP}-note">تنبيه: تختلف تسمية الفصل لدى ${classWarning} طالبًا. راجع فصل الملف وفصل مدرستي. مطابقة رقم الطالب الفريد لا تُرفض بسبب اختلاف النص وحده.</div>`:''}
+  ${numericNotes?`<div class="${APP}-note">ملاحظة: يحتوي الملف على ${numericNotes} قيمة رقمية في عمود الملاحظات. لا تُستعمل الأرقام وحدها بوصفها تعليقًا تربويًا.</div>`:''}
+  <div class="${APP}-note"><label style="display:block;cursor:pointer"><input type="checkbox" id="${APP}-auto-comments" ${state.autoFeedback?'checked':''}> <b>توليد ملاحظات تلقائية وفق نسبة الدرجة وحالة التسليم</b> (مفعّل افتراضيًا)</label><label style="display:block;margin-top:7px;cursor:pointer"><input type="checkbox" id="${APP}-import-feedback" ${state.importFeedback?'checked':''}> استخدام الملاحظات النصية من Excel عند وجودها، بدل الملاحظة التلقائية</label><div style="margin-top:6px">لن تُغيّر ملاحظات الطالب في مدرستي إلا بعد المعاينة والتأكيد والحفظ.</div></div>
+  ${!state.fetchAudit?.complete?`<div class="${APP}-note"><b>الرصد موقوف:</b> لم يثبت اكتمال صفحات الطلاب في المشروع. يمكنك تصدير المعاينة ومراجعتها فقط.</div>`:''}
+  ${pending.length?`<div class="${APP}-note"><b>قرار المعلم مطلوب:</b> يوجد ${pending.length} طالبًا بدرجة صفر دون بيان تسليم واضح. اختر حالة كل طالب من عمود «قرار الصفر» قبل الرصد، ولا تعتبر الصفر تلقائيًا عدم تسليم.</div>`:''}
+  <div class="${APP}-toolbar" style="margin-bottom:10px">
+   <button id="${APP}-save" class="${APP}-btn" ${canApply?'':'disabled'}>تأكيد رصد ${ready.length} طالبًا على مدرستي</button>
+   <button id="${APP}-patch" class="${APP}-btn alt" ${canApply?'':'disabled'}>تعبئة الخانات المرئية فقط (دون حفظ)</button>
+   <button id="${APP}-preview-xlsx" class="${APP}-btn alt">تصدير المعاينة Excel</button>
+  </div>
+  <div class="${APP}-tablewrap" style="max-height:440px"><table class="${APP}-table"><thead><tr>
+   <th>#</th><th>اسم Excel</th><th>اسم مدرستي</th><th>الرقم</th><th>فصل Excel</th><th>فصل مدرستي</th><th>حالة التسليم</th><th>قرار الصفر</th><th>الدرجة القديمة</th><th>الدرجة الجديدة</th><th>من</th><th>الملاحظة بعد الرصد</th><th>الحالة</th>
+  </tr></thead><tbody>
+  ${rows.map(r=>{
+   const stateCode=resolvedImportCode(r);
+   const decision=importZeroNeedsDecision(r.grade,r.submissionCode)&&r.student&&r.baseStatus!=='duplicate'&&r.baseStatus!=='identity_conflict';
+   return `<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||'—')}</td><td>${esc(r.student?.className||'—')}</td>
+    <td>${esc(r.submissionStatus||({'submitted':'سلّم','not_submitted':'لم يسلّم','unknown':'غير محسوم'}[stateCode]))}</td>
+    <td>${decision?`<select data-zero-key="${esc(r.zeroKey)}" style="padding:7px;border:1px solid #d97706;border-radius:8px"><option value="">اختر حالة الصفر</option><option value="submitted" ${stateCode==='submitted'?'selected':''}>سلّم وأخذ صفر</option><option value="not_submitted" ${stateCode==='not_submitted'?'selected':''}>لم يسلّم ورُصد صفر</option></select>`:'—'}</td>
+    <td>${val(r.student?.grade)}</td><td><b>${val(r.grade)}</b></td><td>${val(r.student?.totalGrade)}</td><td>${esc(r.nextFeedback||'—')}<div style="font-size:10px;color:#64748b">${esc(r.feedbackSource==='auto'?'تلقائية':r.feedbackSource==='file'?'من الملف':'موجودة سابقًا')}${r.feedbackBand?' · '+esc(r.feedbackBand):''}</div></td>
+    <td><span class="${APP}-pill ${r.status==='ready'||r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.status==='ready'?'جاهز للرصد':r.status==='unchanged'?'مطابق بالفعل':r.reason||'يحتاج مراجعة')}</span></td></tr>`;
+  }).join('')}</tbody></table></div>`;
+ document.getElementById(`${APP}-auto-comments`)?.addEventListener('change',e=>{state.autoFeedback=!!e.target.checked;renderImportPreview();});
  document.getElementById(`${APP}-import-feedback`)?.addEventListener('change',e=>{state.importFeedback=!!e.target.checked;renderImportPreview();});
+ host.querySelectorAll('select[data-zero-key]').forEach(select=>select.addEventListener('change',()=>{
+  state.zeroDecisions[select.dataset.zeroKey]=select.value;
+  renderImportPreview();
+ }));
  document.getElementById(`${APP}-patch`)?.addEventListener('click',patchVisibleImport);
  document.getElementById(`${APP}-save`)?.addEventListener('click',saveImport);
  document.getElementById(`${APP}-preview-xlsx`)?.addEventListener('click',exportImportPreview);
 };
 
-  const exportImportPreview = function exportImportPreview(){
+    const exportImportPreview = function exportImportPreview(){
  if(!globalThis.XLSX)return toast('مكتبة Excel غير متاحة.','error');
  const rows=state.importPreview?.rows||[];
  if(!rows.length)return toast('لا توجد معاينة لتصديرها.','error');
