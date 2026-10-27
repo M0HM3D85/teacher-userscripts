@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.6.0-beta1
+// @version      1.6.0-beta2
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.6.0-beta1';
+  const VERSION = '1.6.0-beta2';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -89,6 +89,8 @@
     deepByProject: new Map(), deepByUrl: new Map(), deepScanned: false, deepBusy: false,
     importPreview: null,
     importFeedback: false,
+    autoFeedback: true,
+    zeroDecisions: {},
     activityTitle: '',
     totalExpected: 0,
     studentPage: 1,
@@ -456,7 +458,75 @@
  return rows;
 };
 
-    const band = row => {
+  
+  // قواعد الرصد مقتبسة من النسخة المستقرة للواجبات، مع المحافظة على حقول المشاريع.
+  // صفرٌ دون حالة صريحة ليس دليلًا على التسليم أو عدمه.
+  const normalizeProjectSubmission = value => {
+    const v=norm(value);
+    if(!v)return 'unknown';
+    if(/لم\s*(?:يتم\s*)?تسليم|لم\s*يسلم|غير\s*مسلم|بدون\s*تسليم|لم\s*ينفذ|not\s*submitted|not\s*turned\s*in|missing|no\s*submission/i.test(v))return 'not_submitted';
+    if(/تسليم\s*مبكر|سلم\s*مبكر|تم\s*التسليم|تم\s*تسليم|سلم\s*(?:النشاط|المشروع)|submitted|turned\s*in|completed|complete/i.test(v))return 'submitted';
+    return 'unknown';
+  };
+  const classifyProjectSubmission = student => {
+    const raw=student?.rawFields||{};
+    const feedback=clean(student?.feedback??raw.feedBack??'');
+    const feedbackCode=normalizeProjectSubmission(feedback);
+    const grade=Number.isFinite(student?.grade)?student.grade:null;
+    const outside=/^(?:true|1)$/i.test(clean(raw.IsOutSideSystem))
+      ||clean(raw.SolvingType)==='3';
+    const rawHas=raw.hasAnswer??raw.HasAnswer;
+    const hasNative=rawHas!==undefined&&rawHas!==null&&clean(rawHas)!=='';
+    const nativeTrue=hasNative&&truthy(rawHas);
+    const nativeFalse=hasNative&&!truthy(rawHas);
+    if(feedbackCode==='not_submitted')return {key:'not_submitted',source:'feedback',label:Number.isFinite(grade)&&grade===0?'لم يسلّم · رُصد صفر':'لم يسلّم'};
+    if(feedbackCode==='submitted')return {key:'submitted',source:'feedback',label:grade===0?'سلّم · حصل على صفر':'سلّم'};
+    if(!outside&&nativeTrue)return {key:'submitted',source:'platform',label:grade===0?'سلّم · حصل على صفر':'سلّم'};
+    if(!outside&&nativeFalse)return {key:'not_submitted',source:'platform',label:grade===0?'لم يسلّم · رُصد صفر':'لم يسلّم'};
+    if(Number.isFinite(grade)&&grade>0)return {key:'submitted',source:'positive_grade',label:'سلّم · استنتاج من الدرجة'};
+    if(Number.isFinite(grade)&&grade===0)return {key:'unknown',source:'zero_without_status',label:'صفر · التسليم غير محسوم'};
+    return {key:'unknown',source:'unverified',label:'التسليم غير محسوم'};
+  };
+  const autoFeedbackBands = [
+    {min:90,label:'متميز',phrases:['أداء متميز، أحسنت وواصل تميزك.','ممتاز، إتقان واضح للمهارات، استمر بهذا التميز.','عمل رائع ومستوى متميز، واصل تقدمك.','أداء متقن، بارك الله في جهودك وواصل التألق.']},
+    {min:80,label:'رائع',phrases:['أداء رائع، استمر بهذا المستوى.','مستوى رائع وجهد واضح، واصل التقدم.','أحسنت، أداء قوي وقريب من التميز.','نتيجة رائعة، استمر في المراجعة للحفاظ على هذا المستوى.']},
+    {min:70,label:'جيد',phrases:['أداء جيد، وبمزيد من المراجعة ستكون أفضل.','نتيجة جيدة، واصل التدريب لرفع مستوى الإتقان.','أحسنت، لديك أساس جيد ويحتاج إلى مزيد من المراجعة.','مستوى جيد، ركز على النقاط التي تحتاج تعزيزًا.']},
+    {min:60,label:'مقبول',phrases:['أداء مقبول، تحتاج إلى مراجعة بعض المهارات.','لديك تقدم جيد، وراجع المهارات التي لم تتقنها بعد.','واصل المحاولة، مع مزيد من المراجعة سيتحسن أداؤك.','نتيجة مقبولة، ركز على مراجعة الدرس والتدرب أكثر.']},
+    {min:50,label:'يحتاج تعزيز',phrases:['بداية جيدة، ركز على مراجعة الدرس وتدرب أكثر.','تحتاج إلى تعزيز بعض المهارات، والمراجعة ستساعدك على التحسن.','واصل التدريب ولا تتوقف، لديك فرصة جيدة لرفع مستواك.','راجع الأفكار الأساسية وحاول حل تدريبات إضافية.']},
+    {min:-Infinity,label:'يحتاج مراجعة',phrases:['تحتاج إلى مزيد من المراجعة والتدريب، وتستطيع التحسن.','راجع الدرس من جديد وركز على المهارات الأساسية ثم أعد التدريب.','تحتاج إلى تدريب إضافي، واصل المحاولة وستتحسن نتائجك.','ركز على فهم الأساسيات واطلب المساعدة في النقاط غير الواضحة.']}
+  ];
+  const projectHash = value => {
+    let h=2166136261;
+    for(const c of String(value??'')){h^=c.charCodeAt(0);h=Math.imul(h,16777619);}
+    return h>>>0;
+  };
+  const autoProjectFeedback = (grade,total,id,submission) => {
+    if(!Number.isFinite(grade)||!Number.isFinite(total)||total<=0)return {text:'',band:'',percent:null};
+    const percent=Number(Math.max(0,Math.min(100,grade/total*100)).toFixed(1));
+    let phrases,band;
+    if(submission==='not_submitted'){
+      band='لم يسلّم';
+      phrases=['لم يتم تسليم النشاط أو المشروع.','النشاط أو المشروع غير مسلّم، احرص على إكمال المهام القادمة في موعدها.','لم يُسلّم النشاط أو المشروع؛ يرجى متابعة أعمالك وتسليمها في موعدها.'];
+    }else if(submission==='submitted'&&grade===0){
+      band='سلّم بدرجة صفر';
+      phrases=['تم تسليم النشاط أو المشروع، لكن الأداء يحتاج إلى مراجعة شاملة.','وصل التسليم، ولم تتحقق درجات؛ راجع المطلوب وحاول تحسين العمل.','تم التسليم بدرجة صفر؛ راجع المهارات المطلوبة وتدرّب عليها.'];
+    }else if(submission==='unknown'&&grade===0){
+      return {text:'',band:'غير محسوم',percent};
+    }else{
+      const choice=autoFeedbackBands.find(b=>percent>=b.min)||autoFeedbackBands.at(-1);
+      phrases=choice.phrases;band=choice.label;
+    }
+    return {text:phrases[projectHash(String(id)+'|'+grade+'|'+total+'|'+band)%phrases.length],band,percent};
+  };
+  const importZeroNeedsDecision = (grade,status) => Number.isFinite(grade)&&grade===0&&status==='unknown';
+  const zeroDecisionCounts = rows => ({
+    submittedZero:rows.filter(r=>r.grade===0&&classifyProjectSubmission(r).key==='submitted').length,
+    notSubmittedZero:rows.filter(r=>r.grade===0&&classifyProjectSubmission(r).key==='not_submitted').length,
+    notSubmittedUnscored:rows.filter(r=>!Number.isFinite(r.grade)&&classifyProjectSubmission(r).key==='not_submitted').length,
+    unknown:rows.filter(r=>classifyProjectSubmission(r).key==='unknown').length
+  });
+
+  const band = row => {
     if (!Number.isFinite(row.grade) || !Number.isFinite(row.totalGrade) || row.totalGrade <= 0) return 'none';
     const p = (row.grade / row.totalGrade) * 100;
     if (p >= 90) return 'excellent';
