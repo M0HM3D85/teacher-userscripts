@@ -518,6 +518,22 @@
     }
     return {text:phrases[projectHash(String(id)+'|'+grade+'|'+total+'|'+band)%phrases.length],band,percent};
   };
+  const resolvedImportCode = row => row.submissionCode!=='unknown'
+    ?row.submissionCode
+    :(state.zeroDecisions?.[row.zeroKey]||'unknown');
+  const isProjectTextFeedback = value => {
+    const text=clean(value);
+    return !!text && !/^[\d\s.,٠-٩۰-۹-]+$/.test(text);
+  };
+  const nextProjectFeedback = row => {
+    const existing=clean(row.student?.feedback||'');
+    const raw=isProjectTextFeedback(row.feedback)?clean(row.feedback):'';
+    const code=resolvedImportCode(row);
+    const generated=autoProjectFeedback(row.grade,row.student?.totalGrade,studentIdKey(row.student?.studentId||row.sid),code);
+    if(state.importFeedback&&raw)return {text:raw,source:'file',band:generated.band,percent:generated.percent};
+    if(state.autoFeedback&&generated.text)return {text:generated.text,source:'auto',band:generated.band,percent:generated.percent};
+    return {text:existing,source:'existing',band:generated.band,percent:generated.percent};
+  };
   const importZeroNeedsDecision = (grade,status) => Number.isFinite(grade)&&grade===0&&status==='unknown';
   const zeroDecisionCounts = rows => ({
     submittedZero:rows.filter(r=>r.grade===0&&classifyProjectSubmission(r).key==='submitted').length,
@@ -857,6 +873,7 @@
    [student.name,studentNameFromSelect(student.studentId),f.FullName,f.fullName,f.StudentName,f.Name].forEach(v=>add(nameMap,studentNameKey(v),student));
   });
 
+  state.zeroDecisions={};
   const preview=[],matchedIds=new Map();
   for(let i=1;i<aoa.length;i++){
    const row=aoa[i]||[];
@@ -867,6 +884,8 @@
    const grade=num(row[cols.grade]);
    const feedback=cols.feedback>=0?clean(row[cols.feedback]):'';
    const submissionStatus=cols.submissionStatus>=0?clean(row[cols.submissionStatus]):'';
+   const submissionCode=normalizeProjectSubmission(submissionStatus);
+   const zeroKey=String(i+1)+'|'+studentIdKey(sid)+'|'+studentNameKey(name);
    const idMatches=idMap.get(studentIdKey(sid))||[];
    const nameKey=studentNameKey(name);
    let nameMatches=nameMap.get(nameKey)||[];
@@ -912,6 +931,12 @@
    }else if(status==='ready'&&(!Number.isFinite(student?.totalGrade)||student.totalGrade<=0)){
     status='invalid';reason='الدرجة الكلية في مدرستي غير معروفة؛ لن يتم الحفظ دون تحقق';
    }
+   if(status==='ready'&&submissionCode==='not_submitted'&&Number.isFinite(grade)&&grade>0){
+     status='invalid';reason='تعارض: الملف يقول لم يسلّم لكن درجته أكبر من صفر';
+   }
+   if(status==='ready'&&importZeroNeedsDecision(grade,submissionCode)){
+     status='zero_decision';reason='درجة صفر دون حالة تسليم مؤكدة؛ اختر سلّم أو لم يسلّم قبل الرصد';
+   }
    // الرقم الفريد الموثوق يثبت الهوية؛ اختلاف نص الفصل تحذير للمراجعة، لا سبب للرفض.
    if(student&&className&&clean(student.className)&&classKey(className)!==classKey(student.className)){
      if(verifiedIdMatch)classWarning='تنبيه: نص الفصل مختلف؛ رقم الطالب فريد ومطابق، راجع الفصل';
@@ -931,7 +956,7 @@
       &&(!state.importFeedback||!feedback||clean(student.feedback)===feedback)){
     status='unchanged';reason='الدرجة مطابقة للموجودة في مدرستي';
    }
-   preview.push({sourceRow:i+1,sid,name,className,classWarning,grade,feedback,submissionStatus,student,method,status,baseStatus:status==='unchanged'?'ready':status,reason});
+   preview.push({sourceRow:i+1,sid,name,className,classWarning,grade,feedback,submissionStatus,submissionCode,zeroKey,student,method,status,baseStatus:status==='unchanged'?'ready':status,reason,nextFeedback:student?.feedback||'',feedbackSource:'existing'});
   }
   const numberNotes=preview.filter(x=>/^\d+(?:[.,]\d+)?$/.test(x.feedback)).length;
   state.importFeedback=false;
