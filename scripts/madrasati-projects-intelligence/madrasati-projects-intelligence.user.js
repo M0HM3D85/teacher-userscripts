@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.9
+// @version      1.6.0-beta1
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.9';
+  const VERSION = '1.6.0-beta1';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -91,6 +91,9 @@
     importFeedback: false,
     activityTitle: '',
     totalExpected: 0,
+    studentPage: 1,
+    studentPageSize: 20,
+    fetchAudit: {complete:false,expected:0,received:0,requests:0,pages:0,reason:'not_checked'},
     lastRefresh: null
   };
 
@@ -404,30 +407,53 @@
     return new Set(ids).size;
   };
 
-  const fetchAllStudents = async () => {
-    const base = projectParams();
-    if (!base.ProjectId || !base.PublishedProjectId) throw new Error('تعذر قراءة معرف النشاط المنشور من الصفحة.');
-    const expected = expectedStudentCount();
-    const byId = new Map();
-    for (let page = 1; page <= 100; page++) {
-      const html = await postForm('/Projects/Projects/GetGradeStudentsList', {
-        ...base, StudentIds: '', Status: 'All', SortBy: 'name_asc', PageNumber: page
-      });
-      const rows = parseStudentsHtml(html);
-      if (!rows.length) break;
-      let newCount = 0;
-      rows.forEach(row => {
-        if (!byId.has(row.studentId)) newCount++;
-        byId.set(row.studentId, row);
-      });
-      if ((expected && byId.size >= expected) || newCount === 0) break;
-    }
-    const rows = [...byId.values()].sort((a, b) => compareNames(a.name, b.name));
-    state.totalExpected = expected || rows.length;
-    return rows;
-  };
+  const fetchAllStudents = async function fetchAllStudents(){
+ const base=projectParams();
+ if(!base.ProjectId||!base.PublishedProjectId)throw new Error('تعذر قراءة معرف المشروع المنشور من صفحة الرصد.');
+ const expected=expectedStudentCount(),byId=new Map();
+ let requests=0,lastPage=0,reason='not_started',complete=false,mode='camel';
+ const request=async(page,style)=>{
+  const params={...base,StudentIds:'',Status:'All',SortBy:'name_asc'};
+  if(style==='camel'){params.pageNumber=page;params.pageSize=200;}
+  else{params.PageNumber=page;params.PageSize=200;}
+  requests++;
+  return parseStudentsHtml(await postForm('/Projects/Projects/GetGradeStudentsList',params));
+ };
+ const merge=rows=>{
+  let added=0;
+  for(const r of rows){
+   const key=studentIdKey(r.studentId);
+   if(!key)continue;
+   if(!byId.has(key))added++;
+   byId.set(key,r);
+  }
+  return added;
+ };
+ try{
+  for(let page=1;page<=100;page++){
+   let rows=await request(page,mode);
+   let added=merge(rows);
+   if(page>1&&(!rows.length||!added)&&(!expected||byId.size<expected)&&mode==='camel'){
+    const alt=await request(page,'legacy'),other=merge(alt);
+    if(other>0){rows=alt;added=other;mode='legacy';}
+   }
+   if(rows.length&&added)lastPage=page;
+   if(expected&&byId.size>=expected){complete=true;reason='expected_roster';break;}
+   if(!rows.length){complete=expected===0;reason='empty_page';break;}
+   if(!added){reason='repeated_page';complete=false;break;}
+   if(page===100){reason='page_limit';complete=false;}
+  }
+ }catch(error){
+  reason='request_error';
+  if(!byId.size)throw error;
+ }
+ const rows=[...byId.values()].sort((a,b)=>compareNames(a.name,b.name));
+ state.totalExpected=expected||rows.length;
+ state.fetchAudit={complete,expected,received:rows.length,requests,pages:lastPage,reason,requestMode:mode};
+ return rows;
+};
 
-  const band = row => {
+    const band = row => {
     if (!Number.isFinite(row.grade) || !Number.isFinite(row.totalGrade) || row.totalGrade <= 0) return 'none';
     const p = (row.grade / row.totalGrade) * 100;
     if (p >= 90) return 'excellent';
@@ -1027,6 +1053,7 @@
 };
 
     const saveImport = async function(){
+ if(!state.fetchAudit?.complete)return toast('لم يثبت اكتمال جميع صفحات الطلاب، تم إيقاف الحفظ الجماعي لحماية درجات المشروع.','error');
  const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
  if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
