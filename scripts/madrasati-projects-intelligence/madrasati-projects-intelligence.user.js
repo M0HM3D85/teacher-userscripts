@@ -404,7 +404,7 @@
 
   const expectedStudentCount = (doc=document) => {
     const optionIds = [...doc.querySelectorAll('#studentsFilter option')]
-      .map(o => clean(o.value)).filter(Boolean);
+      .map(o => studentIdKey(o.value)).filter(v => v && !/^(?:all|select|-1|0)$/i.test(v));
     if (optionIds.length) return new Set(optionIds).size;
     const ids = [...doc.querySelectorAll('.multiselect-container input[type="checkbox"]')]
       .map(x => clean(x.value)).filter(v => /^\d+$/.test(v));
@@ -653,6 +653,8 @@
   };
 
   const refreshGrade = async () => {
+    state.fetchAudit={complete:false,expected:0,received:0,requests:0,pages:0,reason:'refreshing'};
+    state.importPreview=null;
     setBusy(true, 'جاري جلب جميع الطلاب…');
     try {
       state.activityTitle = getActivityTitle(document);
@@ -1097,7 +1099,9 @@
  let posted=0;
  try{
   // اقرأ أحدث حالة للطلاب قبل أي كتابة على مدرستي؛ الخانات القديمة قد تكون تغيّرت.
-  const latest=await fetchAllStudents(),latestById=new Map(latest.map(row=>[studentIdKey(row.studentId),row]));
+  const latest=await fetchAllStudents();
+  if(!state.fetchAudit?.complete)throw new Error('تعذر إعادة التحقق من جميع صفحات الطلاب قبل الحفظ؛ لم تُرسل أي درجات.');
+  const latestById=new Map(latest.map(row=>[studentIdKey(row.studentId),row]));
   if(ready.some(r=>!latestById.has(studentIdKey(r.student.studentId))))throw new Error('بعض سجلات الطلاب لم تعد متاحة في مدرستي؛ لم تُرسل الدرجات.');
   const changes=ready.map(r=>{
     const student=latestById.get(studentIdKey(r.student.studentId));
@@ -1112,6 +1116,7 @@
    // تحقّق من أول دفعة قبل إرسال بقية الملف لتقليل أثر اختلاف نموذج الحفظ بين الواجبات والمشاريع.
    if(i===0){
     const firstFetch=await fetchAllStudents();
+    if(!state.fetchAudit?.complete)throw new Error('فقد التحقق من اكتمال الصفحات بعد الدفعة الأولى؛ توقفت الدفعات التالية.');
     const firstMap=new Map(firstFetch.map(r=>[String(r.studentId),r]));
     const miss=batch.filter(r=>!Number.isFinite(firstMap.get(String(r.studentId))?.grade)||Math.abs(firstMap.get(String(r.studentId)).grade-r.grade)>1e-4);
     state.students=firstFetch;
@@ -1120,7 +1125,9 @@
    const status=document.getElementById(`${APP}-status`);
    if(status)status.textContent=`أُرسل ${posted} من ${changes.length} درجة…`;
   }
-  const after=await fetchAllStudents(),map=new Map(after.map(r=>[String(r.studentId),r]));
+  const after=await fetchAllStudents();
+  if(!state.fetchAudit?.complete)throw new Error('تعذر تأكيد اكتمال الرصد بعد الحفظ؛ يجب مراجعة الدرجات في مدرستي.');
+  const map=new Map(after.map(r=>[String(r.studentId),r]));
   const mismatch=ready.filter(r=>!Number.isFinite(map.get(String(r.student.studentId))?.grade)||Math.abs(map.get(String(r.student.studentId)).grade-r.grade)>1e-4);
   state.students=after;
   if(mismatch.length){
