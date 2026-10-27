@@ -6,7 +6,7 @@ const source = readFileSync('scripts/madrasati-teaching-tasks-intelligence/madra
 const version = '2.0.0-beta6';
 const assertIncludes = (needle, label = needle) => assert(source.includes(needle), 'Missing: ' + label);
 
-assert.match(source, /^\/\/ @version\s+2\.0\.0-beta5\s*$/m);
+assert.match(source, /^\/\/ @version\s+2\.0\.0-beta6\s*$/m);
 assert.equal((source.match(/^\/\/ ==UserScript==/gm) || []).length, 1, 'Exactly one userscript header');
 for (const route of ['/Teacher/Assignments/*','/Projects/Projects/*','/SchoolManagment/Actions/MyStudents*']) assertIncludes(route);
 assert.equal((source.match(/^\/\/ @require\s+/gm) || []).length, 2, 'XLSX and pinned assignment core required');
@@ -14,7 +14,7 @@ assert(source.includes('@require      https://cdn.jsdelivr.net/gh/M0HM3D85/teach
 for (const name of ['MadrasatiAssignmentIntelligenceEnhanced =','MadrasatiProjectsIntelligence =','MadrasatiTeachingTasksIntelligence =']) assertIncludes(name);
 for (const name of ['const classFromBlock =','const readImportFile =','const ensureImportModal =','const filteredIndexAssignments =','const postProjectRows =']) assertIncludes(name);
 assert(!source.includes('const VERSION = \'1.1.7\''), 'Do not reinitialize pinned assignment core inside unified script');
-assert.equal((source.match(/const VERSION = '2\.0\.0-beta5'/g)||[]).length, 2, 'Both visible module versions match unified version');
+assert.equal((source.match(/const VERSION = '2\.0\.0-beta6'/g)||[]).length, 2, 'Both visible module versions match unified version');
 new vm.Script(source, { filename: 'madrasati-unified.user.js' });
 
 // Read helper functions directly from the actual project module; no reimplementation.
