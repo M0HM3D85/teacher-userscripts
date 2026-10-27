@@ -34,7 +34,7 @@ class Element {
 const doc={
   head:new Element('head'),body:new Element('body'),
   createElement:tag=>new Element(tag),
-  getElementById:id=>nodes.get(id)||null,
+  getElementById:id=>nodes.get(id)||(id==='MAI-close'?new Element('button'):null),
   querySelector:()=>mount,
   querySelectorAll:()=>[]
 };
