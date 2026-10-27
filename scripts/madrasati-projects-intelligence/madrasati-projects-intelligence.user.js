@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.5.8
+// @version      1.5.9
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.5.8';
+  const VERSION = '1.5.9';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -972,12 +972,66 @@
     return html;
   };
 
+  const confirmProjectImport = function confirmProjectImport(message){
+ if(document.getElementById(`${APP}-save-confirm`))return Promise.resolve(false);
+ return new Promise(resolve=>{
+  const previousFocus=document.activeElement;
+  const overlay=document.createElement('div');
+  overlay.id=`${APP}-save-confirm`;
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  overlay.setAttribute('aria-label','تأكيد حفظ درجات المشروع');
+  overlay.dir='rtl';
+  overlay.style.cssText='position:fixed!important;inset:0!important;background:rgba(15,23,42,.70)!important;display:flex!important;align-items:center!important;justify-content:center!important;padding:18px!important;direction:rtl!important;box-sizing:border-box!important;';
+  overlay.style.setProperty('z-index','2147483647','important');
+  const box=document.createElement('div');
+  box.style.cssText='box-sizing:border-box;background:#fff;color:#172033;border-radius:16px;padding:24px;max-width:96vw;width:min(620px,96vw);max-height:90vh;overflow:auto;box-shadow:0 24px 80px rgba(0,0,0,.32);font-family:Tahoma,Arial,sans-serif;';
+  const title=document.createElement('h2');
+  title.textContent='تأكيد حفظ درجات المشروع';
+  title.style.cssText='font-size:17px;font-weight:800;margin:0 0 12px;text-align:right;';
+  const messageBox=document.createElement('p');
+  messageBox.textContent=String(message||'');
+  messageBox.style.cssText='font-size:14px;line-height:2;white-space:pre-line;margin:0 0 22px;text-align:right;';
+  const actions=document.createElement('div');
+  actions.style.cssText='display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-start;';
+  const yes=document.createElement('button');
+  yes.type='button';yes.textContent='نعم، احفظ الدرجات';
+  yes.style.cssText='border:0;border-radius:9px;background:#156b37;color:#fff;padding:12px 22px;font:700 14px Tahoma,Arial;cursor:pointer;';
+  const no=document.createElement('button');
+  no.type='button';no.textContent='إلغاء';
+  no.style.cssText='border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#334155;padding:12px 22px;font:700 14px Tahoma,Arial;cursor:pointer;';
+  let finished=false;
+  const finish=accepted=>{
+   if(finished)return;
+   finished=true;
+   document.removeEventListener('keydown',onKey);
+   overlay.remove();
+   try{previousFocus?.focus?.();}catch{}
+   resolve(accepted);
+  };
+  const onKey=e=>{
+   if(e.key==='Escape'){e.preventDefault();finish(false);}
+   if(e.key==='Tab'){
+    if(e.shiftKey&&document.activeElement===yes){e.preventDefault();no.focus();}
+    else if(!e.shiftKey&&document.activeElement===no){e.preventDefault();yes.focus();}
+   }
+  };
+  yes.addEventListener('click',()=>finish(true),{once:true});
+  no.addEventListener('click',()=>finish(false),{once:true});
+  overlay.addEventListener('click',e=>{if(e.target===overlay)finish(false);});
+  actions.append(yes,no);box.append(title,messageBox,actions);overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown',onKey);
+  no.focus();
+ });
+};
+
     const saveImport = async function(){
  const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
  if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
  const noteLabel=state.importFeedback?'مع الملاحظات':'مع الحفاظ على ملاحظات مدرستي';
- if(!confirm(`سيتم حفظ ${ready.length} درجة في المشروع «${state.activityTitle}» (${noteLabel}).\nسيتم تنزيل نسخة احتياطية قبل الحفظ، ثم التحقق من الدرجات من مدرستي.\n\nمتابعة؟`))return;
+ if(!await confirmProjectImport(`سيتم حفظ ${ready.length} درجة في المشروع «${state.activityTitle}» (${noteLabel}).\nسيتم تنزيل نسخة احتياطية قبل الحفظ، ثم التحقق من الدرجات من مدرستي.\n\nمتابعة؟`))return;
  const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:state.importFeedback?r.feedback:r.student.feedback}));
  downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,rows:backup});
  setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
