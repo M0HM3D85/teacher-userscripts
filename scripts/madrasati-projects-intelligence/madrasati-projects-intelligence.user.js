@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.6.0
+// @version      1.6.1-beta1
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.0
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.1-beta1
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.6.0';
+  const VERSION = '1.6.1-beta1';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -395,7 +395,7 @@
         className: classFromBlock(block),
         grade,
         totalGrade,
-        feedback: clean(fields.feedBack),
+        feedback: clean(fields[Object.keys(fields).find(k=>k.toLowerCase()==='feedback')||'feedBack']),
         hasAnswer: truthy(fields.hasAnswer),
         isApproved: truthy(fields.isApproved),
         rawFields: { ...fields }
@@ -996,12 +996,15 @@
  const submittedZero=ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length;
  const notSubmittedZero=ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length;
  const changed=ready.filter(r=>Number.isFinite(r.student?.grade)).length;
+ const notesOnly=ready.filter(r=>Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length;
+ const firstPage=rows.slice(0,20);
+ const firstPageNotesOnly=firstPage.filter(r=>r.status==='ready'&&Number.isFinite(r.student?.grade)&&Math.abs(r.grade-r.student.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length;
  const canApply=!!state.fetchAudit?.complete&&ready.length>0&&pending.length===0;
  const limits=[...new Set(state.students.map(r=>r.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
  const val=r=>Number.isFinite(r)?fmt(r):'—';
  host.innerHTML=`
   <div class="${APP}-note"><b>${esc(state.importPreview.fileName)}</b> · الورقة: ${esc(state.importPreview.sheetName)} · الطلاب في الملف: ${rows.length} · جاهز للرصد: <b>${ready.length}</b> · مطابق: ${unchanged.length} · مرفوض للمراجعة: ${rejected.length} · صفر يحتاج قرار: <b>${pending.length}</b></div>
-  <div class="${APP}-note">الدرجة القصوى للمشروع في مدرستي: ${esc(limits.length?limits.map(val).join(' / '):'غير معروفة')} · الطلاب المحملون: ${state.students.length} · عدد تغيير الدرجات الموجودة: ${changed} · سلّم وأخذ صفر: ${submittedZero} · لم يسلّم ورُصد له صفر: ${notSubmittedZero} · ملاحظات ستُولّد: ${autoCount}</div>
+  <div class="${APP}-note">الدرجة القصوى للمشروع في مدرستي: ${esc(limits.length?limits.map(val).join(' / '):'غير معروفة')} · الطلاب المحملون: ${state.students.length} · عدد تغيير الدرجات الموجودة: ${changed} · سلّم وأخذ صفر: ${submittedZero} · لم يسلّم ورُصد له صفر: ${notSubmittedZero} · ملاحظات ستُولّد: ${autoCount} · <b>ملاحظات تحتاج تحديثًا دون تغيير الدرجة: ${notesOnly}</b> · منها في أول 20 صفًا من الملف: ${firstPageNotesOnly}</div>
   ${classWarning?`<div class="${APP}-note">تنبيه: تختلف تسمية الفصل لدى ${classWarning} طالبًا. راجع فصل الملف وفصل مدرستي. مطابقة رقم الطالب الفريد لا تُرفض بسبب اختلاف النص وحده.</div>`:''}
   ${numericNotes?`<div class="${APP}-note">ملاحظة: يحتوي الملف على ${numericNotes} قيمة رقمية في عمود الملاحظات. لا تُستعمل الأرقام وحدها بوصفها تعليقًا تربويًا.</div>`:''}
   <div class="${APP}-note"><label style="display:block;cursor:pointer"><input type="checkbox" id="${APP}-auto-comments" ${state.autoFeedback?'checked':''}> <b>توليد ملاحظات تلقائية وفق نسبة الدرجة وحالة التسليم</b> (مفعّل افتراضيًا)</label><label style="display:block;margin-top:7px;cursor:pointer"><input type="checkbox" id="${APP}-import-feedback" ${state.importFeedback?'checked':''}> استخدام الملاحظات النصية من Excel عند وجودها، بدل الملاحظة التلقائية</label><div style="margin-top:6px">لن تُغيّر ملاحظات الطالب في مدرستي إلا بعد المعاينة والتأكيد والحفظ.</div></div>
@@ -1123,7 +1126,8 @@
       fields.StudentId = row.studentId;
       fields.TotalGrade = Number.isFinite(row.totalGrade) ? row.totalGrade : (fields.TotalGrade ?? '');
       fields.Grade = Number.isFinite(row.grade) ? row.grade : '';
-      fields.feedBack = row.feedback ?? fields.feedBack ?? '';
+      const feedbackField=Object.keys(fields).find(k=>k.toLowerCase()==='feedback')||'feedBack';
+      fields[feedbackField]=row.feedback??fields[feedbackField]??'';
       Object.keys(fields).forEach(key => {
         const value = fields[key];
         if (value === undefined || value === null) return;
@@ -1216,8 +1220,8 @@
  if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))return toast('يوجد طلاب بدرجة صفر وحالة تسليم غير محسومة. اختر سلّم أو لم يسلّم أولًا.','error');
  if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
  if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
- const counts={submittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length,notSubmittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length,autoNotes:ready.filter(r=>r.feedbackSource==='auto').length,changed:ready.filter(r=>Number.isFinite(r.student?.grade)).length};
- if(!await confirmProjectImport(`تأكيد رصد درجات المشروع «${state.activityTitle}»\n\nالطلاب الجاهزون للرصد: ${ready.length}\nدرجات موجودة ستتغير أو تُحدَّث: ${counts.changed}\nسلّم وحصل على صفر: ${counts.submittedZero}\nلم يسلّم وسيرصد له صفر: ${counts.notSubmittedZero}\nملاحظات تلقائية: ${counts.autoNotes}\n\nستُنزّل نسخة احتياطية قبل الحفظ وسيتحقق السكربت من أول دفعة.\n\nهل تؤكد رصد هؤلاء الطلاب؟`))return;
+ const counts={submittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length,notSubmittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length,autoNotes:ready.filter(r=>r.feedbackSource==='auto').length,changed:ready.filter(r=>Number.isFinite(r.student?.grade)).length,notesOnly:ready.filter(r=>Number.isFinite(r.student?.grade)&&Math.abs(r.grade-r.student.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length};
+ if(!await confirmProjectImport(`تأكيد رصد درجات المشروع «${state.activityTitle}»\n\nالطلاب الجاهزون للرصد: ${ready.length}\nدرجات موجودة ستتغير أو تُحدَّث: ${counts.changed}\nسلّم وحصل على صفر: ${counts.submittedZero}\nلم يسلّم وسيرصد له صفر: ${counts.notSubmittedZero}\nملاحظات تلقائية: ${counts.autoNotes}\nملاحظات تُحدَّث دون تغيير الدرجة: ${counts.notesOnly}\n\nستُنزّل نسخة احتياطية قبل الحفظ وسيتحقق السكربت من أول دفعة.\n\nهل تؤكد رصد هؤلاء الطلاب؟`))return;
  const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:r.nextFeedback}));
  downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,autoNotesGenerated:state.autoFeedback,rows:backup});
  setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
@@ -1238,14 +1242,17 @@
    const batch=changes.slice(i,i+10);
    await postProjectRows(batch);
    posted+=batch.length;
-   // تحقّق من أول دفعة قبل إرسال بقية الملف لتقليل أثر اختلاف نموذج الحفظ بين الواجبات والمشاريع.
-   if(i===0){
-    const firstFetch=await fetchAllStudents();
-    if(!state.fetchAudit?.complete)throw new Error('فقد التحقق من اكتمال الصفحات بعد الدفعة الأولى؛ توقفت الدفعات التالية.');
-    const firstMap=new Map(firstFetch.map(r=>[String(r.studentId),r]));
-    const miss=batch.filter(r=>{const current=firstMap.get(String(r.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4||clean(current.feedback)!==clean(r.feedback);});
-    state.students=firstFetch;
-    if(miss.length)throw new Error(`أرسلت أول ${batch.length} سجلات، لكن مدرستي لم يؤكد ${miss.length} درجة. أوقفت بقية الدفعات تلقائيًا. راجع نتائج المشروع ولا تكرر الحفظ قبل التأكد.`);
+   // لا تكتفِ بأول عشرة طلاب: افحص أول 20 سجلًا ثم كل عشرين وآخر دفعة.
+   // المقارنة تشمل نص الملاحظة حتى لو كانت الدرجة صحيحة مسبقًا.
+   if(i===0 || posted%20===0 || posted===changes.length){
+    const checked=await fetchAllStudents();
+    if(!state.fetchAudit?.complete)throw new Error('فقد التحقق من اكتمال صفحات الطلاب بعد إحدى الدفعات؛ أوقفت الدفعات التالية.');
+    const checkedMap=new Map(checked.map(r=>[studentIdKey(r.studentId),r]));
+    const currentSlice=changes.slice(0,posted);
+    const failedGrade=currentSlice.filter(r=>{const current=checkedMap.get(studentIdKey(r.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4;});
+    const failedNotes=currentSlice.filter(r=>{const current=checkedMap.get(studentIdKey(r.studentId));return clean(current?.feedback)!==clean(r.feedback);});
+    state.students=checked;
+    if(failedGrade.length||failedNotes.length)throw new Error(`تحقق الرصد بعد إرسال ${posted} من ${changes.length}: لم تتأكد درجات ${failedGrade.length} طالبًا، ولم تتأكد ملاحظات ${failedNotes.length} طالبًا. أوقفت بقية الدفعات. قد تكون بعض الدرجات حُفظت؛ راجع صفحة مدرستي قبل أي إعادة إرسال.`);
    }
    const status=document.getElementById(`${APP}-status`);
    if(status)status.textContent=`أُرسل ${posted} من ${changes.length} درجة…`;
