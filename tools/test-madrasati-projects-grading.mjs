@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+
+const source=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
+assert.match(source,/^\/\/ @version\s+1\.6\.0-beta2$/m);
+new vm.Script(source,{filename:'projects-grading.user.js'});
+assert(source.includes("if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))"),'Unresolved zero must block saving');
+assert(source.includes('if(!state.fetchAudit?.complete)'),'Incomplete roster blocks saving');
+assert(source.includes('const feedback=r.nextFeedback??student.feedback??'),'Save must use previewed automatic comments');
+assert(source.includes('clean(current.feedback)!==clean(r.feedback)'),'First-batch verification checks comments');
+assert(source.includes('clean(current.feedback)!==clean(r.nextFeedback)'),'Final verification checks comments');
+assert(source.includes('تأكيد رصد '),'Visible grading button must show count');
+assert(source.includes('الطلاب الجاهزون للرصد: '),'Confirmation must show number of pupils');
+
+const start=source.indexOf('  const normalizeProjectSubmission = ');
+const end=source.indexOf('  const band = row => {',start);
+assert(start>=0&&end>start,'Submission and automatic feedback helpers exist');
+const helperCode=source.slice(start,end);
+const clean=v=>String(v??'').replace(/\s+/g,' ').trim();
+const norm=v=>clean(v).replace(/[إأآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').toLowerCase();
+const truthy=v=>/^(?:true|1|yes)$/i.test(clean(v));
+const state={zeroDecisions:{},importFeedback:false,autoFeedback:true,fetchAudit:{complete:true},students:[],importPreview:null};
+const h=new Function('state','clean','norm','truthy','studentIdKey',helperCode+
+ 'return {normalizeProjectSubmission,classifyProjectSubmission,autoProjectFeedback,importZeroNeedsDecision,zeroDecisionCounts,resolvedImportCode,nextProjectFeedback};')(
+ state,clean,norm,truthy,v=>clean(v).replace(/^0+(?=\d)/,'')
+);
+const row=(grade,feedback,hasAnswer='true',solvingType='4')=>({
+ studentId:'100',grade,totalGrade:20,feedback,rawFields:{hasAnswer,SolvingType:solvingType}
+});
+const cases=[
+ ['Submitted student with zero',row(0,'تم التسليم'), 'submitted'],
+ ['Absent, no grade',row(null,'','false'), 'not_submitted'],
+ ['Absent, zero entered manually',row(0,'','false'), 'not_submitted'],
+ ['External task no submission despite hasAnswer true',row(0,'لم يتم تسليم المشروع','true','3'),'not_submitted'],
+ ['External task zero and no status',row(0,'','true','3'),'unknown'],
+ ['Positive grade out of system',row(15,'','false','3'),'submitted']
+];
+for(const [label,student,want] of cases)assert.equal(h.classifyProjectSubmission(student).key,want,label);
+const stats=h.zeroDecisionCounts(cases.map(x=>x[1]));
+assert.equal(stats.submittedZero,1);
+assert.equal(stats.notSubmittedZero,2);
+assert.equal(stats.notSubmittedUnscored,1);
+assert.equal(stats.unknown,1);
+assert.match(h.autoProjectFeedback(0,20,'100','submitted').text,/تم تسليم|تم التسليم/);
+assert.match(h.autoProjectFeedback(0,20,'100','not_submitted').text,/لم|غير مسل/);
+assert.equal(h.autoProjectFeedback(0,20,'100','unknown').text,'','Ambiguous zero must not generate misleading text');
+assert.equal(h.autoProjectFeedback(20,20,'100','submitted').band,'متميز');
+assert.equal(h.autoProjectFeedback(16,20,'100','submitted').band,'رائع');
+assert.equal(h.autoProjectFeedback(14,20,'100','submitted').band,'جيد');
+assert.equal(h.autoProjectFeedback(12,20,'100','submitted').band,'مقبول');
+assert.equal(h.autoProjectFeedback(10,20,'100','submitted').band,'يحتاج تعزيز');
+assert.equal(h.autoProjectFeedback(9,20,'100','submitted').band,'يحتاج مراجعة');
+
+const student=row(null,'','false');
+const imp={sourceRow:2,zeroKey:'k1',sid:'100',name:'طالب',className:'ثالث',grade:0,feedback:'14',submissionCode:'unknown',submissionStatus:'',student,
+ status:'zero_decision',baseStatus:'zero_decision',reason:'',classWarning:''};
+state.students=[student];state.importPreview={fileName:'sample.csv',sheetName:'CSV',numericFeedbackCount:1,rows:[imp]};
+const host={innerHTML:'',querySelectorAll:()=>[]},dummy={addEventListener(){}},document={getElementById:id=>id==='MAIP-import-preview'?host:dummy};
+const APP='MAIP',esc=v=>clean(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+const fmt=v=>Number.isFinite(v)?String(v):'—';
+const previewStart=source.indexOf('  const renderImportPreview = function newRenderImportPreview(){');
+const previewEnd=source.indexOf('  const exportImportPreview =',previewStart);
+assert(previewStart>0&&previewEnd>previewStart,'Project preview exists');
+const preview=new Function('state','document','APP','esc','fmt','clean','resolvedImportCode','importZeroNeedsDecision','nextProjectFeedback','toast','patchVisibleImport','saveImport','exportImportPreview',
+ source.slice(previewStart,previewEnd)+'return renderImportPreview;')(
+ state,document,APP,esc,fmt,clean,h.resolvedImportCode,h.importZeroNeedsDecision,h.nextProjectFeedback,()=>{},()=>{},()=>{},()=>{}
+);
+preview();
+assert.equal(imp.status,'zero_decision','Do not accept zero without a decision');
+assert(host.innerHTML.includes('صفر يحتاج قرار: <b>1</b>'));
+assert(host.innerHTML.includes('تأكيد رصد 0 طالبًا على مدرستي'));
+state.zeroDecisions.k1='not_submitted';
+preview();
+assert.equal(imp.status,'ready','Explicit teacher decision permits grading');
+assert.equal(imp.feedbackSource,'auto');
+assert(!imp.nextFeedback.includes('14'),'Numeric note must not be used as commentary');
+assert.match(imp.nextFeedback,/لم|غير مسل/);
+assert(host.innerHTML.includes('تأكيد رصد 1 طالبًا على مدرستي'));
+console.log('✓ Project grading: six submission cases, zero decision, percentage comments, numeric note handling, preview count and save guards.');
