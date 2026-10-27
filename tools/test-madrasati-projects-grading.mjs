@@ -8,7 +8,7 @@ new vm.Script(source,{filename:'projects-grading.user.js'});
 assert(source.includes("if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))"),'Unresolved zero must block saving');
 assert(source.includes('if(!state.fetchAudit?.complete)'),'Incomplete roster blocks saving');
 assert(source.includes('const feedback=r.nextFeedback??student.feedback??'),'Save must use previewed automatic comments');
-assert(source.includes('clean(current.feedback)!==clean(r.feedback)'),'First-batch verification checks comments');
+assert(source.includes('const failedNotes=currentSlice.filter')&&source.includes('clean(current?.feedback)!==clean(r.feedback)'),'Early-batch verification checks comments independently, including first 20');
 assert(source.includes('clean(current.feedback)!==clean(r.nextFeedback)'),'Final verification checks comments');
 assert(source.includes('تأكيد رصد '),'Visible grading button must show count');
 assert(source.includes('الطلاب الجاهزون للرصد: '),'Confirmation must show number of pupils');
