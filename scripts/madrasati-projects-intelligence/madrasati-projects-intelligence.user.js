@@ -181,6 +181,10 @@
     #${APP}-panel .${APP}-badge{display:inline-block;background:#e2e8f0;border-radius:99px;padding:3px 8px;font-size:10px;font-weight:800;color:#334155}
     #${APP}-panel .${APP}-badge.warn{background:#fef3c7;color:#92400e}
     #${APP}-panel .${APP}-badge.ok{background:#dcfce7;color:#166534}
+    #${APP}-panel .${APP}-student-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 0;font-size:12px}
+    #${APP}-panel .${APP}-student-pager select{border:1px solid #cbd5e1;border-radius:8px;padding:7px;background:#fff}
+    #${APP}-panel .${APP}-audit-indicator{margin:8px 0;padding:10px;border-radius:10px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:12px}
+    #${APP}-panel .${APP}-audit-indicator.complete{background:#ecfdf5;color:#166534;border-color:#bbf7d0}
     #${APP}-panel .${APP}-idxwrap{overflow-x:auto}
     #${APP}-panel .${APP}-table{min-width:800px}
     #${APP}-panel .${APP}-table td{word-break:normal}
@@ -433,13 +437,12 @@
   for(let page=1;page<=100;page++){
    let rows=await request(page,mode);
    let added=merge(rows);
-   if(page>1&&(!rows.length||!added)&&(!expected||byId.size<expected)&&mode==='camel'){
+   if(page>1&&(!rows.length||!added)&&mode==='camel'){
     const alt=await request(page,'legacy'),other=merge(alt);
     if(other>0){rows=alt;added=other;mode='legacy';}
    }
    if(rows.length&&added)lastPage=page;
-   if(expected&&byId.size>=expected){complete=true;reason='expected_roster';break;}
-   if(!rows.length){complete=expected===0;reason='empty_page';break;}
+   if(!rows.length){complete=!expected||byId.size>=expected;reason=complete?'empty_page':'roster_shortfall';break;}
    if(!added){reason='repeated_page';complete=false;break;}
    if(page===100){reason='page_limit';complete=false;}
   }
@@ -562,6 +565,27 @@
     </div><div class="${APP}-subhead">مقارنة الفصول</div><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>الفصل</th><th>الطلاب</th><th>سلّم</th><th>لم يسلّم</th><th>مرصود</th><th>نسبة التسليم</th><th>متوسط الأداء</th></tr></thead><tbody>${classes.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.total}</td><td>${c.submitted}</td><td>${c.total-c.submitted}</td><td>${c.graded}</td><td>${fmt(pct(c.submitted,c.total))}%</td><td>${c.avg===null?'—':fmt(c.avg)+'%'}</td></tr>`).join('')}</tbody></table></div>`;
   };
 
+  const paintStudentsPage = function paintStudentsPage(rows,tbody){
+ const pageSize=state.studentPageSize==='all'?Math.max(1,rows.length):(Number(state.studentPageSize)||20);
+ const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
+ state.studentPage=Math.max(1,Math.min(Number(state.studentPage)||1,pageCount));
+ const offset=(state.studentPage-1)*pageSize;
+ const visible=rows.slice(offset,offset+pageSize);
+ if(tbody)tbody.innerHTML=visible.length?visible.map((r,i)=>rowHtml(r,offset+i)).join(''):`<tr><td colspan="9" class="${APP}-rowempty">لا توجد نتائج مطابقة.</td></tr>`;
+ const label=document.getElementById(`${APP}-page-label`);
+ if(label)label.textContent=`صفحة ${state.studentPage} من ${pageCount} · عدد النتائج ${rows.length}`;
+ const previous=document.getElementById(`${APP}-page-prev`),next=document.getElementById(`${APP}-page-next`);
+ if(previous)previous.disabled=state.loading||state.studentPage<=1;
+ if(next)next.disabled=state.loading||state.studentPage>=pageCount;
+ const a=state.fetchAudit||{},notice=document.getElementById(`${APP}-audit-indicator`);
+ if(notice){
+  notice.classList.toggle('complete',!!a.complete);
+  notice.textContent=a.complete
+   ?`تم التحقق من تحميل ${state.students.length} طالبًا من ${a.pages} صفحة في مدرستي.`
+   :`تحذير: تعذر تأكيد اكتمال جميع صفحات الرصد. تم تحميل ${state.students.length}${a.expected?' من '+a.expected:''} · السبب: ${a.reason||'غير محدد'}. حفظ الدرجات الجماعي موقوف.`;
+ }
+};
+
   // لوحة واحدة تتشارك فلاترها جميع الإحصائيات والتقارير والمخرجات.
   const updateGradeViews = () => {
     const rows = filteredRows();
@@ -571,7 +595,7 @@
     const count=document.getElementById(`${APP}-shown-count`);
     if (count) count.textContent=`عرض ${rows.length} من ${state.students.length} طالبًا`;
     const tbody=document.getElementById(`${APP}-students-tbody`);
-    if(tbody) tbody.innerHTML=rows.length?rows.map(rowHtml).join(''):`<tr><td colspan="9" class="${APP}-rowempty">لا توجد نتائج مطابقة للبحث والتصفية.</td></tr>`;
+    paintStudentsPage(rows,tbody);
     const analytics=document.getElementById(`${APP}-analytics-host`);
     if(analytics) analytics.innerHTML=gradeAnalyticsHtml(rows,s);
     const context=document.getElementById(`${APP}-filter-context`);
@@ -606,18 +630,22 @@
       <div class="${APP}-field"><span>تصفية</span><button id="${APP}-quick-reset" class="${APP}-btn gray" type="button">إعادة الضبط</button></div>
       </div>
       <div class="${APP}-tabs" role="tablist"><button class="${APP}-tab" role="tab" data-view="students" type="button">سجل الطلاب</button><button class="${APP}-tab" role="tab" data-view="analytics" type="button">الرسوم والتحليل</button><button class="${APP}-tab" role="tab" data-view="report" type="button">ملخص التقرير</button></div>
-      <div class="${APP}-gradeview" data-view="students"><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>التسليم</th><th>الرصد</th><th>الدرجة</th><th>النسبة</th><th>التقدير</th><th>الملاحظة</th></tr></thead><tbody id="${APP}-students-tbody"></tbody></table></div></div>
+      <div id="${APP}-audit-indicator" class="${APP}-audit-indicator"></div><div class="${APP}-gradeview" data-view="students"><div class="${APP}-student-pager"><span id="${APP}-page-label"></span><div class="${APP}-toolbar"><label>عرض <select id="${APP}-page-size"><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">كل الطلاب</option></select></label><button id="${APP}-page-prev" class="${APP}-btn alt" type="button">السابق</button><button id="${APP}-page-next" class="${APP}-btn alt" type="button">التالي</button></div></div><div class="${APP}-tablewrap"><table class="${APP}-table"><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>التسليم</th><th>الرصد</th><th>الدرجة</th><th>النسبة</th><th>التقدير</th><th>الملاحظة</th></tr></thead><tbody id="${APP}-students-tbody"></tbody></table></div></div>
       <div class="${APP}-gradeview" data-view="analytics" id="${APP}-analytics-host"></div>
       <div class="${APP}-gradeview" data-view="report" id="${APP}-report-host"></div>
       <div class="${APP}-note" id="${APP}-import-hint">لا تُغيَّر الدرجات من عرض التحليل. اضغط «استيراد درجات» لفتح نافذة الاستيراد والمراجعة قبل الحفظ.</div>`;
     [['class','className'],['submission','submission'],['grading','grading'],['level','level'],['sort','sort']].forEach(([id,key])=>{
       const el=document.getElementById(`${APP}-${id}`);if(!el)return;
       el.value=state.filter[key];
-      el.addEventListener('change',()=>{state.filter[key]=el.value;updateGradeViews();});
+      el.addEventListener('change',()=>{state.filter[key]=el.value;state.studentPage=1;updateGradeViews();});
     });
-    document.getElementById(`${APP}-search`)?.addEventListener('input',e=>{state.filter.query=e.target.value;updateGradeViews();});
-    document.getElementById(`${APP}-clear-search`)?.addEventListener('click',()=>{state.filter.query='';const i=document.getElementById(`${APP}-search`);if(i){i.value='';i.focus();}updateGradeViews();});
+    document.getElementById(`${APP}-search`)?.addEventListener('input',e=>{state.filter.query=e.target.value;state.studentPage=1;updateGradeViews();});
+    document.getElementById(`${APP}-clear-search`)?.addEventListener('click',()=>{state.filter.query='';state.studentPage=1;const i=document.getElementById(`${APP}-search`);if(i){i.value='';i.focus();}updateGradeViews();});
     document.getElementById(`${APP}-quick-reset`)?.addEventListener('click',resetFilters);
+    document.getElementById(`${APP}-page-size`)?.addEventListener('change',e=>{state.studentPageSize=e.target.value==='all'?'all':Number(e.target.value)||20;state.studentPage=1;updateGradeViews();});
+    document.getElementById(`${APP}-page-prev`)?.addEventListener('click',()=>{state.studentPage=Math.max(1,state.studentPage-1);updateGradeViews();});
+    document.getElementById(`${APP}-page-next`)?.addEventListener('click',()=>{state.studentPage++;updateGradeViews();});
+    const pageSizeSelector=document.getElementById(`${APP}-page-size`);if(pageSizeSelector)pageSizeSelector.value=String(state.studentPageSize);
     document.querySelectorAll(`#${APP}-panel .${APP}-tab`).forEach(b=>b.addEventListener('click',()=>setGradeView(b.dataset.view)));
 
     updateGradeViews();setGradeView(state.view);
@@ -629,9 +657,10 @@
     try {
       state.activityTitle = getActivityTitle(document);
       state.students = await fetchAllStudents();
+      state.studentPage=1;
       state.lastRefresh = new Date().toISOString();
       renderGradeBody();
-      toast(`تم جلب ${state.students.length} طالبًا من النشاط.`, 'success');
+      toast(state.fetchAudit.complete?`تم التحقق من تحميل ${state.students.length} طالبًا.`:`تنبيه: لم يثبت اكتمال الصفحات؛ تم تحميل ${state.students.length} طالبًا فقط، ولن يُسمح بالحفظ.`,state.fetchAudit.complete?'success':'error');
     } catch (e) {
       toast(String(e?.message || e), 'error');
       const body = document.getElementById(`${APP}-body`);
@@ -641,6 +670,7 @@
 
   const resetFilters = () => {
     state.filter = { className: 'all', submission: 'all', level: 'all', grading: 'all', sort: 'name_asc', query: '' };
+    state.studentPage=1;
     renderGradeBody();
   };
 
