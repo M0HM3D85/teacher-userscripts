@@ -112,4 +112,47 @@ assert.equal(api.band(analysed[1]),'not_submitted');
 assert.equal(api.band(analysed[3]),'unverified');
 assert(source.includes("'التسليم': classifyProjectSubmission(r).label"),'Excel export must have proper status');
 assert(source.includes("classifyProjectSubmission(r).label"),'PDF and CSV use the same status classification');
+// Use the REAL CSV reader/importer, not a reimplementation of its row logic.
+const importStart=source.indexOf('  const parseCsv = text => {');
+const importEnd=source.indexOf('  const renderImportPreview = function',importStart);
+assert(importStart>=0&&importEnd>importStart,'Actual importer is available');
+const freshState={students:[
+ {studentId:'111',name:'أحمد سالم محمد',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'111'}},
+ {studentId:'222',name:'علي سعد حسن',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'222'}},
+ {studentId:'333',name:'سالم علي ياسر',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'333'}},
+ {studentId:'444',name:'محمد يوسف محمد',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'444'}},
+ {studentId:'555',name:'خالد ناصر محمود',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'555'}},
+ {studentId:'666',name:'نواف فهد علي',grade:null,totalGrade:20,className:'ثالث',feedback:'',rawFields:{StudentId:'666'}}
+],importFeedback:false,zeroDecisions:{},fetchAudit:{complete:true}};
+const num=v=>v===null||v===undefined||clean(v)===''?null:Number(clean(v));
+const modal={hidden:true};
+const makeImporter=new Function('state','clean','norm','num','studentIdKey','studentNameKey','studentNameFromSelect','classKey','normalizeProjectSubmission','importZeroNeedsDecision','setBusy','ensureImportModal','renderImportPreview','toast','fmt','document',
+ source.slice(importStart,importEnd)+'return readImportFile;');
+const importer=makeImporter(freshState,clean,norm,num,clean,norm,()=>'',norm,h.normalizeProjectSubmission,h.importZeroNeedsDecision,
+ ()=>{},()=>modal,()=>{},()=>{},fmt,{getElementById:()=>null});
+const csv=[
+ 'اسم الطالب,رقم الطالب,الفصل,حالة التسليم,الدرجة,ملاحظات',
+ 'أحمد سالم محمد,111,ثالث,تم التسليم,0,',
+ 'علي سعد حسن,222,ثالث,لم يسلم,0,',
+ 'سالم علي ياسر,333,ثالث,,0,',
+ 'محمد يوسف محمد,444,ثالث,لم يسلم,9,',
+ 'خالد ناصر محمود,555,ثالث,تم التسليم,15,14',
+ 'نواف فهد علي,666,ثالث,تم التسليم,20,',
+ 'نواف فهد علي,666,ثالث,تم التسليم,20,'
+].join('\n');
+await importer({name:'grades.csv',text:async()=>csv});
+const imported=freshState.importPreview?.rows||[];
+assert.equal(imported.length,7,'All CSV rows parsed');
+assert.equal(imported[0].status,'ready','Submitted zero must be ready');
+assert.equal(imported[1].status,'ready','Unsubmitted zero must be ready');
+assert.equal(imported[2].status,'zero_decision','Ambiguous zero must be blocked');
+assert.equal(imported[3].status,'invalid','Absent with positive grade is an error');
+assert.equal(imported[4].status,'ready','Score with numeric text comments still importable');
+assert.equal(imported[5].status,'duplicate');
+assert.equal(imported[6].status,'duplicate');
+assert.equal(freshState.importPreview.numericFeedbackCount,1);
+assert.equal(modal.hidden,false,'Import pop-up must appear');
+const oneStudent=imported[0];
+assert.equal(h.normalizeProjectSubmission(oneStudent.submissionStatus),'submitted');
+assert.equal(h.normalizeProjectSubmission(imported[1].submissionStatus),'not_submitted');
 console.log('✓ Project grading: six submission cases, zero decision, percentage comments, numeric note handling, preview count and save guards.');
