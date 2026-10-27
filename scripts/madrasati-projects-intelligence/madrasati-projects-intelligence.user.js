@@ -402,11 +402,11 @@
     return rows;
   };
 
-  const expectedStudentCount = () => {
-    const optionIds = [...document.querySelectorAll('#studentsFilter option')]
+  const expectedStudentCount = (doc=document) => {
+    const optionIds = [...doc.querySelectorAll('#studentsFilter option')]
       .map(o => clean(o.value)).filter(Boolean);
     if (optionIds.length) return new Set(optionIds).size;
-    const ids = [...document.querySelectorAll('.multiselect-container input[type="checkbox"]')]
+    const ids = [...doc.querySelectorAll('.multiselect-container input[type="checkbox"]')]
       .map(x => clean(x.value)).filter(v => /^\d+$/.test(v));
     return new Set(ids).size;
   };
@@ -1387,36 +1387,64 @@
     return a>=b?'ended':'receiving';
   };
   const findGradeLinks = doc => [...new Set([...doc.querySelectorAll('a[href*="/Projects/Projects/GradeProject/"]')].map(a=>samePageUrl(a.href)).filter(Boolean))];
-  const fetchGradeAnalysis = async (url, budget) => {
-    if(state.deepByUrl.has(url))return state.deepByUrl.get(url);
-    if(budget.remaining<=0)return {status:'limit',rows:[]};
-    budget.remaining--;
-    const doc=await getDocument(url);
-    const timing=verifiedProjectEnd(doc);
-    if(timing!=='ended'){
-      const result={status:timing,rows:[]};state.deepByUrl.set(url,result);return result;
-    }
-    const base=paramsFromGradeDoc(doc);
-    if(!base.ProjectId||!base.PublishedProjectId){
-      const result={status:'unavailable',rows:[]};state.deepByUrl.set(url,result);return result;
-    }
-    const byId=new Map();let incomplete=false;
-    for(let page=1;page<=50;page++){
-      if(budget.remaining<=0){incomplete=true;break;}
-      budget.remaining--;
-      const html=await postForm('/Projects/Projects/GetGradeStudentsList',{...base,StudentIds:'',Status:'All',SortBy:'name_asc',PageNumber:page});
-      const rows=parseStudentsHtml(html);
-      if(!rows.length)break;
-      let added=0;
-      rows.forEach(x=>{if(!byId.has(x.studentId))added++;byId.set(x.studentId,x);});
-      if(!added)break;
-      if(rows.length<20)break;
-    }
-    const result={status:incomplete?'partial':'ready',rows:[...byId.values()],paramsAvailable:true};
-    state.deepByUrl.set(url,result);
-    return result;
+  const fetchGradeAnalysis = async function fetchGradeAnalysis(url,budget){
+ if(state.deepByUrl.has(url))return state.deepByUrl.get(url);
+ if(budget.remaining<=0)return {status:'limit',rows:[]};
+ budget.remaining--;
+ const doc=await getDocument(url),timing=verifiedProjectEnd(doc);
+ if(timing!=='ended'){
+  const result={status:timing,rows:[]};state.deepByUrl.set(url,result);return result;
+ }
+ const base=paramsFromGradeDoc(doc);
+ if(!base.ProjectId||!base.PublishedProjectId){
+  const result={status:'unavailable',rows:[]};state.deepByUrl.set(url,result);return result;
+ }
+ const expected=expectedStudentCount(doc),byId=new Map();
+ let mode='camel',reason='not_started',complete=false,pages=0;
+ try{
+  const request=async(page,style)=>{
+   if(budget.remaining<=0)return null;
+   budget.remaining--;
+   const params={...base,StudentIds:'',Status:'All',SortBy:'name_asc'};
+   if(style==='camel'){params.pageNumber=page;params.pageSize=200;}
+   else{params.PageNumber=page;params.PageSize=200;}
+   return parseStudentsHtml(await postForm('/Projects/Projects/GetGradeStudentsList',params));
   };
-  const deepSummaryOf = items => {
+  const merge=rows=>{
+   let count=0;
+   for(const row of rows){
+    const key=studentIdKey(row.studentId);
+    if(key&&!byId.has(key))count++;
+    if(key)byId.set(key,row);
+   }
+   return count;
+  };
+  for(let page=1;page<=50;page++){
+   let rows=await request(page,mode);
+   if(rows===null){reason='budget_limit';break;}
+   let added=merge(rows);
+   if(page>1&&(!rows.length||!added)&&mode==='camel'){
+    const alt=await request(page,'legacy');
+    if(alt===null){reason='budget_limit';break;}
+    const other=merge(alt);
+    if(alt.length){rows=alt;added=other;mode='legacy';}
+   }
+   if(rows.length&&added)pages=page;
+   if(!rows.length){
+    complete=!expected||byId.size>=expected;
+    reason=complete?'empty_page':'roster_shortfall';break;
+   }
+   if(!added){reason='repeated_page';break;}
+   if(page===50)reason='page_limit';
+  }
+ }catch(e){reason='request_error';}
+ const rows=[...byId.values()];
+ const result={status:complete?'ready':'partial',rows,paramsAvailable:true,expected,reason,pages};
+ state.deepByUrl.set(url,result);
+ return result;
+};
+
+    const deepSummaryOf = items => {
     const rows=[],published=new Set();let receiving=0,unknown=0,scanned=0;
     for(const item of items){
       const detail=state.deepByProject.get(item.projectId);
