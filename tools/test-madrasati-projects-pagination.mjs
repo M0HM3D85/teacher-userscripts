@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const source=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
-assert.match(source,/^\/\/ @version\s+1\.6\.0-beta2$/m);
+assert.match(source,/^\/\/ @version\s+1\.6\.0$/m);
 new vm.Script(source);
 assert(source.includes("if(!state.fetchAudit?.complete)return toast("),'Incomplete student roster must block grade saving');
 assert(source.includes('studentPageSize: 20'),'Default 20-row table paging');
