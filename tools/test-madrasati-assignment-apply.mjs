@@ -15,7 +15,7 @@ assert(!current.includes('    // Core v1.1.7 (bundled locally'),'Bundled core mu
 // The assignment enhancement must be byte-for-byte identical to the working standalone script
 // except for its visible version string.
 const strip=s=>s.replace(/^\/\/ ==UserScript==[\s\S]*?^\/\/ ==\/UserScript==\s*/m,'').trim();
-const original=strip(enhanced).replace("const VERSION = '1.4.8';","const VERSION = '2.0.0-beta5';");
+const original=strip(enhanced).replace("const VERSION = '1.4.8';","const VERSION = '2.0.0-beta6';");
 assert(current.includes(original),'Assignment enhancement has been modified beyond its version label');
 
 const nodes=new Map();
