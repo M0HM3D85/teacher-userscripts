@@ -543,6 +543,9 @@
   });
 
   const band = row => {
+    const status=classifyProjectSubmission(row);
+    if(status.key==='not_submitted')return 'not_submitted';
+    if(status.key==='unknown'&&(!Number.isFinite(row.grade)||row.grade===0))return 'unverified';
     if (!Number.isFinite(row.grade) || !Number.isFinite(row.totalGrade) || row.totalGrade <= 0) return 'none';
     const p = (row.grade / row.totalGrade) * 100;
     if (p >= 90) return 'excellent';
@@ -552,15 +555,16 @@
     return 'weak';
   };
 
-  const bandLabel = key => ({ excellent: 'ممتاز', verygood: 'جيد جدًا', good: 'جيد', pass: 'مقبول', weak: 'ضعيف', none: 'بدون تقدير' }[key] || '—');
+  const bandLabel = key => ({ excellent: 'ممتاز', verygood: 'جيد جدًا', good: 'جيد', pass: 'مقبول', weak: 'ضعيف', none: 'بدون تقدير', not_submitted:'لم يسلّم', unverified:'غير محسوم' }[key] || '—');
 
   const filteredRows = () => {
     let rows = state.students.slice();
     const f = state.filter;
     if (f.className !== 'all') rows = rows.filter(r => clean(r.className) === f.className);
     if (f.query) { const q = norm(f.query); rows = rows.filter(r => [r.name, r.studentId, r.className, r.feedback].some(v => norm(v).includes(q))); }
-    if (f.submission === 'submitted') rows = rows.filter(r => r.hasAnswer);
-    if (f.submission === 'not_submitted') rows = rows.filter(r => !r.hasAnswer);
+    if (f.submission === 'submitted') rows = rows.filter(r => classifyProjectSubmission(r).key==='submitted');
+    if (f.submission === 'not_submitted') rows = rows.filter(r => classifyProjectSubmission(r).key==='not_submitted');
+    if (f.submission === 'unknown') rows = rows.filter(r => classifyProjectSubmission(r).key==='unknown');
     if (f.grading === 'graded') rows = rows.filter(r => Number.isFinite(r.grade));
     if (f.grading === 'ungraded') rows = rows.filter(r => !Number.isFinite(r.grade));
     if (f.level !== 'all') rows = rows.filter(r => band(r) === f.level);
@@ -575,47 +579,39 @@
     return rows;
   };
 
-  const summary = rows => {
-    const total = rows.length;
-    const submitted = rows.filter(r => r.hasAnswer).length;
-    const gradedRows = rows.filter(r => Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0);
-    const percents = gradedRows.map(r => (r.grade / r.totalGrade) * 100);
-    return {
-      total,
-      submitted,
-      notSubmitted: total - submitted,
-      submissionRate: pct(submitted, total),
-      graded: gradedRows.length,
-      ungraded: total - gradedRows.length,
-      gradingRate: pct(gradedRows.length, total),
-      avg: percents.length ? percents.reduce((a, b) => a + b, 0) / percents.length : null,
-      high: percents.length ? Math.max(...percents) : null,
-      low: percents.length ? Math.min(...percents) : null
-    };
-  };
+  const summary = function(rows){
+ const total=rows.length,counts=rows.map(r=>classifyProjectSubmission(r).key);
+ const submitted=counts.filter(x=>x==='submitted').length,notSubmitted=counts.filter(x=>x==='not_submitted').length,unknown=total-submitted-notSubmitted;
+ const gradedRows=rows.filter(r=>Number.isFinite(r.grade)&&Number.isFinite(r.totalGrade)&&r.totalGrade>0);
+ const percents=gradedRows.map(r=>r.grade/r.totalGrade*100),zeros=zeroDecisionCounts(rows);
+ return {total,submitted,notSubmitted,unknown,submittedZero:zeros.submittedZero,notSubmittedZero:zeros.notSubmittedZero,notSubmittedUnscored:zeros.notSubmittedUnscored,
+ submissionRate:pct(submitted,total),graded:gradedRows.length,ungraded:total-gradedRows.length,gradingRate:pct(gradedRows.length,total),
+ avg:percents.length?percents.reduce((a,b)=>a+b,0)/percents.length:null,high:percents.length?Math.max(...percents):null,low:percents.length?Math.min(...percents):null};
+};
 
-  const classOptions = () => [...new Set(state.students.map(r => clean(r.className)).filter(Boolean))].sort(compareNames);
+    const classOptions = () => [...new Set(state.students.map(r => clean(r.className)).filter(Boolean))].sort(compareNames);
 
   const filterContext = () => {
     const f = state.filter;
     const parts = [];
     if (f.className !== 'all') parts.push(`الفصل: ${f.className}`);
-    if (f.submission !== 'all') parts.push(`التسليم: ${f.submission === 'submitted' ? 'سلّم' : 'لم يسلّم'}`);
+    if (f.submission !== 'all') parts.push(`التسليم: ${{submitted:'سلّم',not_submitted:'لم يسلّم',unknown:'غير محسوم'}[f.submission]||f.submission}`);
     if (f.grading !== 'all') parts.push(`الرصد: ${f.grading === 'graded' ? 'مرصود' : 'غير مرصود'}`);
     if (f.level !== 'all') parts.push(`التقدير: ${bandLabel(f.level)}`);
     if (f.query) parts.push(`البحث: ${f.query}`);
     return parts.join(' · ') || 'كل الطلاب';
   };
 
-  const rowHtml = (r, i) => {
-    const p = Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade, r.totalGrade) : null;
-    const sub = r.hasAnswer ? `<span class="${APP}-pill ${APP}-ok">سلّم</span>` : `<span class="${APP}-pill ${APP}-bad">لم يسلّم</span>`;
-    const grd = Number.isFinite(r.grade) ? `<span class="${APP}-pill ${APP}-info">مرصود</span>` : `<span class="${APP}-pill ${APP}-warn">غير مرصود</span>`;
-    return `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${esc(r.className || '—')}</td><td>${sub}</td><td>${grd}</td><td>${Number.isFinite(r.grade) ? fmt(r.grade) : '—'} / ${Number.isFinite(r.totalGrade) ? fmt(r.totalGrade) : '—'}</td><td>${p == null ? '—' : `${fmt(p)}%`}</td><td>${esc(bandLabel(band(r)))}</td><td>${esc(r.feedback || '')}</td></tr>`;
-  };
+  const rowHtml = function(r,i){
+ const p=Number.isFinite(r.grade)&&Number.isFinite(r.totalGrade)&&r.totalGrade>0?pct(r.grade,r.totalGrade):null;
+ const subState=classifyProjectSubmission(r);
+ const subStyle=subState.key==='submitted'?`${APP}-ok`:subState.key==='not_submitted'?`${APP}-bad`:`${APP}-warn`;
+ const submission=`<span class="${APP}-pill ${subStyle}" title="${esc(subState.source)}">${esc(subState.label)}</span>`;
+ const grading=Number.isFinite(r.grade)?`<span class="${APP}-pill ${APP}-info">${r.grade===0?'مرصود صفر':'مرصود'}</span>`:`<span class="${APP}-pill ${APP}-warn">غير مرصود</span>`;
+ return `<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.className||'—')}</td><td>${submission}</td><td>${grading}</td><td>${Number.isFinite(r.grade)?fmt(r.grade):'—'} / ${Number.isFinite(r.totalGrade)?fmt(r.totalGrade):'—'}</td><td>${p===null?'—':fmt(p)+'%'}</td><td>${esc(bandLabel(band(r)))}</td><td>${esc(r.feedback||'')}</td></tr>`;
+};
 
-
-  const levelKeys = ['excellent','verygood','good','pass','weak','none'];
+    const levelKeys = ['excellent','verygood','good','pass','weak','not_submitted','unverified','none'];
   const gradePercent = r => Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade,r.totalGrade) : null;
   const detailedStats = rows => {
     const s = summary(rows);
@@ -626,7 +622,7 @@
     s.byClass = [...new Set(rows.map(r=>r.className || 'غير محدد'))].sort(compareNames).map(name => {
       const rs = rows.filter(r=>(r.className||'غير محدد')===name);
       const scored = rs.map(gradePercent).filter(Number.isFinite);
-      return { name, total:rs.length,submitted:rs.filter(r=>r.hasAnswer).length,graded:scored.length,avg:scored.length?scored.reduce((a,b)=>a+b,0)/scored.length:null };
+      return { name, total:rs.length,submitted:rs.filter(r=>classifyProjectSubmission(r).key==='submitted').length,graded:scored.length,avg:scored.length?scored.reduce((a,b)=>a+b,0)/scored.length:null };
     });
     s.buckets = [
       { label:'90–100%', count:percents.filter(v=>v>=90).length, kind:'excellent' },
@@ -709,7 +705,7 @@
       <div class="${APP}-searchline"><input id="${APP}-search" type="search" autocomplete="off" placeholder="بحث فوري باسم الطالب أو الرقم أو الفصل أو الملاحظة…" aria-label="بحث في طلاب النشاط" value="${esc(state.filter.query)}"><span id="${APP}-shown-count" class="${APP}-count"></span><button id="${APP}-clear-search" class="${APP}-btn gray" type="button">مسح البحث</button></div>
       <div class="${APP}-filters">
       <label class="${APP}-field">الفصل<select id="${APP}-class"><option value="all">كل الفصول</option>${classes.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label>
-      <label class="${APP}-field">التسليم<select id="${APP}-submission"><option value="all">الكل</option><option value="submitted">سلّم</option><option value="not_submitted">لم يسلّم</option></select></label>
+      <label class="${APP}-field">التسليم<select id="${APP}-submission"><option value="all">الكل</option><option value="submitted">سلّم</option><option value="not_submitted">لم يسلّم</option><option value="unknown">غير محسوم</option></select></label>
       <label class="${APP}-field">الرصد<select id="${APP}-grading"><option value="all">الكل</option><option value="graded">مرصود</option><option value="ungraded">غير مرصود</option></select></label>
       <label class="${APP}-field">التقدير<select id="${APP}-level"><option value="all">كل التقديرات</option>${levelKeys.map(k=>`<option value="${k}">${esc(bandLabel(k))}</option>`).join('')}</select></label>
       <label class="${APP}-field">الفرز<select id="${APP}-sort"><option value="name_asc">الاسم أ ← ي</option><option value="name_desc">الاسم ي ← أ</option><option value="submission_submitted">المسلّم أولًا</option><option value="submission_not_submitted">غير المسلّم أولًا</option><option value="level_high">التقدير الأعلى</option><option value="level_low">التقدير الأقل</option><option value="grade_desc">الدرجة الأعلى</option><option value="grade_asc">الدرجة الأقل</option></select></label>
