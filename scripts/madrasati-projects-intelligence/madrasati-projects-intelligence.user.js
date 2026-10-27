@@ -482,8 +482,8 @@
     if(feedbackCode==='not_submitted')return {key:'not_submitted',source:'feedback',label:Number.isFinite(grade)&&grade===0?'لم يسلّم · رُصد صفر':'لم يسلّم'};
     if(feedbackCode==='submitted')return {key:'submitted',source:'feedback',label:grade===0?'سلّم · حصل على صفر':'سلّم'};
     if(!outside&&nativeTrue)return {key:'submitted',source:'platform',label:grade===0?'سلّم · حصل على صفر':'سلّم'};
-    if(!outside&&nativeFalse)return {key:'not_submitted',source:'platform',label:grade===0?'لم يسلّم · رُصد صفر':'لم يسلّم'};
     if(Number.isFinite(grade)&&grade>0)return {key:'submitted',source:'positive_grade',label:'سلّم · استنتاج من الدرجة'};
+    if(!outside&&nativeFalse)return {key:'not_submitted',source:'platform',label:grade===0?'لم يسلّم · رُصد صفر':'لم يسلّم'};
     if(Number.isFinite(grade)&&grade===0)return {key:'unknown',source:'zero_without_status',label:'صفر · التسليم غير محسوم'};
     return {key:'unknown',source:'unverified',label:'التسليم غير محسوم'};
   };
@@ -509,7 +509,7 @@
       phrases=['لم يتم تسليم النشاط أو المشروع.','النشاط أو المشروع غير مسلّم، احرص على إكمال المهام القادمة في موعدها.','لم يُسلّم النشاط أو المشروع؛ يرجى متابعة أعمالك وتسليمها في موعدها.'];
     }else if(submission==='submitted'&&grade===0){
       band='سلّم بدرجة صفر';
-      phrases=['تم تسليم النشاط أو المشروع، لكن الأداء يحتاج إلى مراجعة شاملة.','وصل التسليم، ولم تتحقق درجات؛ راجع المطلوب وحاول تحسين العمل.','تم التسليم بدرجة صفر؛ راجع المهارات المطلوبة وتدرّب عليها.'];
+      phrases=['تم تسليم النشاط أو المشروع، لكن الأداء يحتاج إلى مراجعة شاملة.','تم تسليم المشروع، ولم تتحقق درجات؛ راجع المطلوب وحاول تحسين العمل.','تم التسليم بدرجة صفر؛ راجع المهارات المطلوبة وتدرّب عليها.'];
     }else if(submission==='unknown'&&grade===0){
       return {text:'',band:'غير محسوم',percent};
     }else{
@@ -1048,6 +1048,9 @@
   'الفصل في مدرستي':r.student?.className||'',
   'تنبيه الفصل':r.classWarning||'',
   'حالة التسليم':r.submissionStatus||'',
+  'الحالة المعتمدة':resolvedImportCode(r),
+  'الملاحظة المقترحة':r.nextFeedback||'',
+  'مصدر الملاحظة':r.feedbackSource||'',
   'طريقة المطابقة':r.method||'',
   'الدرجة الحالية':r.student?.grade??'',
   'الدرجة الجديدة':r.grade??'',
@@ -1278,8 +1281,8 @@
       </style></head><body>${inner}<script>setTimeout(()=>window.print(),350)<\/script></body></html>`);
     w.document.close();
   };
-  const gradeMetricsPrint = s => `<div class="metrics">${[['الطلاب',s.total],['سلّم',s.submitted],['لم يسلّم',s.notSubmitted],['نسبة التسليم',fmt(s.submissionRate)+'%'],['مرصود',s.graded],['متوسط الأداء',s.avg===null?'—':fmt(s.avg)+'%'],['أعلى أداء',s.high===null?'—':fmt(s.high)+'%'],['أقل أداء',s.low===null?'—':fmt(s.low)+'%']].map(([k,v])=>`<div class="metric"><b>${esc(v)}</b><small>${esc(k)}</small></div>`).join('')}</div>`;
-  const gradeTablePrint = rows => `<table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>التسليم</th><th>الرصد</th><th>الدرجة</th><th>النسبة</th><th>التقدير</th><th>الملاحظة</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.className||'—')}</td><td>${r.hasAnswer?'سلّم':'لم يسلّم'}</td><td>${Number.isFinite(r.grade)?'مرصود':'غير مرصود'}</td><td>${Number.isFinite(r.grade)?fmt(r.grade):'—'} / ${Number.isFinite(r.totalGrade)?fmt(r.totalGrade):'—'}</td><td>${gradePercent(r)===null?'—':fmt(gradePercent(r))+'%'}</td><td>${esc(bandLabel(band(r)))}</td><td>${esc(r.feedback||'')}</td></tr>`).join('')}</tbody></table>`;
+  const gradeMetricsPrint = s => `<div class="metrics">${[['الطلاب',s.total],['سلّم',s.submitted],['لم يسلّم',s.notSubmitted],['نسبة التسليم',fmt(s.submissionRate)+'%'],['مرصود',s.graded],['غير محسوم',s.unknown],['سلّم وأخذ صفر',s.submittedZero],['لم يسلّم ورُصد صفر',s.notSubmittedZero],['لم يسلّم بلا درجة',s.notSubmittedUnscored],['متوسط الأداء',s.avg===null?'—':fmt(s.avg)+'%'],['أعلى أداء',s.high===null?'—':fmt(s.high)+'%'],['أقل أداء',s.low===null?'—':fmt(s.low)+'%']].map(([k,v])=>`<div class="metric"><b>${esc(v)}</b><small>${esc(k)}</small></div>`).join('')}</div>`;
+  const gradeTablePrint = rows => `<table><thead><tr><th>#</th><th>الطالب</th><th>الفصل</th><th>التسليم</th><th>الرصد</th><th>الدرجة</th><th>النسبة</th><th>التقدير</th><th>الملاحظة</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.className||'—')}</td><td>${esc(classifyProjectSubmission(r).label)}</td><td>${Number.isFinite(r.grade)?'مرصود':'غير مرصود'}</td><td>${Number.isFinite(r.grade)?fmt(r.grade):'—'} / ${Number.isFinite(r.totalGrade)?fmt(r.totalGrade):'—'}</td><td>${gradePercent(r)===null?'—':fmt(gradePercent(r))+'%'}</td><td>${esc(bandLabel(band(r)))}</td><td>${esc(r.feedback||'')}</td></tr>`).join('')}</tbody></table>`;
   const printReport = () => {
     const rows=filteredRows(),s=detailedStats(rows);
     const title=state.activityTitle||'تقرير نشاط / مشروع';
@@ -1295,9 +1298,9 @@
     const rows = filteredRows();
     const s = detailedStats(rows);
     const wb = XLSX.utils.book_new();
-    const summaryRows = [['النشاط', state.activityTitle], ['السياق', filterContext()], ['الطلاب', s.total], ['سلّم', s.submitted], ['لم يسلّم', s.notSubmitted], ['نسبة التسليم', `${s.submissionRate}%`], ['مرصود', s.graded], ['نسبة الرصد', `${s.gradingRate}%`], ['متوسط الأداء', s.avg == null ? '' : s.avg]];
+    const summaryRows = [['النشاط', state.activityTitle], ['السياق', filterContext()], ['الطلاب', s.total], ['سلّم', s.submitted], ['لم يسلّم', s.notSubmitted], ['غير محسوم',s.unknown],['سلّم وأخذ صفر',s.submittedZero],['لم يسلّم ورُصد صفر',s.notSubmittedZero],['لم يسلّم بلا درجة',s.notSubmittedUnscored], ['نسبة التسليم', `${s.submissionRate}%`], ['مرصود', s.graded], ['نسبة الرصد', `${s.gradingRate}%`], ['متوسط الأداء', s.avg == null ? '' : s.avg]];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
-    const studentRows = rows.map((r, i) => ({ '#': i + 1, 'الطالب': r.name, 'رقم الطالب': r.studentId, 'الفصل': r.className, 'التسليم': r.hasAnswer ? 'سلّم' : 'لم يسلّم', 'الدرجة': r.grade ?? '', 'من': r.totalGrade ?? '', 'النسبة': Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade, r.totalGrade) : '', 'التقدير': bandLabel(band(r)), 'الملاحظة': r.feedback || '' }));
+    const studentRows = rows.map((r, i) => ({ '#': i + 1, 'الطالب': r.name, 'رقم الطالب': r.studentId, 'الفصل': r.className, 'التسليم': classifyProjectSubmission(r).label, 'الدرجة': r.grade ?? '', 'من': r.totalGrade ?? '', 'النسبة': Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade, r.totalGrade) : '', 'التقدير': bandLabel(band(r)), 'الملاحظة': r.feedback || '' }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(studentRows), 'Students');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['التقدير','العدد','النسبة'], ...levelKeys.map(k=>[bandLabel(k),s.levels[k],pct(s.levels[k],s.total)])]),'Levels');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s.byClass.map(c=>({'الفصل':c.name,'الطلاب':c.total,'سلّم':c.submitted,'مرصود':c.graded,'المتوسط':c.avg??''}))), 'Classes');
@@ -1309,7 +1312,7 @@
     const rows = filteredRows();
     const cells = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['#','الطالب','رقم الطالب','الفصل','التسليم','الدرجة','من','النسبة','التقدير','الملاحظة'].map(cells).join(',')];
-    rows.forEach((r, i) => lines.push([i + 1, r.name, r.studentId, r.className, r.hasAnswer ? 'سلّم' : 'لم يسلّم', r.grade ?? '', r.totalGrade ?? '', Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade, r.totalGrade) : '', bandLabel(band(r)), r.feedback || ''].map(cells).join(',')));
+    rows.forEach((r, i) => lines.push([i + 1, r.name, r.studentId, r.className, classifyProjectSubmission(r).label, r.grade ?? '', r.totalGrade ?? '', Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade, r.totalGrade) : '', bandLabel(band(r)), r.feedback || ''].map(cells).join(',')));
     const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `تقرير-${state.activityTitle.replace(/[\\/:*?"<>|]/g, '-')}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
