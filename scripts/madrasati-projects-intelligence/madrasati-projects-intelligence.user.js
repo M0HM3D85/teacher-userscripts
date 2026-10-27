@@ -658,6 +658,7 @@
       state.activityTitle = getActivityTitle(document);
       state.students = await fetchAllStudents();
       state.studentPage=1;
+      state.importPreview=null;
       state.lastRefresh = new Date().toISOString();
       renderGradeBody();
       toast(state.fetchAudit.complete?`تم التحقق من تحميل ${state.students.length} طالبًا.`:`تنبيه: لم يثبت اكتمال الصفحات؛ تم تحميل ${state.students.length} طالبًا فقط، ولن يُسمح بالحفظ.`,state.fetchAudit.complete?'success':'error');
@@ -901,7 +902,7 @@
  ${classAlerts?`<div class="${APP}-note"><b>مراجعة الفصل:</b> ${classAlerts} طالبًا اختلف عرض الفصل لهم. طابقتهم الهوية الرقمية الفريدة؛ راجع فصل Excel وفصل مدرستي في الجدول قبل الحفظ.</div>`:''}
  ${notesWarning}
  <label class="${APP}-note" style="display:block;cursor:pointer"><input id="${APP}-import-feedback" type="checkbox" ${state.importFeedback?'checked':''}> استيراد الملاحظات أيضًا (اختياري، غير مفعّل افتراضيًا). إن لم تُفعّل هذا الخيار ستبقى ملاحظات مدرستي كما هي.</label>
- <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt" ${ready.length?'':'disabled'}>تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn" ${ready.length?'':'disabled'}>حفظ ${ready.length} درجة على مدرستي</button><button type="button" id="${APP}-preview-xlsx" class="${APP}-btn alt">تصدير المعاينة Excel</button></div>
+ <div class="${APP}-toolbar" style="margin-bottom:8px"><button id="${APP}-patch" class="${APP}-btn alt" ${(state.fetchAudit?.complete&&ready.length)?'':'disabled'}>تطبيق في الخانات الظاهرة</button><button id="${APP}-save" class="${APP}-btn" ${(state.fetchAudit?.complete&&ready.length)?'':'disabled'}>حفظ ${ready.length} درجة على مدرستي</button><button type="button" id="${APP}-preview-xlsx" class="${APP}-btn alt">تصدير المعاينة Excel</button></div>
  <div class="${APP}-tablewrap" style="max-height:380px"><table class="${APP}-table"><thead><tr><th>الصف</th><th>الطالب في الملف</th><th>اسم مدرستي</th><th>رقم الطالب</th><th>فصل Excel</th><th>فصل مدرستي</th><th>حالة التسليم</th><th>طريقة المطابقة</th><th>الدرجة الحالية</th><th>الدرجة الجديدة</th><th>الدرجة القصوى</th><th>الحالة / السبب</th></tr></thead><tbody>
  ${rows.slice(0,300).map(r=>`<tr><td>${r.sourceRow}</td><td>${esc(r.name||'—')}</td><td>${esc(r.student?.name||'—')}</td><td>${esc(r.sid||r.student?.studentId||'—')}</td><td>${esc(r.className||'—')}</td><td>${esc(r.student?.className||'—')}${r.classWarning?`<div style="font-size:10px;color:#975a16">${esc(r.classWarning)}</div>`:''}</td><td>${esc(r.submissionStatus||'غير محدد')}</td><td>${esc(r.method||'—')}</td><td>${Number.isFinite(r.student?.grade)?fmt(r.student.grade):'—'}</td><td><b>${Number.isFinite(r.grade)?fmt(r.grade):'—'}</b></td><td>${Number.isFinite(r.student?.totalGrade)?fmt(r.student.totalGrade):'—'}</td><td>${r.status==='ready'?`<span class="${APP}-pill ${APP}-ok">جاهز للتطبيق</span>`:`<span class="${APP}-pill ${r.status==='unchanged'?`${APP}-ok`:`${APP}-bad`}">${esc(r.reason||'يحتاج مراجعة')}</span>`}</td></tr>`).join('')}
  </tbody></table></div>`;
@@ -938,6 +939,7 @@
 };
 
     const patchVisibleImport = () => {
+    if(!state.fetchAudit?.complete)return toast('الصفحات غير مكتملة؛ لا يمكن تطبيق الدرجات على الخانات الظاهرة.','error');
     const ready = state.importPreview?.rows?.filter(r => r.status === 'ready') || [];
     let count = 0;
     ready.forEach(r => {
