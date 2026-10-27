@@ -86,9 +86,9 @@
     {
       "id": "madrasati-projects-intelligence",
       "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
-      "version": "1.6.0",
-      "status": "stable",
-      "description": "الإصدار النهائي المستقر لمدير الأنشطة والمشاريع المستقل: جلب وتنقل صفحات الطلاب، التمييز بين حالات التسليم والصفر، قرار المعلم للحالات غير المحسومة، ملاحظات تلقائية حسب الدرجة، كشف وتقارير PDF/Excel/CSV، ومعاينة وتأكيد رصد بعدد الطلاب مع التحقق من الحفظ.",
+      "version": "1.6.1-beta1",
+      "status": "beta",
+      "description": "مدير الأنشطة والمشاريع المستقل — تحديث تصحيحي تجريبي لملاحظات الصفحة الأولى، مع بيان تحديث الملاحظات دون تغيير الدرجة والتحقق المرحلي من أول 10 و20 طالبًا ومقارنة النصوص بعد الحفظ؛ الإصدار المستقر السابق 1.6.0 محفوظ في سجل GitHub.",
       "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-projects-intelligence/README.md",
       "greasyFork": null,
