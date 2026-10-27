@@ -86,9 +86,9 @@
     {
       "id": "madrasati-projects-intelligence",
       "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
-      "version": "1.5.9",
+      "version": "1.6.0-beta1",
       "status": "beta",
-      "description": "مدير الأنشطة والمشاريع المستقل: بحث وإحصائيات وتقارير واستيراد Excel/CSV؛ قيد اختبار استقرار حفظ الدرجات داخل مدرستي. لا يتطلب مدير الواجبات الموحد.",
+      "description": "مدير مشاريع مدرستي المستقل (تجريبي): محاولة جلب جميع صفحات الطلاب، تنقل سجل الطلاب وفلترته، إحصائيات وتقارير، استيراد Excel/CSV مع منع الحفظ إذا لم تثبت سلامة القائمة، وتقرير تشخيصي للصفحة دون بيانات شخصية.",
       "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-projects-intelligence/README.md",
       "greasyFork": null,
