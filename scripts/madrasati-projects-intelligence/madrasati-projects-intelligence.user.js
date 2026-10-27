@@ -615,7 +615,8 @@
   const gradePercent = r => Number.isFinite(r.grade) && Number.isFinite(r.totalGrade) && r.totalGrade > 0 ? pct(r.grade,r.totalGrade) : null;
   const detailedStats = rows => {
     const s = summary(rows);
-    const percents = rows.filter(r=>classifyProjectSubmission(r).key==='submitted').map(gradePercent).filter(Number.isFinite).sort((a,b) => a-b);
+    const percents = rows.map(gradePercent).filter(Number.isFinite).sort((a,b)=>a-b);
+    const submittedPercents = rows.filter(r=>classifyProjectSubmission(r).key==='submitted').map(gradePercent).filter(Number.isFinite).sort((a,b)=>a-b);
     s.median = percents.length ? (percents[Math.floor((percents.length-1)/2)] + percents[Math.ceil((percents.length-1)/2)])/2 : null;
     s.low = percents.length ? percents[0] : null;
     s.levels = Object.fromEntries(levelKeys.map(k => [k,rows.filter(r => band(r) === k).length]));
@@ -625,11 +626,11 @@
       return { name, total:rs.length,submitted:rs.filter(r=>classifyProjectSubmission(r).key==='submitted').length,notSubmitted:rs.filter(r=>classifyProjectSubmission(r).key==='not_submitted').length,unknown:rs.filter(r=>classifyProjectSubmission(r).key==='unknown').length,graded:scored.length,avg:scored.length?scored.reduce((a,b)=>a+b,0)/scored.length:null };
     });
     s.buckets = [
-      { label:'90–100%', count:percents.filter(v=>v>=90).length, kind:'excellent' },
-      { label:'80–<90%',count:percents.filter(v=>v>=80&&v<90).length,kind:'verygood' },
-      { label:'70–<80%',count:percents.filter(v=>v>=70&&v<80).length,kind:'good' },
-      { label:'51–<70%',count:percents.filter(v=>v>50&&v<70).length,kind:'pass' },
-      { label:'0–50%',count:percents.filter(v=>v<=50).length,kind:'weak' }
+      { label:'90–100%', count:submittedPercents.filter(v=>v>=90).length, kind:'excellent' },
+      { label:'80–<90%',count:submittedPercents.filter(v=>v>=80&&v<90).length,kind:'verygood' },
+      { label:'70–<80%',count:submittedPercents.filter(v=>v>=70&&v<80).length,kind:'good' },
+      { label:'51–<70%',count:submittedPercents.filter(v=>v>50&&v<70).length,kind:'pass' },
+      { label:'0–50%',count:submittedPercents.filter(v=>v<=50).length,kind:'weak' }
     ];
     return s;
   };
