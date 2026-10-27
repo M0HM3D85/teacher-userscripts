@@ -1184,10 +1184,44 @@
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `تقرير-${state.activityTitle.replace(/[\\/:*?"<>|]/g, '-')}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
+  const exportGradeAudit = function exportGradeAudit(){
+ const cleanedPath=url=>{
+  try{return new URL(url,location.origin).pathname.replace(/\/[0-9a-f]{20,}/ig,'/:id').replace(/\/\d+(?=\/|$)/g,'/:id');}
+  catch{return 'غير معروف';}
+ };
+ const listIds=[...document.querySelectorAll('input[name^="List["][name$=".StudentId"]')];
+ const forms=[...document.forms].map(form=>({
+  action:cleanedPath(form.action||location.href),
+  method:String(form.method||'').toUpperCase(),
+  fields:[...new Set([...form.elements].map(e=>String(e.name||'').replace(/^List\[\d+\]\./,'List[].')).filter(Boolean))].sort(),
+  listStudentFieldCount:[...form.elements].filter(e=>/^List\[\d+\]\.StudentId$/.test(e.name||'')).length,
+  hasVerificationToken:!!form.querySelector?.('input[name="__RequestVerificationToken"]')
+ }));
+ const expected=expectedStudentCount(),params=projectParams();
+ const report={
+  type:'Madrasati Projects GradePage ReadOnly Audit',
+  scriptVersion:VERSION,
+  capturedAt:new Date().toISOString(),
+  page:cleanedPath(location.href),
+  loadedStudents:state.students.length,
+  expectedStudentOptions:expected,
+  nativePageStudentFields:listIds.length,
+  fetching:{...state.fetchAudit},
+  nativePaginationLinkCount:document.querySelectorAll('.pagination a, a.page-link').length,
+  loadStudentsFunctionFound:typeof globalThis.loadStudents==='function',
+  paramsPresent:Object.fromEntries(Object.entries(params).map(([key,value])=>[key,!!value])),
+  forms,
+  note:'لا يحتوي هذا الفحص على أسماء الطلاب أو أرقام هوياتهم أو درجاتهم أو قيم حقول النماذج. لا يحفظ أو يرسل أي درجة.'
+ };
+ downloadJson('madrasati-projects-readonly-audit.json',report);
+ toast('تم تنزيل فحص بنية صفحة الرصد دون أسماء أو درجات أو حفظ.','success');
+};
+
   const renderGrade = () => {
     insertPanel('مدير الأنشطة والمشاريع الذكي', `تحليل الطلاب والتقارير والرسوم البيانية — ${VERSION}`,
-      `<button id="${APP}-refresh" class="${APP}-btn">تحديث التحليل</button><button id="${APP}-import-btn" class="${APP}-btn alt">استيراد درجات</button><button id="${APP}-print" class="${APP}-btn gray">طباعة التقرير</button><button id="${APP}-xlsx" class="${APP}-btn gray">Excel</button><button id="${APP}-csv" class="${APP}-btn gray">CSV</button><button id="${APP}-reset" class="${APP}-btn gray">إعادة التصفية</button>`);
+      `<button id="${APP}-refresh" class="${APP}-btn">تحديث التحليل</button><button id="${APP}-audit-btn" class="${APP}-btn gray">فحص صفحة الرصد (بدون حفظ)</button><button id="${APP}-import-btn" class="${APP}-btn alt">استيراد درجات</button><button id="${APP}-print" class="${APP}-btn gray">طباعة التقرير</button><button id="${APP}-xlsx" class="${APP}-btn gray">Excel</button><button id="${APP}-csv" class="${APP}-btn gray">CSV</button><button id="${APP}-reset" class="${APP}-btn gray">إعادة التصفية</button>`);
     document.getElementById(`${APP}-refresh`)?.addEventListener('click', refreshGrade);
+    document.getElementById(`${APP}-audit-btn`)?.addEventListener('click',exportGradeAudit);
     document.getElementById(`${APP}-import-btn`)?.addEventListener('click', openImport);
     document.getElementById(`${APP}-print`)?.addEventListener('click', printReport);
     document.getElementById(`${APP}-xlsx`)?.addEventListener('click', exportExcel);
