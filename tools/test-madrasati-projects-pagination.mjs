@@ -66,4 +66,29 @@ assert.equal((table.innerHTML.match(/<tr /g)||[]).length,13);
 assert.equal(fields.get('MAIP-page-next').disabled,true);
 state.studentPageSize='all';state.studentPage=1;draw(students,table);
 assert.equal((table.innerHTML.match(/<tr /g)||[]).length,73);
+// Deep report must not stop when a page has fewer than twenty students.
+const deepStart=source.indexOf('  const fetchGradeAnalysis = async function fetchGradeAnalysis(');
+const deepEnd=source.indexOf('  const deepSummaryOf =',deepStart);
+assert(deepStart>0&&deepEnd>deepStart,'Actual deep-scan implementation');
+const deepFactory=new Function('state','getDocument','verifiedProjectEnd','paramsFromGradeDoc','expectedStudentCount','postForm','parseStudentsHtml','studentIdKey',source.slice(deepStart,deepEnd)+'return fetchGradeAnalysis;');
+const deepStudents=students.slice(0,15);
+const analyze=(repeat)=>{
+ const audit={deepByUrl:new Map()},calls=[];
+ const post=async(url,params)=>{
+  const page=Number(params.pageNumber??params.PageNumber??1);
+  calls.push(page);
+  return repeat?'d1':page<=2?'d'+page:'empty';
+ };
+ const parse=html=>html==='d1'?deepStudents.slice(0,7):html==='d2'?deepStudents.slice(7):[];
+ const fn=deepFactory(audit,async()=>({}),()=> 'ended',()=>({ProjectId:'A',PublishedProjectId:'B'}),()=>15,post,parse,String);
+ return {fn,calls};
+};
+const deep=analyze(false),detail=await deep.fn('https://schools.madrasati.sa/Projects/Projects/GradeProject/mock',{remaining:20});
+assert.equal(detail.status,'ready','15 students over 7+8-sized pages must be complete');
+assert.equal(detail.rows.length,15);
+assert(deep.calls.includes(3),'Must request empty final page even if previous page has fewer than 20 students');
+const stuck=analyze(true),partial=await stuck.fn('https://schools.madrasati.sa/Projects/Projects/GradeProject/repeat',{remaining:20});
+assert.equal(partial.status,'partial','Repeating first page may not be reported as ready');
+assert.equal(partial.rows.length,7);
+
 console.log('✓ Projects: 73 students/4 server pages, repeated-page defense, partial roster write-block, 20/13/all table navigation.');
