@@ -2,7 +2,7 @@
 // @name         مكتبة البرومبتات الذكية | NotebookLM
 // @name:en      Smart Prompt Library for NotebookLM
 // @namespace    https://tampermonkey.net/
-// @version      1.1.4
+// @version      1.1.5
 // @description  مكتبة قوالب NotebookLM بمدخل مدمج قرب عنوان الدفتر وتعبئة المتغيرات والنسخ والحفظ.
 // @match        https://notebooklm.google.com/*
 // @match        https://notebook.google.com/*
@@ -16,7 +16,7 @@
 // ==/UserScript==
 
 /*
- * Smart Prompt Library v1.1.4
+ * Smart Prompt Library v1.1.5
  * - Does not read notebook content, send requests, or submit prompts automatically.
  * - Prompts are stored only in this userscript's Tampermonkey storage.
  * - Use {{اسم_المتغير}} anywhere in a template to create a fillable field.
@@ -27,7 +27,7 @@
   // A page-visible non-sensitive marker helps distinguish an inactive userscript
   // from a DOM anchoring problem. In Console: document.documentElement.dataset.nlplStatus
   const markStatus = (status) => {
-    document.documentElement.dataset.nlplVersion = '1.1.4';
+    document.documentElement.dataset.nlplVersion = '1.1.5';
     document.documentElement.dataset.nlplStatus = status;
   };
   if (document.getElementById('splt-root')) {
@@ -36,7 +36,7 @@
     return;
   }
   markStatus('started');
-  console.info('[NotebookLM Prompt Library] v1.1.4 executing on', location.host);
+  console.info('[NotebookLM Prompt Library] v1.1.5 executing on', location.host);
 
   // Trusted Types-safe UI rendering: NotebookLM applies
   // require-trusted-types-for 'script', blocking ShadowRoot.innerHTML and
@@ -276,6 +276,88 @@
 9. أن المشتتات منطقية ومناسبة.
 10. أن الإجابات الصحيحة موزعة بشكل متنوع بين أ، ب، ج، د.`;
 
+  // Built-in prompt #2: added through an idempotent migration so existing
+  // Tampermonkey libraries receive it without overwriting any edited prompts.
+  const THINKING_SEED_ID = 'starter-thinking-challenges-v1';
+  const THINKING_CHALLENGES_TEXT = `أريد منك إنشاء بنك أسئلة بعنوان:
+
+«{{عنوان_البنك}} – درس: {{اسم_الدرس}}»
+
+اعتمد حصريًا على المصادر المرفوعة في هذا الدفتر والمتعلقة بالدرس المحدد، ولا تستخدم أي معلومات أو مفاهيم أو أمثلة من خارجها. إذا لم تتضمن المصادر معلومات كافية لبناء سؤال صحيح، فلا تخترع معلومات لتعويض النقص.
+
+الهدف من هذه الأسئلة ليس قياس الحفظ المباشر، بل تنمية وقياس مهارات التفكير العليا لدى الطلاب، مثل: الفهم العميق، التطبيق، التحليل، المقارنة، الاستنتاج، الربط بين المفاهيم، التمييز، اتخاذ القرار، وحل المشكلات.
+
+أنشئ مجموعة متنوعة من الأسئلة، وراعِ ما يلي:
+
+1. تجنب قدر الإمكان الأسئلة التي تعتمد على استرجاع تعريف أو معلومة مباشرة من النص.
+2. اجعل السؤال يتطلب من الطالب التفكير قبل الاختيار، مثل:
+   - تطبيق مفهوم على موقف جديد.
+   - تحليل موقف أو مشكلة.
+   - المقارنة بين بدائل متشابهة.
+   - تحديد الحل الأنسب.
+   - استنتاج نتيجة من معلومات معطاة.
+   - اكتشاف سبب أو علاقة.
+   - اختيار الإجراء الأفضل في موقف عملي.
+   - التمييز بين مفاهيم متقاربة.
+3. يجب أن يكون كل سؤال من نوع الاختيار من متعدد.
+4. عدد البدائل لكل سؤال: الحد الأدنى {{الحد_الأدنى_للبدائل}}، والحد الأقصى {{الحد_الأقصى_للبدائل}}. اختر العدد الأنسب لطبيعة السؤال، ولا تجعل جميع الأسئلة بعدد ثابت من البدائل.
+5. هذه نقطة شديدة الأهمية: اجعل البدائل متقاربة ومنطقية وقابلة للتصديق، بحيث يحتاج الطالب إلى فهم السؤال والتفكير فيه للتمييز بينها. لا تضع إجابة صحيحة واضحة بجانب بدائل ضعيفة أو بعيدة أو سخيفة أو يمكن استبعادها مباشرة دون فهم الدرس.
+6. اجعل المشتتات مبنية – قدر الإمكان – على:
+   - خلط محتمل بين مفهومين متقاربين.
+   - تطبيق غير دقيق للمفهوم.
+   - استنتاج يبدو منطقيًا لكنه غير مكتمل.
+   - اختيار صحيح في سياق آخر لكنه ليس الأنسب للموقف الحالي.
+   - خطأ شائع يمكن أن يقع فيه الطالب.
+7. يجب أن توجد إجابة واحدة هي الأفضل والأدق بوضوح عند التحليل، حتى لو بدت بقية البدائل معقولة للوهلة الأولى.
+8. تجنب الأسئلة الخادعة أو الغامضة. الصعوبة يجب أن تأتي من «التفكير في المحتوى» وليس من التلاعب بصياغة السؤال.
+9. اجعل مستوى اللغة مناسبًا لـ **{{الفئة_الدراسية}}**، مع المحافظة على قوة السؤال وعمقه.
+10. لا تستخدم عبارات تكشف الإجابة مثل: «جميع ما سبق» و«لا شيء مما سبق» إلا إذا كانت هناك ضرورة تعليمية حقيقية.
+
+لكل سؤال أعطني المخرجات بهذا الترتيب:
+
+السؤال: [نص السؤال]
+
+مهارة التفكير المستهدفة: [تحليل / تطبيق / استنتاج / مقارنة / اتخاذ قرار / حل مشكلة / ...]
+
+البدائل: أ) ... ب) ... ج) ... د) ... استخدم فقط العدد الذي يحتاجه السؤال ضمن الحدود المحددة أعلاه.
+
+الإجابة الصحيحة: [الحرف + نص الإجابة]
+
+لماذا هذه الإجابة هي الصحيحة؟ اكتب تفسيرًا تعليميًا واضحًا ومختصرًا يشرح المنطق الذي يجعل هذا الاختيار هو الأفضل، بالاعتماد على محتوى الدرس.
+
+لماذا تبدو البدائل الأخرى معقولة لكنها غير صحيحة؟ اشرح بإيجاز سبب عدم دقة كل بديل، خصوصًا إذا كان الفرق بينه وبين الإجابة الصحيحة دقيقًا.
+
+تعليل مبسط يظهر للطالب بعد كشف الإجابة: اكتب تعليلًا قصيرًا وواضحًا ومناسبًا لعمر الطالب، يساعده على فهم سبب صحة الإجابة دون تعقيد.
+
+مرجع السؤال من المصدر: حدد الجزء أو الفكرة من المصدر التي بُني عليها السؤال حتى أتمكن من التحقق منه، ولا تخترع أرقام صفحات أو اقتباسات غير موجودة.
+
+مهم جدًا: قبل إخراج كل سؤال، راجعه داخليًا واسأل: «هل يستطيع طالب لم يفهم الدرس معرفة الإجابة بمجرد استبعاد البدائل الساذجة؟» إذا كانت الإجابة نعم، فأعد بناء البدائل واجعلها أكثر تقاربًا.
+
+ثم اسأل: «هل يحتاج الطالب فعلًا إلى التفكير أو التطبيق أو التحليل للوصول إلى الإجابة؟» إذا كانت الإجابة لا، فأعد صياغة السؤال.
+
+أنشئ **{{عدد_الأسئلة}}** أسئلة متنوعة على **{{رقم_الدرس}}: {{اسم_الدرس}}**، ورتبها **{{ترتيب_التحدي}}**، مع التنويع في مهارات التفكير وعدم تكرار الفكرة نفسها بصيغ مختلفة.`;
+
+  const thinkingChallengesStarter = () => ({
+    id: THINKING_SEED_ID,
+    title: 'تحديات التفكير – بنك أسئلة',
+    category: 'أسئلة وتقييم',
+    description: 'أسئلة تفكير عليا بمشتتات منطقية وتفسير لكل بديل ومرجع من المصدر؛ مع تدرج الصعوبة.',
+    favorite: false,
+    body: THINKING_CHALLENGES_TEXT,
+    vars: {
+      'عنوان_البنك': { label: 'عنوان بنك الأسئلة', type: 'text', defaultValue: 'تحديات التفكير', required: true },
+      'رقم_الدرس': { label: 'رقم / ترتيب الدرس', type: 'text', defaultValue: 'الدرس الثاني', required: true },
+      'اسم_الدرس': { label: 'اسم الدرس', type: 'text', defaultValue: 'الاستعلام في قاعدة البيانات', required: true },
+      'عدد_الأسئلة': { label: 'عدد الأسئلة', type: 'number', defaultValue: '6', required: true },
+      'الحد_الأدنى_للبدائل': { label: 'أقل عدد للبدائل', type: 'number', defaultValue: '2', required: true },
+      'الحد_الأقصى_للبدائل': { label: 'أكبر عدد للبدائل', type: 'number', defaultValue: '4', required: true },
+      'الفئة_الدراسية': { label: 'الفئة الدراسية', type: 'text', defaultValue: 'طلاب المرحلة المتوسطة', required: true },
+      'ترتيب_التحدي': { label: 'ترتيب مستوى التحدي', type: 'select', defaultValue: 'من الأقل تحديًا إلى الأكثر تحديًا', required: true,
+        options: ['من الأقل تحديًا إلى الأكثر تحديًا', 'من الأكثر تحديًا إلى الأقل تحديًا', 'بحسب مهارات التفكير المستهدفة'] }
+    },
+    createdAt: now(), updatedAt: now()
+  });
+
   const starter = () => ({
     id: 'starter-forms-questions-v1',
     title: 'برومبت أسئلة الفورمز',
@@ -338,13 +420,20 @@
         if (ids.has(p.id)) p.id = uid();
         ids.add(p.id);
       }
+      // One-time addition to existing libraries: preserve every saved prompt,
+      // customization, favorite, and last-selected prompt. If subsequently
+      // deleted, this built-in template must NOT reappear on every reload.
+      const builtinsVersion = Number(raw.builtinsVersion) || 1;
+      if (builtinsVersion < 2 && !ids.has(THINKING_SEED_ID)) {
+        prompts.push(thinkingChallengesStarter());
+      }
       return {
-        schema: 1, prompts,
+        schema: 1, builtinsVersion: Math.max(2, builtinsVersion), prompts,
         values: raw.values && typeof raw.values === 'object' && !Array.isArray(raw.values) ? raw.values : {},
         lastSelectedId: raw.lastSelectedId || (prompts[0] && prompts[0].id) || null
       };
     }
-    return { schema: 1, prompts: [starter()], values: {}, lastSelectedId: 'starter-forms-questions-v1' };
+    return { schema: 1, builtinsVersion: 2, prompts: [starter(), thinkingChallengesStarter()], values: {}, lastSelectedId: 'starter-forms-questions-v1' };
   }
   let db = loadDB();
   const persist = () => {
@@ -522,6 +611,16 @@
       if (!value && meta.required && !missing.includes(meta.label)) missing.push(meta.label);
       return value;
     });
+    if (p.id === THINKING_SEED_ID) {
+      const count = Number(getFieldValue(p, 'عدد_الأسئلة'));
+      const min = Number(getFieldValue(p, 'الحد_الأدنى_للبدائل'));
+      const max = Number(getFieldValue(p, 'الحد_الأقصى_للبدائل'));
+      if (!Number.isSafeInteger(count) || count < 1) missing.push('عدد الأسئلة يجب أن يكون عددًا صحيحًا موجبًا');
+      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) ||
+          min < 2 || max > 4 || min > max) {
+        missing.push('عدد البدائل يجب أن يكون من 2 إلى 4 والحد الأدنى لا يتجاوز الأقصى');
+      }
+    }
     return { text, missing };
   }
   function toggleOpen(force) {
@@ -676,7 +775,7 @@
     if (!p) return;
     const result = compiled(p);
     if (result.missing.length) {
-      toast(`أكمل الحقول المطلوبة: ${result.missing.join('، ')}`, true);
+      toast(`تحقق من بيانات القالب: ${result.missing.join('، ')}`, true);
       const first = [...shadow.querySelectorAll('[data-action="value"]')].find(el =>
         !getFieldValue(p, el.dataset.key).trim() && fieldMeta(p, el.dataset.key).required);
       if (first) first.focus();
@@ -757,7 +856,7 @@
           ids.add(p.id);
           if (importedValues[old] && typeof importedValues[old] === 'object' && !Array.isArray(importedValues[old])) values[p.id] = importedValues[old];
         }
-        db = { schema: 1, prompts: incoming, values, lastSelectedId: incoming[0].id };
+        db = { schema: 1, builtinsVersion: 2, prompts: incoming, values, lastSelectedId: incoming[0].id };
       } else {
         const oldIds = new Set(db.prompts.map(p => p.id));
         let added = 0;
@@ -908,7 +1007,7 @@
    */
   let lastPanel = null;
   let mountTimer = null;
-  root.dataset.version = '1.1.4';
+  root.dataset.version = '1.1.5';
 
   function isUsablePanel(el) {
     if (!el?.isConnected) return false;
@@ -960,7 +1059,7 @@
     const anchor = getInsertionAnchor(chat);
     if (root.parentElement !== chat || root.nextSibling !== anchor) {
       chat.insertBefore(root, anchor);
-      console.info('[NotebookLM Prompt Library] v1.1.4 UI attached to chat panel; entry at notebook title.');
+      console.info('[NotebookLM Prompt Library] v1.1.5 UI attached to chat panel; entry at notebook title.');
     }
     lastPanel = chat;
     root.dataset.mount = 'chat-panel';
