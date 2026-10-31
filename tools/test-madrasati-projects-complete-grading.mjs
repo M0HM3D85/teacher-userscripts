@@ -92,7 +92,7 @@ stale.server.get('1001').feedback='ملاحظة خارجية أُضيفت بعد
 await stale.save();
 assert.equal(stale.log.confirmation,2,'Genuine platform drift requires second explicit teacher approval');
 assert.equal(stale.state.lastGradeReceipt.phase,'verified','Approved reconciliation may proceed when all IDs match');
-assert.equal(stale.server.get('1001').feedback,'الملاحظة الجديدة','Updated note follows spreadsheet's intended feedback');
+assert.equal(stale.server.get('1001').feedback,'الملاحظة الجديدة','Updated note follows the intended spreadsheet feedback');
 
 const declined=createHarness({approvals:[true,false]});
 declined.server.get('1001').feedback='تغيير من المعلم بعد المعاينة';
