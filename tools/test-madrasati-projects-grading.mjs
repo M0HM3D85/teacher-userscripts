@@ -5,13 +5,13 @@ import vm from 'node:vm';
 const source=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
 assert.match(source,/^\/\/ @version\s+1\.6\.1-beta2$/m);
 new vm.Script(source,{filename:'projects-grading.user.js'});
-assert(source.includes("if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))"),'Unresolved zero must block saving');
+assert(source.includes("const rejected=allRows.filter(r=>!['ready','unchanged'].includes(r.status))"),'All non-ready statuses, including unresolved zero, must block saving');
 assert(source.includes('if(!state.fetchAudit?.complete)'),'Incomplete roster blocks saving');
-assert(source.includes('const feedback=r.nextFeedback??student.feedback??'),'Save must use previewed automatic comments');
-assert(source.includes('const failedNotes=currentSlice.filter')&&source.includes('clean(current?.feedback)!==clean(r.feedback)'),'Early-batch verification checks comments independently, including first 20');
-assert(source.includes('clean(current.feedback)!==clean(r.nextFeedback)'),'Final verification checks comments');
+assert(source.includes("feedback:r.nextFeedback??''")&&source.includes("const body=group.map"),'Save must use previewed automatic comments');
+assert(source.includes('const {failedGrade,failedNotes}=evaluate(map,currentSlice)')&&source.includes('clean(current.feedback)!==clean(r.feedback)'),'Each sent batch must verify grade and comment independently');
+assert(source.includes('const {failedGrade,failedNotes}=evaluate(map,wants)'),'Final verification must check all file records for grades and comments');
 assert(source.includes('تأكيد رصد '),'Visible grading button must show count');
-assert(source.includes('الطلاب الجاهزون للرصد: '),'Confirmation must show number of pupils');
+assert(source.includes('مطلوب تحديثهم: '),'Confirmation must show number of pupils who need updating');
 
 const start=source.indexOf('  const normalizeProjectSubmission = ');
 const end=source.indexOf('  const band = row => {',start);
