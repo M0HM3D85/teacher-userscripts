@@ -4675,6 +4675,19 @@ state.data
 await Promise.allSettled(
 enrichers
 );
+if (
+isTeacher &&
+state.data.timeSource !==
+'system'
+) {
+console.info(
+'[M0HM3D85 Schedule Userscript] time auto-detect:',
+state.data.timeDebug || {
+reason:
+'unknown'
+}
+);
+}
 hydrateDefaults(
 state.data
 );
