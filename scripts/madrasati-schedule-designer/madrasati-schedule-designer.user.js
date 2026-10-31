@@ -2,7 +2,7 @@
 // @name         مدرستي - مصمم الجدول الدراسي
 // @namespace    https://greasyfork.org/users/1636459
 // @version      2.1.2
-// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع بيانات مدرسية تلقائية وهوية قريبة من وزارة التعليم وإحصائيات وطباعة/PDF وPNG وExcel.
+// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع أوقات المعلم وبيانات المدرسة تلقائيًا وهوية قريبة من وزارة التعليم وإحصائيات وطباعة/PDF وPNG وExcel.
 // @author       Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
