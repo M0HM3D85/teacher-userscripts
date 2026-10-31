@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         مدرستي - مصمم الجدول الدراسي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      2.0.0
-// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع المعاينة والتخصيص والأوقات الذكية والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.
+// @version      2.1.3
+// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع أوقات المعلم وبيانات المدرسة تلقائيًا وهوية قريبة من وزارة التعليم وإحصائيات وطباعة/PDF وPNG وExcel.
 // @author       Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -18,8 +18,8 @@
 /*
 =========================================================================
 مدرستي - مصمم الجدول الدراسي
-إصدار Tampermonkey : 2.0.0
-متوافق وظيفيًا مع إضافة المتصفح: 0.2.0
+إصدار Tampermonkey : 2.1.3
+مبني على أساس الإصدار المتوافق مع إضافة المتصفح: 0.2.0
 تصميم وتطوير: Mohammed Almalki (M0HM3D85)
 X / Twitter : https://x.com/M0HM3D85
 Snapchat    : https://www.snapchat.com/add/M0HM3D85
@@ -46,19 +46,27 @@ const ROLE = isTeacher ? 'teacher' : 'student';
 // إبقاء المفتاح v13 يحافظ على إعدادات النسخة السابقة إن وُجدت.
 const STORAGE_KEY =
 `m0hm3d85_schedule_designer_v13_${ROLE}`;
+const SCHOOL_PREFS_PREFIX =
+'m0hm3d85_schedule_school_v1_';
+// لوحة ألوان قريبة من هوية وزارة التعليم:
+// أخضر، تركوازي، أزرق، كحلي، بنفسجي وتدرجات هادئة مشتقة منها.
 const PALETTE = [
-['#EAF3FF', '#8DBCF4', '#163B66', '#3B82F6'],
-['#EAFBF3', '#86D9AF', '#165B3A', '#22A06B'],
-['#FFF4E7', '#F5C37D', '#72420B', '#F59E0B'],
-['#F4EEFF', '#BCA4F4', '#4A2A7A', '#8B5CF6'],
-['#FFEFF4', '#F3A8BD', '#74233C', '#E85D85'],
-['#E9FAFB', '#84D7DB', '#15545A', '#19A7AE'],
-['#FFF9DF', '#E9D36A', '#65530B', '#C9A90A'],
-['#EEF7EA', '#A9D58D', '#355B22', '#6AA84F'],
-['#FDEEEE', '#EFB0B0', '#6E2525', '#D65A5A'],
-['#EEF1FF', '#AAB6EE', '#2C3C78', '#6376D9'],
-['#F7F0E9', '#D9B99A', '#67462A', '#B37A49'],
-['#EDF8FF', '#9CCFEA', '#24556E', '#4598C4']
+['#E8F7F0', '#A7DFC7', '#075C3E', '#07A869'],
+['#F0ECF8', '#BFB1D9', '#351375', '#351375'],
+['#EAF2FA', '#A8C9E2', '#1E5676', '#3D7EB9'],
+['#E7F7F7', '#9BDAD8', '#0B5C5A', '#0DA9A6'],
+['#F0F1FF', '#BEC1FF', '#3D438A', '#7A80FF'],
+['#EAF0F3', '#A8BCC6', '#15445A', '#15445A'],
+['#ECF9FC', '#AFE4EE', '#245D69', '#69CEE3'],
+['#F2EDF8', '#C8BADB', '#4D376C', '#7258A4'],
+['#E8F1F8', '#A6C5D9', '#1E5676', '#3078A6'],
+['#E7F4F7', '#9CCDD8', '#18596B', '#218CAA'],
+['#EAF7F1', '#B4DDC9', '#2D644E', '#5EAF8E'],
+['#E9F8F7', '#B0E2DF', '#245F5C', '#4AB8B5'],
+['#ECF3F8', '#B6CBDB', '#365D79', '#5D8FB8'],
+['#F2EFF8', '#CDC4DE', '#51436A', '#8C78B7'],
+['#EAF8F2', '#B8E4D0', '#28634E', '#5EBF96'],
+['#F4F2EA', '#DDD5B8', '#625B3B', '#C1B489']
 ].map(
 ([bg, border, text, accent]) => ({
 bg,
@@ -68,18 +76,22 @@ accent
 })
 );
 const SUBJECT_ACCENTS = [
-'#2563EB',
-'#059669',
-'#D97706',
-'#7C3AED',
-'#DB2777',
-'#0891B2',
-'#65A30D',
-'#DC2626',
-'#4F46E5',
-'#0F766E',
-'#A16207',
-'#9333EA'
+'#351375',
+'#07A869',
+'#3D7EB9',
+'#0DA9A6',
+'#7A80FF',
+'#15445A',
+'#69CEE3',
+'#7258A4',
+'#3078A6',
+'#218CAA',
+'#5EAF8E',
+'#4AB8B5',
+'#5D8FB8',
+'#8C78B7',
+'#5EBF96',
+'#C1B489'
 ];
 const ORDINALS = [
 'الأولى',
@@ -100,6 +112,8 @@ stage: '',
 className: '',
 specialty: '',
 academicYear: '',
+region: '',
+term: '',
 week: '',
 title:
 isTeacher
@@ -110,6 +124,8 @@ showLegend: true,
 showSecondary: true,
 showSubjectAccent: true,
 showBrandLogo: true,
+showStats: true,
+fitMode: 'auto',
 dense: false,
 monochrome: false,
 remember: true,
@@ -120,13 +136,31 @@ const loadPrefs = () => {
 const base =
 defaultPrefs();
 try {
-return {
-...base,
-...JSON.parse(
+const rolePrefs =
+JSON.parse(
 localStorage.getItem(
 STORAGE_KEY
 ) || '{}'
-)
+);
+const schoolId =
+getCurrentSchoolId();
+let schoolPrefs = {};
+if (schoolId) {
+schoolPrefs =
+JSON.parse(
+localStorage.getItem(
+SCHOOL_PREFS_PREFIX +
+schoolId
+) || '{}'
+);
+}
+return {
+...base,
+...rolePrefs,
+region:
+rolePrefs.region ||
+schoolPrefs.region ||
+''
 };
 } catch (_) {
 return base;
@@ -150,6 +184,14 @@ try {
 localStorage.removeItem(
 STORAGE_KEY
 );
+const schoolId =
+getCurrentSchoolId();
+if (schoolId) {
+localStorage.removeItem(
+SCHOOL_PREFS_PREFIX +
+schoolId
+);
+}
 } catch (_) {}
 return;
 }
@@ -165,6 +207,21 @@ state.logoDataUrl.length < 700000
 : ''
 })
 );
+const schoolId =
+getCurrentSchoolId();
+if (
+schoolId &&
+state.prefs.region
+) {
+localStorage.setItem(
+SCHOOL_PREFS_PREFIX +
+schoolId,
+JSON.stringify({
+region:
+state.prefs.region
+})
+);
+}
 } catch (_) {}
 }
 function clean(
@@ -227,6 +284,1133 @@ const normalized = normalizeTimeValue(value);
 if (!normalized) return null;
 const [hour, minute] = normalized.split(':').map(Number);
 return hour * 60 + minute;
+}
+function parsePageDate(value = '') {
+const text = normalizeLatinDigits(value).trim();
+const match = text.match(/(20\d{2})[\/-](\d{1,2})[\/-](\d{1,2})/);
+if (!match) return null;
+const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+return Number.isNaN(date.getTime()) ? null : date;
+}
+function addDays(date, days) {
+const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+result.setDate(result.getDate() + Number(days || 0));
+return result;
+}
+function apiDate(date, separator = '/') {
+return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join(separator);
+}
+function extractClock(value = '') {
+const text =
+normalizeLatinDigits(value)
+.trim();
+const normalized =
+normalizeTimeValue(text);
+if (normalized) return normalized;
+const ticks =
+text.match(
+/\/Date\((\d+)(?:[+-]\d+)?\)\//
+);
+if (ticks) {
+const date =
+new Date(
+Number(ticks[1])
+);
+if (
+!Number.isNaN(
+date.getTime()
+)
+) {
+return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+}
+return '';
+}
+function findPageValue(labels = []) {
+const normalizedLabels = labels.map(label => canonical(label));
+const nodes = document.querySelectorAll('label, small, span, div, h5, h6');
+for (const node of nodes) {
+const text = clean(node.textContent || '');
+if (!text || text.length > 120) continue;
+const normalized = canonical(text);
+for (const label of normalizedLabels) {
+if (!label || !normalized.startsWith(label)) continue;
+const colonIndex = Math.max(text.indexOf(':'), text.indexOf('：'));
+if (colonIndex < 0) continue;
+const value = clean(text.slice(colonIndex + 1));
+if (value && value.length <= 80) return value;
+}
+}
+return '';
+}
+function inferAcademicYear() {
+try {
+return normalizeLatinDigits(new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura',{ year: 'numeric' }).format(new Date())).replace(/\s+/g, ' ').trim();
+} catch (_) {
+return '';
+}
+}
+function inferStage(data) {
+const text = data.days.flatMap(day => day.lessons.map(lesson => lesson.className || '')).join(' ');
+if (/ابتدائي/u.test(text)) return 'ابتدائي';
+if (/متوسط/u.test(text)) return 'متوسط';
+if (/ثانوي/u.test(text)) return 'ثانوي';
+return '';
+}
+function normalizeCalendarPayload(payload) {
+let value = payload;
+for (let depth = 0; depth < 4; depth++) {
+if (typeof value === 'string') {
+try { value = JSON.parse(value); continue; } catch (_) { return null; }
+}
+if (value && Array.isArray(value.TimeTable)) return value;
+if (value && typeof value === 'object') {
+value = value.data ?? value.result ?? value.value ?? value.d;
+continue;
+}
+break;
+}
+return null;
+}
+function waitForMilliseconds(
+milliseconds
+) {
+return new Promise(
+resolve =>
+setTimeout(
+resolve,
+milliseconds
+)
+);
+}
+async function captureTeacherTimeTableContext(
+schoolId
+) {
+if (!schoolId) {
+return {
+token: '',
+currentDate: '',
+source: 'daily-timetable-iframe'
+};
+}
+const frame =
+document.createElement(
+'iframe'
+);
+frame.setAttribute(
+'aria-hidden',
+'true'
+);
+frame.style.cssText = [
+'position:fixed',
+'width:1px',
+'height:1px',
+'opacity:0',
+'pointer-events:none',
+'left:-10000px',
+'top:-10000px',
+'border:0'
+].join(';');
+frame.src =
+'/teacher/TimeTable/index/' +
+encodeURIComponent(
+schoolId
+) +
+'?SetFaviorit=True';
+document.body.appendChild(
+frame
+);
+try {
+await new Promise(
+(resolve, reject) => {
+const timer =
+setTimeout(
+() =>
+reject(
+new Error(
+'timetable-frame-timeout'
+)
+),
+12000
+);
+frame.addEventListener(
+'load',
+() => {
+clearTimeout(timer);
+resolve();
+},
+{ once: true }
+);
+}
+);
+const frameWindow =
+frame.contentWindow;
+const frameDocument =
+frame.contentDocument;
+if (
+!frameWindow ||
+!frameDocument
+) {
+return {
+token: '',
+currentDate: '',
+source: 'daily-timetable-iframe'
+};
+}
+const currentDate =
+clean(
+frameDocument.querySelector(
+'#_hndCurrentDate'
+)?.value ||
+frameDocument.querySelector(
+'#ServerDateTime'
+)?.value ||
+''
+);
+const XHR =
+frameWindow.XMLHttpRequest;
+const originalOpen =
+XHR.prototype.open;
+const originalHeader =
+XHR.prototype.setRequestHeader;
+let token = '';
+try {
+XHR.prototype.open =
+function (
+method,
+url,
+...rest
+) {
+this.__m0TimeUrl =
+String(url || '');
+return originalOpen.call(
+this,
+method,
+url,
+...rest
+);
+};
+XHR.prototype.setRequestHeader =
+function (
+name,
+value
+) {
+if (
+/requestverificationtoken/i
+.test(
+String(name || '')
+)
+) {
+token =
+String(value || '');
+}
+return originalHeader.call(
+this,
+name,
+value
+);
+};
+const triggers = [
+'.daytoday',
+'.prevCalendar',
+'.nextCalendar'
+];
+for (
+const selector of triggers
+) {
+if (token) break;
+const trigger =
+frameDocument.querySelector(
+selector
+);
+if (!trigger) continue;
+trigger.click();
+for (
+let attempt = 0;
+attempt < 10 &&
+!token;
+attempt++
+) {
+await waitForMilliseconds(
+120
+);
+}
+}
+} finally {
+XHR.prototype.open =
+originalOpen;
+XHR.prototype.setRequestHeader =
+originalHeader;
+}
+return {
+token:
+clean(token),
+currentDate,
+source:
+'daily-timetable-iframe'
+};
+} catch (error) {
+return {
+token: '',
+currentDate: '',
+source:
+'daily-timetable-iframe',
+error:
+String(
+error?.message ||
+error ||
+''
+)
+};
+} finally {
+frame.remove();
+}
+}
+async function fetchTeacherCalendarDay(
+dateText,
+index,
+schoolId,
+verificationToken
+) {
+if (
+!dateText ||
+!schoolId ||
+!verificationToken
+) return null;
+const body =
+new URLSearchParams();
+body.set(
+'Date',
+String(dateText)
+);
+body.set(
+'index',
+String(index)
+);
+body.set(
+'SchoolId',
+schoolId
+);
+const controller =
+new AbortController();
+const timer =
+setTimeout(
+() => controller.abort(),
+4500
+);
+try {
+const response =
+await fetch(
+'/Teacher/TimeTable/GetCal',
+{
+method: 'POST',
+credentials: 'same-origin',
+headers: {
+'Content-Type':
+'application/x-www-form-urlencoded; charset=UTF-8',
+'Accept':
+'application/json, text/javascript, */*; q=0.01',
+'RequestVerificationToken':
+verificationToken,
+'X-Requested-With':
+'XMLHttpRequest'
+},
+body:
+body.toString(),
+signal:
+controller.signal
+}
+);
+if (!response.ok) return null;
+return normalizeCalendarPayload(
+await response.text()
+);
+} catch (_) {
+return null;
+} finally {
+clearTimeout(timer);
+}
+}
+function medianNumber(
+values
+) {
+const list =
+values
+.filter(Number.isFinite)
+.sort((a, b) => a - b);
+if (!list.length) return null;
+const middle =
+Math.floor(
+list.length / 2
+);
+return list.length % 2
+? list[middle]
+: (
+list[middle - 1] +
+list[middle]
+) / 2;
+}
+function inferMissingSlotTimes(
+slotTimes,
+observedStarts,
+durations
+) {
+const observed = [
+...observedStarts.entries()
+]
+.map(([slot, values]) => ({
+slot:
+Number(slot),
+start:
+medianNumber(values)
+}))
+.filter(item =>
+Number.isFinite(item.start)
+)
+.sort((a, b) =>
+a.slot - b.slot
+);
+if (observed.length < 2) {
+return slotTimes;
+}
+const stepCandidates = [];
+for (
+let left = 0;
+left < observed.length;
+left++
+) {
+for (
+let right = left + 1;
+right < observed.length;
+right++
+) {
+const slotGap =
+observed[right].slot -
+observed[left].slot;
+const minuteGap =
+observed[right].start -
+observed[left].start;
+if (
+slotGap <= 0 ||
+minuteGap <= 0
+) continue;
+const step =
+minuteGap / slotGap;
+if (
+step >= 20 &&
+step <= 120
+) {
+stepCandidates.push(step);
+}
+}
+}
+const step =
+medianNumber(
+stepCandidates
+);
+if (
+!Number.isFinite(step)
+) return slotTimes;
+const baseCandidates =
+observed.map(item =>
+item.start -
+(item.slot - 1) *
+step
+);
+const base =
+medianNumber(
+baseCandidates
+);
+const duration =
+medianNumber(
+durations
+);
+if (
+!Number.isFinite(base) ||
+!Number.isFinite(duration) ||
+duration <= 0
+) return slotTimes;
+return slotTimes.map(
+(value, index) => {
+if (value) return value;
+const startMinute =
+Math.round(
+base +
+index * step
+);
+const endMinute =
+Math.round(
+startMinute +
+duration
+);
+return formatTimeRange(
+minutesToTime(startMinute),
+minutesToTime(endMinute)
+);
+}
+);
+}
+async function enrichTeacherScheduleFromSystem(
+data
+) {
+if (
+!isTeacher ||
+!data
+) return false;
+const schoolId =
+getCurrentSchoolId();
+if (!schoolId) {
+data.timeDebug = {
+reason:
+'school-id-not-found'
+};
+return false;
+}
+const context =
+await captureTeacherTimeTableContext(
+schoolId
+);
+data.timeDebug = {
+schoolIdFound: true,
+tokenFound:
+Boolean(
+context.token
+),
+dateFound:
+Boolean(
+context.currentDate
+),
+tokenSource:
+context.source ||
+''
+};
+if (
+!context.token
+) {
+data.timeDebug.reason =
+'verification-token-not-captured';
+if (context.error) {
+data.timeDebug.error =
+context.error;
+}
+return false;
+}
+if (
+!context.currentDate
+) {
+data.timeDebug.reason =
+'current-date-not-found';
+return false;
+}
+const days = [];
+let requestDate =
+context.currentDate;
+for (
+let index = 0;
+index <= 4;
+index++
+) {
+const day =
+await fetchTeacherCalendarDay(
+requestDate,
+index,
+schoolId,
+context.token
+);
+days.push(
+day
+);
+if (
+day?.CurrentDate
+) {
+requestDate =
+day.CurrentDate;
+} else if (!day) {
+break;
+}
+}
+data.timeDebug.responses =
+days.map(
+(day, index) => ({
+index,
+ok:
+Boolean(day),
+lectures:
+day?.TimeTable?.length ||
+0,
+currentDate:
+day?.CurrentDate ||
+''
+})
+);
+if (
+!days.some(Boolean)
+) {
+data.timeDebug.reason =
+'getcal-no-response';
+return false;
+}
+const slotTimes =
+Array.from(
+{ length: data.periods },
+() => ''
+);
+const observedStarts =
+new Map();
+const durations = [];
+let school = '';
+days
+.filter(Boolean)
+.forEach(day => {
+(day.TimeTable || [])
+.forEach(item => {
+const slot =
+Number(
+item?.SlotNumber
+);
+if (
+!Number.isFinite(slot) ||
+slot < 1 ||
+slot > slotTimes.length
+) return;
+const startTime =
+extractClock(
+item?.StartTime ||
+item?.stime ||
+''
+);
+const endTime =
+extractClock(
+item?.EndTime ||
+''
+);
+if (
+startTime &&
+endTime
+) {
+const range =
+formatTimeRange(
+startTime,
+endTime
+);
+if (
+range &&
+!slotTimes[slot - 1]
+) {
+slotTimes[slot - 1] =
+range;
+}
+const startMinute =
+timeToMinutes(
+startTime
+);
+let endMinute =
+timeToMinutes(
+endTime
+);
+if (
+Number.isFinite(startMinute)
+) {
+if (
+!observedStarts.has(slot)
+) {
+observedStarts.set(
+slot,
+[]
+);
+}
+observedStarts.get(slot)
+.push(
+startMinute
+);
+}
+if (
+Number.isFinite(startMinute) &&
+Number.isFinite(endMinute)
+) {
+if (
+endMinute <
+startMinute
+) {
+endMinute +=
+24 * 60;
+}
+const duration =
+endMinute -
+startMinute;
+if (
+duration > 0 &&
+duration <= 180
+) {
+durations.push(
+duration
+);
+}
+}
+}
+if (
+!school &&
+item?.SchoolName
+) {
+school =
+clean(
+item.SchoolName
+);
+}
+});
+});
+const completedTimes =
+inferMissingSlotTimes(
+slotTimes,
+observedStarts,
+durations
+);
+let found = 0;
+completedTimes
+.forEach(
+(value, index) => {
+if (!value) return;
+data.times[index] =
+value;
+found++;
+}
+);
+data.systemMeta = {
+...(data.systemMeta || {}),
+school:
+school ||
+data.systemMeta?.school ||
+''
+};
+if (found) {
+data.timeSource =
+'system';
+data.timeDebug.reason =
+'';
+data.timeDebug.found =
+found;
+data.timeDebug.directSlots =
+slotTimes
+.map(
+(value, index) =>
+value
+? index + 1
+: null
+)
+.filter(Boolean);
+data.timeDebug.inferredSlots =
+completedTimes
+.map(
+(value, index) =>
+value &&
+!slotTimes[index]
+? index + 1
+: null
+)
+.filter(Boolean);
+state.prefs.times =
+[...data.times];
+} else {
+data.timeDebug.reason =
+'no-slot-times-found';
+}
+return (
+found > 0 ||
+Boolean(school)
+);
+}
+function getCurrentSchoolId() {
+return clean(
+new URLSearchParams(location.search).get('SchoolId') ||
+document.querySelector('#hSchoolId')?.value ||
+document.querySelector('#hf_SchoolId')?.value ||
+''
+);
+}
+function getCurrentStudentUserId() {
+return clean(
+new URLSearchParams(location.search).get('UId') ||
+new URLSearchParams(location.search).get('uId') ||
+''
+);
+}
+async function fetchSameOriginDocument(url) {
+try {
+const response = await fetch(url, {
+credentials: 'same-origin',
+headers: { 'Accept': 'text/html,application/xhtml+xml' }
+});
+if (!response.ok) return null;
+return new DOMParser().parseFromString(await response.text(),'text/html');
+} catch (_) { return null; }
+}
+function extractRegionFromDocument(doc) {
+if (!doc) return '';
+const labels = ['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية'];
+const nodes = doc.querySelectorAll('label, small, span, p, div, td, th');
+for (const node of nodes) {
+const value = clean(node.textContent || '');
+if (!value || value.length > 180) continue;
+for (const label of labels) {
+const pos = value.indexOf(label);
+if (pos < 0) continue;
+const tail = clean(value.slice(pos + label.length).replace(/^[\s:：-]+/u, ''));
+if (tail && tail.length <= 80 && canonical(tail) !== canonical(label)) return tail;
+}
+}
+return '';
+}
+function parseSchoolCardFields(card) {
+const fields = new Map();
+if (!card) return fields;
+const rows = card.querySelectorAll(
+'li, .list-group-item, [class*="info-item"], [class*="detail"]'
+);
+rows.forEach(row => {
+const labelNode =
+row.querySelector(
+'span, strong, b, label'
+);
+if (!labelNode) return;
+const label =
+clean(
+labelNode.textContent || ''
+)
+.replace(/\s*[:：]\s*$/u, '');
+if (!label) return;
+const rowText =
+clean(
+row.textContent || ''
+);
+const labelText =
+clean(
+labelNode.textContent || ''
+);
+const position =
+rowText.indexOf(labelText);
+const value =
+clean(
+position >= 0
+? rowText.slice(
+position +
+labelText.length
+)
+: rowText
+)
+.replace(
+/^[\s:：-]+/u,
+''
+);
+if (value) {
+fields.set(
+canonical(label),
+value
+);
+}
+});
+return fields;
+}
+function getSchoolCardRegion(
+fields
+) {
+const keys = [
+'إدارة التعليم',
+'الإدارة التعليمية',
+'المنطقة التعليمية',
+'مكتب التعليم',
+'المنطقة',
+'الإدارة'
+];
+for (const key of keys) {
+const value =
+fields.get(
+canonical(key)
+);
+if (value) return value;
+}
+for (const [key, value] of fields) {
+if (
+/إدارة.*تعليم|تعليم.*إدارة|مكتب.*تعليم|منطقة.*تعليم/u
+.test(key)
+) {
+return value;
+}
+}
+return '';
+}
+function findDashboardSchoolCard(
+doc,
+schoolId
+) {
+if (!doc || !schoolId) return null;
+const links = [
+...doc.querySelectorAll(
+'a[href]'
+)
+];
+const link =
+links.find(anchor => {
+try {
+const url =
+new URL(
+anchor.getAttribute('href'),
+location.origin
+);
+return (
+url.pathname.includes(
+'/' + schoolId
+) ||
+url.searchParams.get(
+'SchoolId'
+) === schoolId ||
+url.searchParams.get(
+'schoolId'
+) === schoolId
+);
+} catch (_) {
+return false;
+}
+});
+return (
+link?.closest('.card') ||
+link?.closest('.card-body') ||
+link?.closest('[class*="card"]') ||
+link?.parentElement ||
+null
+);
+}
+function parseTeacherDashboardContext(doc, schoolId) {
+if (!doc || !schoolId) return {};
+const links = [
+...doc.querySelectorAll(
+'a[href*="ChangeUserTypeToTeacherFromParent"]'
+)
+];
+const link =
+links.find(anchor =>
+String(
+anchor.href || ''
+).includes(
+'/' + schoolId
+)
+);
+if (!link) return {};
+let school = '';
+try {
+school =
+new URL(
+link.href,
+location.origin
+)
+.searchParams.get(
+'Name'
+) || '';
+} catch (_) {}
+const card =
+findDashboardSchoolCard(
+doc,
+schoolId
+) ||
+link.closest(
+'[class*="col-lg-6"]'
+) ||
+link.parentElement;
+const fields =
+parseSchoolCardFields(
+card
+);
+const stage =
+fields.get(
+canonical(
+'المراحل الدراسية'
+)
+) || '';
+const region =
+getSchoolCardRegion(
+fields
+);
+if (!school) {
+school =
+clean(
+card?.querySelector(
+'h5, .card-title'
+)?.textContent ||
+''
+);
+}
+return {
+school:
+clean(school),
+stage:
+clean(stage),
+region:
+clean(region)
+};
+}
+function parseStudentDashboardContext(doc, schoolId, userId) {
+if (!doc || !schoolId) return {};
+const links = [...doc.querySelectorAll('a[href*="/Student/Home/Index/"]')];
+const link = links.find(anchor => {
+try {
+const url = new URL(anchor.href, location.origin);
+const sameSchool = url.pathname.includes('/' + schoolId);
+const uid = url.searchParams.get('UId') || url.searchParams.get('uId') || '';
+return sameSchool && (!userId || uid === userId);
+} catch (_) { return false; }
+});
+if (!link) return {};
+const text = clean(link.textContent || '');
+const nameMatch = text.match(/^(.*?)\s+المدرسة\s*:/u);
+const schoolMatch = text.match(/المدرسة\s*:\s*(.*?)\s+الفصل\s*:/u);
+const classMatch = text.match(/الفصل\s*:\s*(.*?)(?:\s+بيانات|$)/u);
+const card =
+findDashboardSchoolCard(
+doc,
+schoolId
+);
+const fields =
+parseSchoolCardFields(
+card
+);
+return {
+name:
+clean(
+nameMatch?.[1] || ''
+),
+school:
+clean(
+schoolMatch?.[1] || ''
+),
+className:
+clean(
+classMatch?.[1] || ''
+),
+region:
+clean(
+getSchoolCardRegion(
+fields
+)
+)
+};
+}
+function parseStudentHomeContext(doc) {
+if (!doc) return {};
+const info = doc.querySelector('.dashboard-info-banner .info-items');
+if (!info) return {};
+const parts = [...info.children].map(node => clean(node.textContent || '')).filter(Boolean);
+const spans = [...info.querySelectorAll('span')].map(node => clean(node.textContent || '')).filter(Boolean);
+const school = parts.find(value => !/^الصف\s/u.test(value) && !/@/.test(value)) || '';
+const grade = spans.find(value => /^الصف\s.+(?:الابتدائي|المتوسط|الثانوي)/u.test(value)) || '';
+const className = [...spans].reverse().find(value => /^الصف\s/u.test(value)) || '';
+return { school: clean(school), stage: /ابتدائي/u.test(grade) ? 'المرحلة الابتدائية' : /متوسط/u.test(grade) ? 'المرحلة المتوسطة' : /ثانوي/u.test(grade) ? 'المرحلة الثانوية' : '', className };
+}
+function parseTeacherHomeContext(doc) {
+if (!doc) return {};
+const rawTitle = clean(doc.title || '');
+const school = rawTitle.replace(/^مدرستي\s*\|\s*/u, '').trim();
+return { school: school && !/^الصفحة الرئيسية$/u.test(school) ? school : '', region: extractRegionFromDocument(doc) };
+}
+async function enrichRoleIdentityFromSystem(data) {
+if (!data) return;
+const schoolId = getCurrentSchoolId();
+const userId = getCurrentStudentUserId();
+if (!schoolId) return;
+const dashboardPromise =
+fetchSameOriginDocument(
+'/Dashboards/Schools'
+);
+const rolePromise =
+isTeacher
+? fetchSameOriginDocument(
+'/SchoolManagment/Actions/Teacher/' +
+encodeURIComponent(schoolId)
+)
+: fetchSameOriginDocument(
+'/Student/Home/Index/' +
+encodeURIComponent(schoolId) +
+(userId
+? '?UId=' +
+encodeURIComponent(userId)
+: '')
+);
+const infoPromise =
+isTeacher
+? fetchSameOriginDocument(
+'/TeachersReports/Statistics/MyInfo/' +
+encodeURIComponent(schoolId)
+)
+: Promise.resolve(null);
+const [
+dashboardDoc,
+roleDoc,
+infoDoc
+] = await Promise.all([
+dashboardPromise,
+rolePromise,
+infoPromise
+]);
+const dashboardContext =
+isTeacher
+? parseTeacherDashboardContext(
+dashboardDoc,
+schoolId
+)
+: parseStudentDashboardContext(
+dashboardDoc,
+schoolId,
+userId
+);
+const roleContext =
+isTeacher
+? parseTeacherHomeContext(
+roleDoc
+)
+: parseStudentHomeContext(
+roleDoc
+);
+const region =
+extractRegionFromDocument(
+infoDoc
+) ||
+extractRegionFromDocument(
+dashboardDoc
+) ||
+extractRegionFromDocument(
+roleDoc
+) ||
+'';
+data.systemMeta = {
+...(data.systemMeta || {}),
+...dashboardContext,
+...Object.fromEntries(
+Object.entries(roleContext)
+.filter(([, value]) => value)
+),
+region:
+region ||
+dashboardContext.region ||
+roleContext.region ||
+data.systemMeta?.region ||
+''
+};
+}
+function extractSystemIdentity(data) {
+const system = data.systemMeta || {};
+const nameSelectors = ['.user-menu .fw-bold','.info-body.flex-grow-1.ms-3 h2','[data-clarity-mask="True"] .fw-bold','.mx-2.fw-bold'];
+let pageName = '';
+for (const selector of nameSelectors) {
+pageName = clean(document.querySelector(selector)?.textContent || '').replace(/\s+(?:معلم|طالب)\s*$/u, '');
+if (pageName && !/مرحبا|تسجيل|الرئيسية/u.test(pageName)) break;
+}
+return {
+name: clean(system.name || pageName),
+school: clean(system.school || ''),
+region: clean(system.region || findPageValue(['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية'])),
+term: clean(system.term || findPageValue(['الفصل الدراسي'])),
+academicYear: clean(system.academicYear || findPageValue(['العام الدراسي']) || inferAcademicYear()),
+stage: clean(system.stage || inferStage(data)),
+className: clean(system.className || data.commonClass || '')
+};
 }
 function formatExtractionDate(date = new Date()) {
 const value = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
@@ -681,38 +1865,32 @@ document
 )
 ?.textContent ||
 ''
-)
+),
+timeSource:
+isStudent && times.some(Boolean)
+? 'page'
+: (times.some(Boolean) ? 'saved' : ''),
+systemMeta: {}
 };
 }
 function hydrateDefaults(
 data
 ) {
-if (
-!state.prefs.week &&
-data.week
-) {
-state.prefs.week =
-data.week;
-}
-if (
-isStudent &&
-!state.prefs.className &&
-data.commonClass
-) {
-state.prefs.className =
-data.commonClass;
-}
-if (
-!state.prefs.title
-) {
+const identity = extractSystemIdentity(data);
+if (identity.name) state.prefs.name = identity.name;
+if (identity.school) state.prefs.school = identity.school;
+if (identity.region) state.prefs.region = identity.region;
+if (identity.term) state.prefs.term = identity.term;
+if (identity.academicYear) state.prefs.academicYear = identity.academicYear;
+if (identity.stage) state.prefs.stage = identity.stage;
+if (isStudent && identity.className) state.prefs.className = identity.className;
+if (!state.prefs.title) {
 state.prefs.title =
 isTeacher
 ? 'الجدول الدراسي الأسبوعي للمعلم'
 : 'الجدول الدراسي الأسبوعي للطالب';
 }
-state.logoDataUrl =
-state.prefs.logoDataUrl ||
-'';
+state.logoDataUrl = state.prefs.logoDataUrl || '';
 }
 function collectUnique(
 data,
@@ -756,31 +1934,107 @@ value
 );
 return result;
 }
-function assignColors(
-keys
+function isActivitySubject(value = '') {
+const text = canonical(value);
+return (
+text === 'نشاط' ||
+text === '(نشاط)' ||
+text.includes('النشاط')
+);
+}
+function computeScheduleStats(data) {
+const colorCounts = new Map();
+const subjectCounts = new Map();
+const classes = new Set();
+const teachers = new Set();
+const daily = [];
+let total = 0;
+data.days.forEach(day => {
+let dayTotal = 0;
+day.lessons.forEach(lesson => {
+if (!lesson.subject) return;
+total++;
+dayTotal++;
+const subjectKey = canonical(lesson.subject);
+if (
+subjectKey &&
+!isActivitySubject(lesson.subject)
 ) {
+subjectCounts.set(
+subjectKey,
+(subjectCounts.get(subjectKey) || 0) + 1
+);
+}
+if (lesson.className) classes.add(canonical(lesson.className));
+if (lesson.teacher) teachers.add(canonical(lesson.teacher));
+const colorKey = canonical(isTeacher ? lesson.className : lesson.subject);
+if (colorKey) colorCounts.set(colorKey, (colorCounts.get(colorKey) || 0) + 1);
+});
+daily.push({ name: day.name, count: dayTotal });
+});
+const busiest = daily.reduce(
+(best, current) => current.count > best.count ? current : best,
+{ name: '', count: 0 }
+);
+return {
+total,
+free: Math.max(0, data.days.length * data.periods - total),
+subjects: subjectCounts.size,
+classes: classes.size,
+teachers: teachers.size,
+busiestDay: busiest.name,
+busiestCount: busiest.count,
+colorCounts,
+subjectCounts
+};
+}
+function assignDistinctIndexes(keys, length) {
+const normalizedKeys = [
+...new Set(
+keys
+.filter(Boolean)
+.map(key => canonical(key))
+.filter(Boolean)
+)
+].sort(
+(a, b) =>
+a.localeCompare(
+b,
+'ar',
+{ numeric: true }
+)
+);
+const indexes = new Map();
+normalizedKeys.forEach(
+(key, index) => {
+indexes.set(
+key,
+index % length
+);
+}
+);
+return indexes;
+}
+function assignColors(keys) {
+const indexes =
+assignDistinctIndexes(
+keys,
+PALETTE.length
+);
 const map =
 new Map();
 keys
-.filter(
-Boolean
-)
+.filter(Boolean)
 .forEach(
 key => {
 const normalized =
-canonical(
-key
-);
-if (
-!map.has(
-normalized
-)
-) {
+canonical(key);
+if (!map.has(normalized)) {
 map.set(
 normalized,
 PALETTE[
-map.size %
-PALETTE.length
+indexes.get(normalized) ??
+0
 ]
 );
 }
@@ -788,31 +2042,26 @@ PALETTE.length
 );
 return map;
 }
-function assignSubjectAccents(
-subjects
-) {
+function assignSubjectAccents(subjects) {
+const indexes =
+assignDistinctIndexes(
+subjects,
+SUBJECT_ACCENTS.length
+);
 const map =
 new Map();
 subjects
-.filter(
-Boolean
-)
+.filter(Boolean)
 .forEach(
 subject => {
 const normalized =
-canonical(
-subject
-);
-if (
-!map.has(
-normalized
-)
-) {
+canonical(subject);
+if (!map.has(normalized)) {
 map.set(
 normalized,
 SUBJECT_ACCENTS[
-map.size %
-SUBJECT_ACCENTS.length
+indexes.get(normalized) ??
+0
 ]
 );
 }
@@ -851,6 +2100,11 @@ data,
 lesson =>
 lesson.subject
 );
+const academicSubjects =
+subjects.filter(
+subject =>
+!isActivitySubject(subject)
+);
 const subjectAccentMap =
 assignSubjectAccents(
 subjects
@@ -858,6 +2112,7 @@ subjects
 const multipleTeacherSubjects =
 isTeacher &&
 subjects.length > 1;
+const stats = computeScheduleStats(data);
 const metaItems = [];
 if (
 prefs.name
@@ -872,16 +2127,6 @@ prefs.name
 });
 }
 if (
-prefs.school
-) {
-metaItems.push({
-label:
-'المدرسة',
-value:
-prefs.school
-});
-}
-if (
 prefs.stage
 ) {
 metaItems.push({
@@ -892,6 +2137,7 @@ prefs.stage
 });
 }
 if (
+isStudent &&
 prefs.className
 ) {
 metaItems.push({
@@ -903,23 +2149,15 @@ prefs.className
 }
 if (
 isTeacher &&
-prefs.specialty
+academicSubjects.length
 ) {
 metaItems.push({
 label:
-'التخصص',
+academicSubjects.length > 1
+? 'المواد'
+: 'المادة',
 value:
-prefs.specialty
-});
-}
-if (
-prefs.academicYear
-) {
-metaItems.push({
-label:
-'العام الدراسي',
-value:
-prefs.academicYear
+academicSubjects.join('، ')
 });
 }
 const legend =
@@ -944,6 +2182,7 @@ prefs.monochrome
 "
 ></i>
 ${esc(key)}
+${prefs.showStats ? `<small class="m0-legend-count">(${stats.colorCounts.get(canonical(key)) || 0})</small>` : ''}
 </span>
 `;
 }
@@ -961,7 +2200,7 @@ ${
 subjects
 .map(
 subject => `
-<span class="m0-legend-item tiny">
+<span class="m0-legend-item tiny subject-key">
 <i
 style="
 background:${
@@ -981,6 +2220,17 @@ ${esc(subject)}
 )
 .join('')
 }
+</div>
+`
+: '';
+const statsHtml =
+prefs.showStats
+? `
+<div class="m0-stats">
+<div class="m0-stat-card"><small>الحصص</small><b>${stats.total}</b></div>
+<div class="m0-stat-card"><small>${isTeacher ? 'الفصول' : 'المواد'}</small><b>${isTeacher ? stats.classes : stats.subjects}</b></div>
+<div class="m0-stat-card"><small>${isTeacher ? 'المواد' : 'المعلمون'}</small><b>${isTeacher ? stats.subjects : stats.teachers}</b></div>
+<div class="m0-stat-card"><small>${isStudent ? 'الفراغات' : 'الأكثر ازدحامًا'}</small><b>${isStudent ? stats.free : esc(stats.busiestDay || '—')}</b>${isTeacher && stats.busiestCount ? `<em>${stats.busiestCount} حصة</em>` : ''}</div>
 </div>
 `
 : '';
@@ -1176,87 +2426,42 @@ return `
 id="m0-print-area"
 class="
 m0-sheet
-${
-prefs.dense
-? 'dense'
-: ''
-}
+${prefs.dense ? 'dense' : ''}
+${prefs.fitMode === 'one-page' ? ' fit-one-page' : prefs.fitMode === 'comfortable' ? ' fit-comfortable' : ' fit-auto'}
 "
 >
 <div class="m0-topbar"></div>
 <header class="m0-sheet-header">
-<div class="m0-brand-side">
-${logo}
+<div class="m0-official-side">
+<strong>المملكة العربية السعودية</strong>
+<span>وزارة التعليم</span>
+${prefs.region ? `<span>${esc(prefs.region)}</span>` : ''}
+${prefs.school ? `<b>${esc(prefs.school)}</b>` : ''}
 </div>
 <div class="m0-title-side">
+${logo}
 <div class="m0-kicker">
-${
-isTeacher
-? 'جدول المعلم'
-: 'جدول الطالب'
-}
+${isTeacher ? 'جدول المعلم' : 'جدول الطالب'}
 </div>
 <h1>
 ${esc(prefs.title || '')}
 </h1>
-${
-metaItems.length
-? `
+${metaItems.length ? `
 <div class="m0-meta">
-${
-metaItems
-.map(
-item => `
-<span>
-<b>
-${esc(item.label)}:
-</b>
-${esc(item.value)}
-</span>
-`
-)
-.join('')
-}
+${metaItems.map(item => `
+<span><b>${esc(item.label)}:</b> ${esc(item.value)}</span>
+`).join('')}
 </div>
-`
-: ''
-}
+` : ''}
 </div>
-<div class="m0-week-side">
-${
-prefs.week
-? `
-<div class="m0-week-box">
-<small>
-الفترة
-</small>
-<strong>
-${esc(prefs.week)}
-</strong>
-</div>
-`
-: ''
-}
+<div class="m0-print-meta-side">
+${prefs.term ? `<span>${esc(prefs.term)}</span>` : ''}
+${prefs.academicYear ? `<span>العام الدراسي: <b>${esc(prefs.academicYear)}</b></span>` : ''}
+<span>تاريخ الاستخراج: <b>${esc(formatExtractionDate(state.extractedAt))}</b></span>
 </div>
 </header>
-${
-prefs.showLegend &&
-legend
-? `
-<div class="m0-legend">
-<span class="m0-legend-title">
-${
-isTeacher
-? 'ألوان الفصول:'
-: 'ألوان المواد:'
-}
-</span>
-${legend}
-</div>
-${subjectLegend}
-`
-: ''
-}
+
+${statsHtml}
 <div class="m0-table-wrap">
 <table class="m0-schedule-table">
 <thead>
@@ -1273,6 +2478,26 @@ ${body}
 </table>
 </div>
 ${
+prefs.showLegend &&
+legend
+? `
+<div class="m0-bottom-legends">
+<div class="m0-legend">
+<span class="m0-legend-title">
+${
+isTeacher
+? 'الفصول:'
+: 'المواد:'
+}
+</span>
+${legend}
+</div>
+${subjectLegend}
+</div>
+`
+: ''
+}
+${
 prefs.note
 ? `
 <div class="m0-note">
@@ -1284,9 +2509,6 @@ ${esc(prefs.note)}
 <footer class="m0-footer">
 <span>
 تم استخراج الجدول بواسطة <strong>مصمم الجدول الدراسي</strong>
-</span>
-<span>
-تاريخ الاستخراج: ${esc(formatExtractionDate(state.extractedAt))}
 </span>
 </footer>
 </section>
@@ -1376,7 +2598,7 @@ transition:.18s;
 }
 #${APP_ID} .m0-field input:focus,
 #${APP_ID} .m0-field textarea:focus {
-border-color:#55A8C8;
+border-color:#3D7EB9;
 box-shadow:0 0 0 3px rgba(85,168,200,.12);
 background:#fff;
 }
@@ -1403,7 +2625,7 @@ content:"";
 width:4px;
 height:14px;
 border-radius:3px;
-background:#3AA6A0;
+background:#0DA9A6;
 }
 #${APP_ID} .m0-check {
 display:flex;
@@ -1415,7 +2637,7 @@ margin:9px 0;
 cursor:pointer;
 }
 #${APP_ID} .m0-check input {
-accent-color:#2A9D8F;
+accent-color:#0DA9A6;
 }
 #${APP_ID} .m0-times {
 display:grid;
@@ -1465,6 +2687,30 @@ overflow:hidden;
 text-overflow:ellipsis;
 white-space:nowrap;
 }
+#${APP_ID} .m0-live-preview-note {
+display:flex;
+align-items:center;
+gap:8px;
+margin-top:12px;
+padding:9px 10px;
+border-radius:10px;
+background:#EDF8F5;
+border:1px solid #D4EBE3;
+color:#42685A;
+}
+#${APP_ID} .m0-live-preview-note > span {
+width:22px;
+height:22px;
+border-radius:50%;
+display:grid;
+place-items:center;
+background:#07A869;
+color:#fff;
+font-size:11px;
+font-weight:900;
+}
+#${APP_ID} .m0-live-preview-note b { display:block; font-size:9.5px; color:#275D4A; }
+#${APP_ID} .m0-live-preview-note small { display:block; font-size:8px; color:#789187; margin-top:1px; }
 #${APP_ID} .m0-update {
 margin-top:18px;
 }
@@ -1478,7 +2724,7 @@ font-size:13px;
 font-weight:900;
 background:linear-gradient(
 135deg,
-#2A9D8F,
+#0DA9A6,
 #238A7F
 );
 color:#fff;
@@ -1511,7 +2757,7 @@ background:#123D5A;
 color:#fff;
 }
 #${APP_ID} .m0-action.accent {
-background:#2A9D8F;
+background:#0DA9A6;
 color:#fff;
 }
 #${APP_ID} .m0-preview-area {
@@ -1552,17 +2798,43 @@ left:0;
 height:7px;
 background:linear-gradient(
 90deg,
-#173F5F,
-#2A9D8F,
-#68B0AB
+#15445A,
+#0DA9A6,
+#07A869
 );
 }
 #${APP_ID} .m0-sheet-header {
 display:grid;
-grid-template-columns:120px 1fr 180px;
+grid-template-columns:210px 1fr 210px;
 gap:18px;
 align-items:center;
-margin-bottom:16px;
+margin-bottom:12px;
+}
+#${APP_ID} .m0-official-side {
+display:grid;
+gap:3px;
+text-align:right;
+color:#4D6470;
+font-size:10px;
+line-height:1.35;
+}
+#${APP_ID} .m0-official-side strong { font-size:12px; color:#15445A; }
+#${APP_ID} .m0-official-side b { font-size:10.5px; color:#15445A; }
+#${APP_ID} .m0-print-meta-side {
+display:grid;
+gap:4px;
+text-align:left;
+color:#6B7F88;
+font-size:9px;
+line-height:1.35;
+}
+#${APP_ID} .m0-print-meta-side b { color:#15445A; }
+#${APP_ID} .m0-title-side .m0-logo-img {
+display:block;
+width:58px;
+height:58px;
+margin:0 auto 4px;
+border-radius:13px;
 }
 #${APP_ID} .m0-brand-side {
 display:flex;
@@ -1583,7 +2855,7 @@ display:grid;
 place-items:center;
 font-size:29px;
 font-weight:900;
-color:#2A9D8F;
+color:#0DA9A6;
 }
 #${APP_ID} .m0-title-side {
 text-align:center;
@@ -1654,6 +2926,16 @@ font-size:10px;
 margin-top:-5px;
 color:#6A7583;
 }
+#${APP_ID} .m0-bottom-legends {
+margin-top:6px;
+padding-top:4px;
+border-top:1px solid #EEF2F4;
+}
+#${APP_ID} .m0-bottom-legends .m0-legend,
+#${APP_ID} .m0-bottom-legends .m0-subject-legend {
+margin-top:2px;
+margin-bottom:2px;
+}
 #${APP_ID} .m0-legend-title {
 font-weight:800;
 color:#445064;
@@ -1673,6 +2955,12 @@ width:9px;
 height:9px;
 border-radius:50%;
 display:inline-block;
+flex:0 0 auto;
+}
+#${APP_ID} .m0-subject-legend .m0-legend-item.subject-key i {
+width:15px;
+height:4px;
+border-radius:999px;
 }
 #${APP_ID} .m0-schedule-table {
 width:100%;
@@ -1686,7 +2974,7 @@ text-align:center;
 vertical-align:middle;
 }
 #${APP_ID} .m0-schedule-table thead th {
-background:#173F5F;
+background:#15445A;
 color:#fff;
 border-radius:10px;
 padding:9px 5px;
@@ -1708,6 +2996,8 @@ color:#DCEAF2;
 font-weight:500;
 outline:none;
 min-height:13px;
+direction:rtl;
+text-align:center;
 }
 #${APP_ID} .m0-period-time.empty {
 color:#94ACBC;
@@ -1718,7 +3008,7 @@ border-radius:5px;
 }
 #${APP_ID} .m0-day-cell {
 background:#EFF5F8;
-color:#173F5F;
+color:#15445A;
 border-radius:10px;
 padding:8px 4px;
 font-size:12px;
@@ -1817,6 +3107,32 @@ font-size:11px;
 #${APP_ID} .m0-sheet.dense .m0-lesson-secondary {
 font-size:9px;
 }
+#${APP_ID} .m0-legend-count { font-size:8.5px; font-weight:800; color:#8B98A6; }
+#${APP_ID} .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:5px 0 7px; }
+#${APP_ID} .m0-stat-card { min-height:32px; display:flex; align-items:center; justify-content:center; gap:5px; padding:4px 7px; border:1px solid #E0EAED; border-radius:8px; background:#F8FBFC; color:#5B6E78; text-align:center; }
+#${APP_ID} .m0-stat-card b { font-size:12px; color:#15445A; line-height:1; }
+#${APP_ID} .m0-stat-card small { font-size:7.8px; font-weight:800; line-height:1.15; }
+#${APP_ID} .m0-stat-card em { font-style:normal; font-size:7px; color:#7E8D95; font-weight:700; }
+#${APP_ID} .m0-fit-control { grid-column:1/-1; display:grid; grid-template-columns:1fr 145px; align-items:center; gap:10px; padding:9px; border:1px solid #DCE9EC; border-radius:10px; background:#F8FCFC; }
+#${APP_ID} .m0-fit-control b,#${APP_ID} .m0-fit-control small { display:block; }
+#${APP_ID} .m0-fit-control b { color:#355061; font-size:10.5px; margin-bottom:2px; }
+#${APP_ID} .m0-fit-control small { color:#8C9AA3; font-size:8.8px; line-height:1.45; }
+#${APP_ID} .m0-fit-control select { width:100%; border:1px solid #D7E5E8; border-radius:8px; padding:7px 8px; background:#fff; color:#244650; font:inherit; font-size:9.5px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-sheet-header,#${APP_ID} .m0-sheet.fit-auto-tight .m0-sheet-header,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-sheet-header,#${APP_ID} .m0-sheet.fit-one-page .m0-sheet-header { margin-bottom:10px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-schedule-table,#${APP_ID} .m0-sheet.fit-auto-tight .m0-schedule-table,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-schedule-table,#${APP_ID} .m0-sheet.fit-one-page .m0-schedule-table { border-spacing:4px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-schedule-table td { height:78px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-lesson-card { min-height:74px; padding:8px 5px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-schedule-table td { height:70px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-card { min-height:66px; padding:6px 5px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-subject { font-size:11px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-secondary { font-size:9px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra,#${APP_ID} .m0-sheet.fit-one-page { padding-top:25px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-schedule-table td,#${APP_ID} .m0-sheet.fit-one-page .m0-schedule-table td { height:64px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-card,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-card { min-height:60px; padding:5px 4px; gap:4px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-subject,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-subject { font-size:10.3px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-secondary,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-secondary { font-size:8.6px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-stats,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-stats,#${APP_ID} .m0-sheet.fit-one-page .m0-stats { margin:5px 0 7px; }
+
 #${OPEN_ID} {
 position:fixed;
 left:22px;
@@ -1826,8 +3142,8 @@ border:0;
 border-radius:14px;
 background:linear-gradient(
 135deg,
-#173F5F,
-#2A9D8F
+#15445A,
+#0DA9A6
 );
 color:#fff;
 padding:12px 17px;
@@ -1902,17 +3218,43 @@ left:0;
 height:2mm;
 background:linear-gradient(
 90deg,
-#173F5F,
-#2A9D8F,
-#68B0AB
+#15445A,
+#0DA9A6,
+#07A869
 );
 }
 .m0-sheet-header {
 display:grid;
-grid-template-columns:27mm 1fr 43mm;
+grid-template-columns:48mm 1fr 48mm;
 gap:4mm;
 align-items:center;
-margin-bottom:3mm;
+margin-bottom:2mm;
+}
+.m0-official-side {
+display:grid;
+gap:.7mm;
+text-align:right;
+color:#4D6470;
+font-size:6pt;
+line-height:1.3;
+}
+.m0-official-side strong { font-size:7pt; color:#15445A; }
+.m0-official-side b { font-size:6.3pt; color:#15445A; }
+.m0-print-meta-side {
+display:grid;
+gap:.8mm;
+text-align:left;
+color:#6B7F88;
+font-size:5.6pt;
+line-height:1.3;
+}
+.m0-print-meta-side b { color:#15445A; }
+.m0-title-side .m0-logo-img {
+display:block;
+width:13mm;
+height:13mm;
+margin:0 auto 1mm;
+border-radius:3mm;
 }
 .m0-brand-side {
 display:flex;
@@ -1932,7 +3274,7 @@ display:grid;
 place-items:center;
 font-size:8mm;
 font-weight:900;
-color:#2A9D8F;
+color:#0DA9A6;
 }
 .m0-title-side {
 text-align:center;
@@ -2000,6 +3342,16 @@ font-size:6.7pt;
 margin-top:-1mm;
 color:#6A7583;
 }
+.m0-bottom-legends {
+margin-top:1.1mm;
+padding-top:.7mm;
+border-top:1px solid #EEF2F4;
+}
+.m0-bottom-legends .m0-legend,
+.m0-bottom-legends .m0-subject-legend {
+margin-top:.4mm;
+margin-bottom:.4mm;
+}
 .m0-legend-title {
 font-weight:800;
 color:#445064;
@@ -2020,6 +3372,11 @@ height:2.2mm;
 border-radius:50%;
 display:inline-block;
 }
+.m0-subject-legend .m0-legend-item.subject-key i {
+width:4mm;
+height:.9mm;
+border-radius:4mm;
+}
 .m0-schedule-table {
 width:100%;
 table-layout:fixed;
@@ -2032,7 +3389,7 @@ text-align:center;
 vertical-align:middle;
 }
 .m0-schedule-table thead th {
-background:#173F5F;
+background:#15445A;
 color:#fff;
 border-radius:2.2mm;
 padding:2mm 1mm;
@@ -2050,13 +3407,15 @@ font-weight:900;
 font-size:6.2pt;
 margin-top:1mm;
 color:#DCEAF2;
+direction:rtl;
+text-align:center;
 }
 .m0-period-time.empty {
 color:#94ACBC;
 }
 .m0-day-cell {
 background:#EFF5F8;
-color:#173F5F;
+color:#15445A;
 border-radius:2.2mm;
 padding:2mm 1mm;
 font-size:7.7pt;
@@ -2114,6 +3473,26 @@ color:#586579;
 font-size:6.4pt;
 border-right:1mm solid #A8C7D0;
 }
+.m0-legend-count { font-size:5.8pt; font-weight:800; color:#8B98A6; }
+.m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9mm; margin:.8mm 0 1.3mm; }
+.m0-stat-card { min-height:6.4mm; display:flex; align-items:center; justify-content:center; gap:1mm; padding:.6mm 1mm; border:1px solid #E0EAED; border-radius:1.6mm; background:#F8FBFC; color:#5B6E78; text-align:center; }
+.m0-stat-card b { font-size:7pt; color:#15445A; line-height:1; }
+.m0-stat-card small { font-size:4.8pt; font-weight:800; line-height:1.1; }
+.m0-stat-card em { font-style:normal; font-size:4.5pt; color:#7E8D95; font-weight:700; }
+.fit-auto-compact .m0-schedule-table,.fit-auto-tight .m0-schedule-table,.fit-auto-ultra .m0-schedule-table,.fit-one-page .m0-schedule-table { border-spacing:.9mm; }
+.fit-auto-compact .m0-schedule-table td { height:16mm; }
+.fit-auto-compact .m0-lesson-card { min-height:15mm; padding:1.6mm 1mm; }
+.fit-auto-tight .m0-schedule-table td { height:14.5mm; }
+.fit-auto-tight .m0-lesson-card { min-height:13.5mm; padding:1.2mm .9mm; }
+.fit-auto-tight .m0-lesson-subject { font-size:6.7pt; }
+.fit-auto-tight .m0-lesson-secondary { font-size:5.7pt; }
+.fit-auto-ultra .m0-sheet-header,.fit-one-page .m0-sheet-header { margin-bottom:1.5mm; }
+.fit-auto-ultra .m0-schedule-table td,.fit-one-page .m0-schedule-table td { height:13mm; }
+.fit-auto-ultra .m0-lesson-card,.fit-one-page .m0-lesson-card { min-height:12mm; padding:1mm .8mm; gap:.6mm; }
+.fit-auto-ultra .m0-lesson-subject,.fit-one-page .m0-lesson-subject { font-size:6.2pt; }
+.fit-auto-ultra .m0-lesson-secondary,.fit-one-page .m0-lesson-secondary { font-size:5.3pt; }
+.fit-auto-tight .m0-stats,.fit-auto-ultra .m0-stats,.fit-one-page .m0-stats { margin:.7mm 0 1.2mm; }
+
 .m0-footer {
 margin-top:2.5mm;
 padding-top:1.5mm;
@@ -2148,7 +3527,7 @@ const MODERN_CSS = `
 --m0-primary:#0B7F88;
 --m0-primary-2:#10A69D;
 --m0-green:#2BB673;
---m0-navy:#173F5F;
+--m0-navy:#15445A;
 --m0-ink:#163047;
 --m0-muted:#6F7F8F;
 --m0-surface:#FFFFFF;
@@ -2206,7 +3585,7 @@ box-shadow:0 6px 14px rgba(11,127,136,.18);
 #${OPEN_ID} strong {
 display:block;
 font-size:13px;
-color:#173F5F;
+color:#15445A;
 margin-bottom:3px;
 }
 #${OPEN_ID} small {
@@ -2677,7 +4056,7 @@ color:#244557;
 #${APP_ID} .m0-dialog-mark { width:86px; height:86px; margin:0 auto 10px; border-radius:22px; display:grid; place-items:center; background:#fff; border:1px solid #E1ECEF; box-shadow:0 10px 24px rgba(11,127,136,.16); overflow:hidden; padding:5px; }
 #${APP_ID} .m0-dialog-mark img { width:100%; height:100%; object-fit:contain; display:block; }
 #${APP_ID} .m0-dialog-kicker { color:var(--m0-primary); font-size:10px; font-weight:900; margin-top:7px; }
-#${APP_ID} .m0-dialog h3 { margin:4px 0 7px; color:#173F5F; font-size:21px; }
+#${APP_ID} .m0-dialog h3 { margin:4px 0 7px; color:#15445A; font-size:21px; }
 #${APP_ID} .m0-dialog > p { max-width:390px; margin:0 auto; color:#758791; font-size:11px; line-height:1.8; }
 #${APP_ID} .m0-guide-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin:22px 0 14px; }
 #${APP_ID} .m0-guide-steps > div { border:1px solid #E2ECEF; border-radius:13px; background:#F8FBFC; padding:12px 8px; }
@@ -2832,18 +4211,14 @@ isTeacher ? 'اسم المعلم' : 'اسم الطالب'
 )
 }
 ${field('اسم المدرسة','school','اسم المدرسة')}
+${field('إدارة التعليم','region','اختياري — أدخلها مرة واحدة إذا لم توفرها مدرستي')}
 <div class="m0-grid2">
 ${field('المرحلة','stage','ابتدائي / متوسط / ثانوي')}
-${field('الصف / الفصل','className',isStudent ? 'مثال: الصف الثالث أ' : 'اختياري')}
+${isStudent ? field('الصف / الفصل','className','مثال: الصف الثالث أ') : field('الفصل الدراسي','term','مثال: الفصل الدراسي الأول')}
 </div>
-${
-isTeacher
-? field('التخصص','specialty','مثال: المهارات الرقمية')
-: ''
-}
 <div class="m0-grid2">
 ${field('العام الدراسي','academicYear','1448 هـ')}
-${field('الأسبوع / الفترة','week','الفترة المعروضة')}
+${isStudent ? field('الفصل الدراسي','term','اختياري') : ''}
 </div>
 ${
 field(
@@ -2878,6 +4253,10 @@ placeholder="ملاحظة اختيارية تظهر أسفل الجدول"
 <span><b>مفتاح الألوان</b><small>إظهار دليل الألوان أسفل العنوان</small></span>
 </label>
 <label class="m0-check">
+<input type="checkbox" data-check="showStats" ${state.prefs.showStats !== false ? 'checked' : ''}>
+<span><b>ملخص الجدول</b><small>إجمالي الحصص ومؤشرات سريعة مناسبة للدور</small></span>
+</label>
+<label class="m0-check">
 <input type="checkbox" data-check="showSecondary" ${state.prefs.showSecondary ? 'checked' : ''}>
 <span><b>${isTeacher ? 'الفصل داخل الحصة' : 'اسم المعلم داخل الحصة'}</b><small>إظهار المعلومة الثانوية داخل كل حصة</small></span>
 </label>
@@ -2908,7 +4287,7 @@ isTeacher
 </summary>
 <div class="m0-accordion-body">
 <div class="m0-inline-note">
-${isTeacher ? 'اختر وقت البداية والنهاية لكل حصة، أو استخدم التعبئة السريعة ثم عدّل أي حصة عند الحاجة.' : 'الأوقات المكتشفة من الصفحة تظهر هنا ويمكن تعديلها.'}
+${isTeacher ? (state.data.timeSource === 'system' ? '✓ تم اكتشاف أوقات الحصص تلقائيًا من بيانات مدرستي، ويمكن تعديلها عند الحاجة.' : 'لم تتوفر الأوقات تلقائيًا؛ يمكنك إدخالها أو استخدام التعبئة السريعة.') : 'الأوقات المكتشفة من صفحة الطالب تظهر هنا ويمكن تعديلها.'}
 </div>
 ${
 isTeacher
@@ -2936,6 +4315,14 @@ isTeacher
 <i>⌄</i>
 </summary>
 <div class="m0-accordion-body m0-check-grid">
+<label class="m0-fit-control">
+<span><b>احتواء صفحة A4</b><small>يضبط كثافة الجدول تلقائيًا عند الطباعة والتصدير.</small></span>
+<select data-pref="fitMode">
+<option value="auto" ${(state.prefs.fitMode || 'auto') === 'auto' ? 'selected' : ''}>تلقائي (موصى به)</option>
+<option value="comfortable" ${state.prefs.fitMode === 'comfortable' ? 'selected' : ''}>مريح</option>
+<option value="one-page" ${state.prefs.fitMode === 'one-page' ? 'selected' : ''}>صفحة واحدة</option>
+</select>
+</label>
 <label class="m0-check">
 <input type="checkbox" data-check="dense" ${state.prefs.dense ? 'checked' : ''}>
 <span><b>وضع مضغوط</b><small>تقليل المسافات لعرض جدول أكثر كثافة</small></span>
@@ -2959,12 +4346,9 @@ isTeacher
 </div>
 </div>
 </details>
-<div class="m0-update">
-<button type="button" id="m0-btn-update">
-<span>↻</span>
-تحديث معاينة الجدول
-</button>
-<small>طبّق تعديلات البيانات والأوقات على المعاينة.</small>
+<div class="m0-live-preview-note">
+<span>✓</span>
+<div><b>المعاينة تتحدث تلقائيًا</b><small>أي تغيير في البيانات أو المظهر أو الأوقات يظهر مباشرة.</small></div>
 </div>
 `;
 }
@@ -3027,6 +4411,29 @@ state.prefs.times = [
 state.prefs.logoDataUrl =
 state.logoDataUrl;
 }
+function applySmartFit(scope = document) {
+const sheet =
+scope.querySelector?.('#m0-print-area') ||
+document.querySelector(`#${APP_ID} #m0-print-area`);
+if (!sheet) return;
+sheet.classList.remove(
+'fit-auto-compact',
+'fit-auto-tight',
+'fit-auto-ultra'
+);
+const mode = state.prefs.fitMode || 'auto';
+if (mode !== 'auto') return;
+const targetHeight = 790;
+for (const level of [
+'fit-auto-compact',
+'fit-auto-tight',
+'fit-auto-ultra'
+]) {
+if (sheet.scrollHeight <= targetHeight) break;
+sheet.classList.add(level);
+void sheet.offsetHeight;
+}
+}
 function renderPreview() {
 const preview =
 document.querySelector(
@@ -3035,6 +4442,7 @@ document.querySelector(
 if (preview) {
 preview.innerHTML =
 buildPreview();
+requestAnimationFrame(() => applySmartFit(preview));
 }
 }
 function toast(
@@ -3226,7 +4634,7 @@ layer.innerHTML = `
 <div class="m0-dialog-mark"><img src="${BRAND_ICON_DATA}" alt=""></div>
 <div class="m0-dialog-kicker">حول الأداة</div>
 <h3>مدرستي - مصمم الجدول الدراسي</h3>
-<p class="m0-version">الإصدار 0.2.0</p>
+<p class="m0-version">الإصدار 2.1.3</p>
 <div class="m0-author-card">
 <small>تصميم وتطوير</small>
 <strong>Mohammed Almalki</strong>
@@ -3337,15 +4745,28 @@ event.preventDefault();
 showDialog(root, 'about');
 }
 );
+const update =
+() => {
+readControls(root);
+savePrefs();
+renderPreview();
+setPreviewStatus(root, false);
+};
+let liveUpdateTimer = 0;
+const scheduleLiveUpdate = (delay = 140) => {
+setPreviewStatus(root, true);
+clearTimeout(liveUpdateTimer);
+liveUpdateTimer = setTimeout(update, delay);
+};
 root.addEventListener(
 'input',
 event => {
 if (
 event.target.matches(
-'[data-pref], [data-time]'
+'[data-pref], [data-time-start], [data-time-end]'
 )
 ) {
-setPreviewStatus(root, true);
+scheduleLiveUpdate();
 }
 }
 );
@@ -3354,37 +4775,12 @@ root.addEventListener(
 event => {
 if (
 event.target.matches(
-'[data-check]'
+'[data-check], [data-pref], [data-time-start], [data-time-end]'
 )
 ) {
-readControls(root);
-savePrefs();
-renderPreview();
-setPreviewStatus(root, false);
-}
-}
-);
-const update =
-() => {
-readControls(
-root
-);
-savePrefs();
-renderPreview();
-setPreviewStatus(root, false);
-};
-root
-.querySelector(
-'#m0-btn-update'
-)
-?.addEventListener(
-'click',
-event => {
-event.preventDefault();
+clearTimeout(liveUpdateTimer);
 update();
-toast(
-'tم تحديث المعاينة.'
-);
+}
 }
 );
 root
@@ -3501,10 +4897,7 @@ event.target.matches(
 )
 ) {
 event.preventDefault();
-update();
-toast(
-'tم تحديث المعاينة.'
-);
+event.target.blur();
 }
 }
 );
@@ -3572,6 +4965,7 @@ root.querySelector(
 );
 if (startInput) startInput.value = parsed.start;
 if (endInput) endInput.value = parsed.end;
+savePrefs();
 }
 }
 if (
@@ -3617,7 +5011,7 @@ target.textContent ||
 }
 );
 }
-function openDesigner() {
+async function openDesigner() {
 state.extractedAt =
 new Date();
 state.data =
@@ -3627,6 +5021,34 @@ toast(
 'لم أتمكن من العثور على جدول مدرستي في الصفحة الحالية.'
 );
 return;
+}
+const enrichers = [
+enrichRoleIdentityFromSystem(
+state.data
+)
+];
+if (isTeacher) {
+enrichers.push(
+enrichTeacherScheduleFromSystem(
+state.data
+)
+);
+}
+await Promise.allSettled(
+enrichers
+);
+if (
+isTeacher &&
+state.data.timeSource !==
+'system'
+) {
+console.info(
+'[M0HM3D85 Schedule Userscript] time auto-detect:',
+state.data.timeDebug || {
+reason:
+'unknown'
+}
+);
 }
 hydrateDefaults(
 state.data
@@ -3714,6 +5136,7 @@ BODY_LOCK_CLASS
 bindDesignerEvents(
 root
 );
+requestAnimationFrame(() => applySmartFit(root));
 let onboarded = false;
 try {
 onboarded =
@@ -3825,6 +5248,14 @@ ${clone.outerHTML}
 `
 );
 doc.close();
+try {
+if (doc.fonts?.ready) {
+await Promise.race([
+doc.fonts.ready,
+new Promise(resolve => setTimeout(resolve, 1200))
+]);
+}
+} catch (_) {}
 await new Promise(
 resolve => {
 setTimeout(
@@ -4130,6 +5561,7 @@ toast(
 }
 }
 function exportExcel() {
+const stats = computeScheduleStats(state.data);
 const header = `
 <tr>
 <th>
@@ -4250,6 +5682,22 @@ state.prefs.title ||
 )
 }
 </h2>
+${state.prefs.showStats !== false ? `
+<table style="margin-bottom:12px">
+<tr>
+<th>إجمالي الحصص</th>
+<th>${isTeacher ? 'الفصول' : 'المواد'}</th>
+<th>${isTeacher ? 'المواد' : 'المعلمون'}</th>
+<th>${isTeacher ? 'الأكثر ازدحامًا' : 'الفراغات'}</th>
+</tr>
+<tr>
+<td>${stats.total}</td>
+<td>${isTeacher ? stats.classes : stats.subjects}</td>
+<td>${isTeacher ? stats.subjects : stats.teachers}</td>
+<td>${isTeacher ? esc(stats.busiestDay || '') : stats.free}</td>
+</tr>
+</table>
+` : ''}
 <table>
 ${header}
 ${body}
@@ -4324,9 +5772,9 @@ ctx.save();
 ctx.globalAlpha = Math.max(0, Math.min(1, Number.parseFloat(style.opacity || '1') || 1));
 if (element.classList.contains('m0-topbar')) {
 const gradient = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.width, rect.y);
-gradient.addColorStop(0, '#173F5F');
-gradient.addColorStop(0.5, '#2A9D8F');
-gradient.addColorStop(1, '#68B0AB');
+gradient.addColorStop(0, '#15445A');
+gradient.addColorStop(0.5, '#0DA9A6');
+gradient.addColorStop(1, '#07A869');
 canvasRoundRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius);
 ctx.fillStyle = gradient;
 ctx.fill();
@@ -4334,6 +5782,54 @@ ctx.fill();
 canvasRoundRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius);
 ctx.fillStyle = style.backgroundColor;
 ctx.fill();
+}
+const borderWidths = [
+cssPx(style.borderTopWidth),
+cssPx(style.borderRightWidth),
+cssPx(style.borderBottomWidth),
+cssPx(style.borderLeftWidth)
+];
+const borderStyles = [
+style.borderTopStyle,
+style.borderRightStyle,
+style.borderBottomStyle,
+style.borderLeftStyle
+];
+const borderColors = [
+style.borderTopColor,
+style.borderRightColor,
+style.borderBottomColor,
+style.borderLeftColor
+];
+const uniformBorder =
+borderWidths[0] > 0 &&
+borderWidths.every(value => Math.abs(value - borderWidths[0]) < 0.01) &&
+borderStyles.every(value => value === borderStyles[0]) &&
+borderColors.every(value => value === borderColors[0]) &&
+borderStyles[0] !== 'none' &&
+!isTransparentColor(borderColors[0]);
+if (uniformBorder) {
+const width = borderWidths[0];
+canvasRoundRectPath(
+ctx,
+rect.x + width / 2,
+rect.y + width / 2,
+Math.max(0, rect.width - width),
+Math.max(0, rect.height - width),
+Math.max(0, radius - width / 2)
+);
+ctx.strokeStyle = borderColors[0];
+ctx.lineWidth = width;
+ctx.setLineDash(
+borderStyles[0] === 'dashed'
+? [4, 3]
+: borderStyles[0] === 'dotted'
+? [1.5, 2.5]
+: []
+);
+ctx.stroke();
+ctx.restore();
+return;
 }
 const sides = [
 ['Top', rect.x, rect.y, rect.x + rect.width, rect.y],
@@ -4473,6 +5969,13 @@ ctx.restore();
 console.warn('[M0HM3D85 Schedule Userscript] logo render skipped:', error);
 }
 }
+async function waitForDocumentFonts(timeout = 1600) {
+if (!document.fonts?.ready) return;
+await Promise.race([
+document.fonts.ready.catch(() => null),
+new Promise(resolve => setTimeout(resolve, timeout))
+]);
+}
 async function renderPrintableToCanvas(source, scale = 2) {
 const rootRect = source.getBoundingClientRect();
 const width = Math.max(1, Math.ceil(source.offsetWidth || rootRect.width));
@@ -4490,6 +5993,7 @@ const boxSelectors = [
 '.m0-kicker',
 '.m0-week-box',
 '.m0-legend-item i',
+'.m0-stat-card',
 '.m0-schedule-table thead th',
 '.m0-day-cell',
 '.m0-lesson-card',
@@ -4505,6 +6009,10 @@ for (const image of source.querySelectorAll('img')) {
 await paintImageElement(ctx, image, rootRect);
 }
 const textSelectors = [
+'.m0-official-side strong',
+'.m0-official-side span',
+'.m0-official-side b',
+'.m0-print-meta-side span',
 '.m0-kicker',
 '.m0-title-side h1',
 '.m0-meta span',
@@ -4512,6 +6020,9 @@ const textSelectors = [
 '.m0-week-box strong',
 '.m0-legend-title',
 '.m0-legend-item',
+'.m0-stat-card b',
+'.m0-stat-card small',
+'.m0-stat-card em',
 '.m0-period-title',
 '.m0-period-time',
 '.m0-day-cell span',
@@ -4531,6 +6042,7 @@ const source = document.querySelector(`#${APP_ID} #m0-print-area`);
 if (!source) return;
 try {
 toast('جارٍ إنشاء صورة PNG...');
+await waitForDocumentFonts();
 const canvas = await renderPrintableToCanvas(source, 2);
 const blob = await new Promise((resolve, reject) => {
 canvas.toBlob(result => {
