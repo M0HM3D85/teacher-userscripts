@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const s=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
-assert.match(s,/^\/\/ @version\s+1\.6\.1-beta2$/m);
+assert.match(s,/^\/\/ @version\s+1\.6\.1-beta3$/m);
 new vm.Script(s);
 assert(s.includes('const checked=await fetchAllStudents()')&&s.includes('for(let i=0;i<plan.length;i+=10)'), 'Every ten-pupil batch must be verified');
 assert(s.includes('const {failedGrade,failedNotes}=evaluate(map,currentSlice)')&&s.includes('clean(current.feedback)!==clean(r.feedback)'), 'Notes separately verified');
