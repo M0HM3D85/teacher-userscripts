@@ -6,7 +6,7 @@ assert.match(s,/^\/\/ @version\s+1\.6\.1-beta2$/m);
 new vm.Script(s);
 assert(s.includes('const checked=await fetchAllStudents()')&&s.includes('for(let i=0;i<plan.length;i+=10)'), 'Every ten-pupil batch must be verified');
 assert(s.includes('const {failedGrade,failedNotes}=evaluate(map,currentSlice)')&&s.includes('clean(current.feedback)!==clean(r.feedback)'), 'Notes separately verified');
-assert(s.includes('أوقفت بقية الدفعات'), 'Missing first page remarks stop later batches');
+assert(s.includes('تم إيقاف بقية الدفعات')&&s.includes('if(failedGrade.length||failedNotes.length)'), 'Missing first page remarks stop later batches');
 assert(s.includes('ملاحظات تحتاج تحديثًا دون تغيير الدرجة'), 'Preview must surface notes-only updates');
 assert(s.includes('منها ملاحظات دون تغيير الدرجة'), 'Explicit confirmation identifies notes-only updates');
 
