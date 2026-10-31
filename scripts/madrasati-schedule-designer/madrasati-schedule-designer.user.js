@@ -4657,6 +4657,54 @@ canvasRoundRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius);
 ctx.fillStyle = style.backgroundColor;
 ctx.fill();
 }
+const borderWidths = [
+cssPx(style.borderTopWidth),
+cssPx(style.borderRightWidth),
+cssPx(style.borderBottomWidth),
+cssPx(style.borderLeftWidth)
+];
+const borderStyles = [
+style.borderTopStyle,
+style.borderRightStyle,
+style.borderBottomStyle,
+style.borderLeftStyle
+];
+const borderColors = [
+style.borderTopColor,
+style.borderRightColor,
+style.borderBottomColor,
+style.borderLeftColor
+];
+const uniformBorder =
+borderWidths[0] > 0 &&
+borderWidths.every(value => Math.abs(value - borderWidths[0]) < 0.01) &&
+borderStyles.every(value => value === borderStyles[0]) &&
+borderColors.every(value => value === borderColors[0]) &&
+borderStyles[0] !== 'none' &&
+!isTransparentColor(borderColors[0]);
+if (uniformBorder) {
+const width = borderWidths[0];
+canvasRoundRectPath(
+ctx,
+rect.x + width / 2,
+rect.y + width / 2,
+Math.max(0, rect.width - width),
+Math.max(0, rect.height - width),
+Math.max(0, radius - width / 2)
+);
+ctx.strokeStyle = borderColors[0];
+ctx.lineWidth = width;
+ctx.setLineDash(
+borderStyles[0] === 'dashed'
+? [4, 3]
+: borderStyles[0] === 'dotted'
+? [1.5, 2.5]
+: []
+);
+ctx.stroke();
+ctx.restore();
+return;
+}
 const sides = [
 ['Top', rect.x, rect.y, rect.x + rect.width, rect.y],
 ['Right', rect.x + rect.width, rect.y, rect.x + rect.width, rect.y + rect.height],
@@ -4835,6 +4883,10 @@ for (const image of source.querySelectorAll('img')) {
 await paintImageElement(ctx, image, rootRect);
 }
 const textSelectors = [
+'.m0-official-side strong',
+'.m0-official-side span',
+'.m0-official-side b',
+'.m0-print-meta-side span',
 '.m0-kicker',
 '.m0-title-side h1',
 '.m0-meta span',
@@ -4844,6 +4896,7 @@ const textSelectors = [
 '.m0-legend-item',
 '.m0-stat-card b',
 '.m0-stat-card small',
+'.m0-stat-card em',
 '.m0-period-title',
 '.m0-period-time',
 '.m0-day-cell span',
