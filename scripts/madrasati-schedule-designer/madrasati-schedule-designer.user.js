@@ -1075,26 +1075,6 @@ value:
 prefs.specialty
 });
 }
-if (
-prefs.academicYear
-) {
-metaItems.push({
-label:
-'العام الدراسي',
-value:
-prefs.academicYear
-});
-}
-if (
-prefs.term
-) {
-metaItems.push({
-label:
-'الفصل الدراسي',
-value:
-prefs.term
-});
-}
 const legend =
 colorKeys
 .map(
@@ -1621,6 +1601,30 @@ overflow:hidden;
 text-overflow:ellipsis;
 white-space:nowrap;
 }
+#${APP_ID} .m0-live-preview-note {
+display:flex;
+align-items:center;
+gap:8px;
+margin-top:12px;
+padding:9px 10px;
+border-radius:10px;
+background:#EDF8F5;
+border:1px solid #D4EBE3;
+color:#42685A;
+}
+#${APP_ID} .m0-live-preview-note > span {
+width:22px;
+height:22px;
+border-radius:50%;
+display:grid;
+place-items:center;
+background:#07A869;
+color:#fff;
+font-size:11px;
+font-weight:900;
+}
+#${APP_ID} .m0-live-preview-note b { display:block; font-size:9.5px; color:#275D4A; }
+#${APP_ID} .m0-live-preview-note small { display:block; font-size:8px; color:#789187; margin-top:1px; }
 #${APP_ID} .m0-update {
 margin-top:18px;
 }
@@ -1715,10 +1719,36 @@ background:linear-gradient(
 }
 #${APP_ID} .m0-sheet-header {
 display:grid;
-grid-template-columns:120px 1fr 180px;
+grid-template-columns:210px 1fr 210px;
 gap:18px;
 align-items:center;
-margin-bottom:16px;
+margin-bottom:12px;
+}
+#${APP_ID} .m0-official-side {
+display:grid;
+gap:3px;
+text-align:right;
+color:#4D6470;
+font-size:10px;
+line-height:1.35;
+}
+#${APP_ID} .m0-official-side strong { font-size:12px; color:#15445A; }
+#${APP_ID} .m0-official-side b { font-size:10.5px; color:#15445A; }
+#${APP_ID} .m0-print-meta-side {
+display:grid;
+gap:4px;
+text-align:left;
+color:#6B7F88;
+font-size:9px;
+line-height:1.35;
+}
+#${APP_ID} .m0-print-meta-side b { color:#15445A; }
+#${APP_ID} .m0-title-side .m0-logo-img {
+display:block;
+width:58px;
+height:58px;
+margin:0 auto 4px;
+border-radius:13px;
 }
 #${APP_ID} .m0-brand-side {
 display:flex;
@@ -1829,6 +1859,12 @@ width:9px;
 height:9px;
 border-radius:50%;
 display:inline-block;
+flex:0 0 auto;
+}
+#${APP_ID} .m0-subject-legend .m0-legend-item.subject-key i {
+width:15px;
+height:4px;
+border-radius:999px;
 }
 #${APP_ID} .m0-schedule-table {
 width:100%;
@@ -1974,10 +2010,11 @@ font-size:11px;
 font-size:9px;
 }
 #${APP_ID} .m0-legend-count { font-size:8.5px; font-weight:800; color:#8B98A6; }
-#${APP_ID} .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:8px 0 11px; }
-#${APP_ID} .m0-stat-card { min-height:48px; display:flex; align-items:center; justify-content:center; gap:7px; padding:7px 9px; border:1px solid #E0EAED; border-radius:11px; background:#F8FBFC; color:#486271; text-align:center; }
-#${APP_ID} .m0-stat-card b { font-size:16px; color:#15445A; }
-#${APP_ID} .m0-stat-card small { font-size:9px; font-weight:800; line-height:1.35; }
+#${APP_ID} .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:5px 0 7px; }
+#${APP_ID} .m0-stat-card { min-height:32px; display:flex; align-items:center; justify-content:center; gap:5px; padding:4px 7px; border:1px solid #E0EAED; border-radius:8px; background:#F8FBFC; color:#5B6E78; text-align:center; }
+#${APP_ID} .m0-stat-card b { font-size:12px; color:#15445A; line-height:1; }
+#${APP_ID} .m0-stat-card small { font-size:7.8px; font-weight:800; line-height:1.15; }
+#${APP_ID} .m0-stat-card em { font-style:normal; font-size:7px; color:#7E8D95; font-weight:700; }
 #${APP_ID} .m0-fit-control { grid-column:1/-1; display:grid; grid-template-columns:1fr 145px; align-items:center; gap:10px; padding:9px; border:1px solid #DCE9EC; border-radius:10px; background:#F8FCFC; }
 #${APP_ID} .m0-fit-control b,#${APP_ID} .m0-fit-control small { display:block; }
 #${APP_ID} .m0-fit-control b { color:#355061; font-size:10.5px; margin-bottom:2px; }
@@ -2090,10 +2127,36 @@ background:linear-gradient(
 }
 .m0-sheet-header {
 display:grid;
-grid-template-columns:27mm 1fr 43mm;
+grid-template-columns:48mm 1fr 48mm;
 gap:4mm;
 align-items:center;
-margin-bottom:3mm;
+margin-bottom:2mm;
+}
+.m0-official-side {
+display:grid;
+gap:.7mm;
+text-align:right;
+color:#4D6470;
+font-size:6pt;
+line-height:1.3;
+}
+.m0-official-side strong { font-size:7pt; color:#15445A; }
+.m0-official-side b { font-size:6.3pt; color:#15445A; }
+.m0-print-meta-side {
+display:grid;
+gap:.8mm;
+text-align:left;
+color:#6B7F88;
+font-size:5.6pt;
+line-height:1.3;
+}
+.m0-print-meta-side b { color:#15445A; }
+.m0-title-side .m0-logo-img {
+display:block;
+width:13mm;
+height:13mm;
+margin:0 auto 1mm;
+border-radius:3mm;
 }
 .m0-brand-side {
 display:flex;
@@ -2201,6 +2264,11 @@ height:2.2mm;
 border-radius:50%;
 display:inline-block;
 }
+.m0-subject-legend .m0-legend-item.subject-key i {
+width:4mm;
+height:.9mm;
+border-radius:4mm;
+}
 .m0-schedule-table {
 width:100%;
 table-layout:fixed;
@@ -2296,10 +2364,11 @@ font-size:6.4pt;
 border-right:1mm solid #A8C7D0;
 }
 .m0-legend-count { font-size:5.8pt; font-weight:800; color:#8B98A6; }
-.m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1.5mm; margin:1mm 0 2mm; }
-.m0-stat-card { min-height:9mm; display:flex; align-items:center; justify-content:center; gap:1.5mm; padding:1mm 1.5mm; border:1px solid #E0EAED; border-radius:2mm; background:#F8FBFC; color:#486271; text-align:center; }
-.m0-stat-card b { font-size:9pt; color:#15445A; }
-.m0-stat-card small { font-size:5.8pt; font-weight:800; }
+.m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.9mm; margin:.8mm 0 1.3mm; }
+.m0-stat-card { min-height:6.4mm; display:flex; align-items:center; justify-content:center; gap:1mm; padding:.6mm 1mm; border:1px solid #E0EAED; border-radius:1.6mm; background:#F8FBFC; color:#5B6E78; text-align:center; }
+.m0-stat-card b { font-size:7pt; color:#15445A; line-height:1; }
+.m0-stat-card small { font-size:4.8pt; font-weight:800; line-height:1.1; }
+.m0-stat-card em { font-style:normal; font-size:4.5pt; color:#7E8D95; font-weight:700; }
 .fit-auto-compact .m0-schedule-table,.fit-auto-tight .m0-schedule-table,.fit-auto-ultra .m0-schedule-table,.fit-one-page .m0-schedule-table { border-spacing:.9mm; }
 .fit-auto-compact .m0-schedule-table td { height:16mm; }
 .fit-auto-compact .m0-lesson-card { min-height:15mm; padding:1.6mm 1mm; }
