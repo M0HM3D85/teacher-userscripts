@@ -830,15 +830,84 @@ if (!data) return;
 const schoolId = getCurrentSchoolId();
 const userId = getCurrentStudentUserId();
 if (!schoolId) return;
-const dashboardPromise = fetchSameOriginDocument('/Dashboards/Schools');
-const rolePromise = isTeacher
-? fetchSameOriginDocument('/SchoolManagment/Actions/Teacher/' + encodeURIComponent(schoolId))
-: fetchSameOriginDocument('/Student/Home/Index/' + encodeURIComponent(schoolId) + (userId ? '?UId=' + encodeURIComponent(userId) : ''));
-const [dashboardDoc, roleDoc] = await Promise.all([dashboardPromise, rolePromise]);
-const dashboardContext = isTeacher ? parseTeacherDashboardContext(dashboardDoc, schoolId) : parseStudentDashboardContext(dashboardDoc, schoolId, userId);
-const roleContext = isTeacher ? parseTeacherHomeContext(roleDoc) : parseStudentHomeContext(roleDoc);
-const region = extractRegionFromDocument(dashboardDoc) || extractRegionFromDocument(roleDoc) || '';
-data.systemMeta = { ...(data.systemMeta || {}), ...dashboardContext, ...Object.fromEntries(Object.entries(roleContext).filter(([, value]) => value)), region: region || dashboardContext.region || roleContext.region || data.systemMeta?.region || '' };
+const dashboardPromise =
+fetchSameOriginDocument(
+'/Dashboards/Schools'
+);
+const rolePromise =
+isTeacher
+? fetchSameOriginDocument(
+'/SchoolManagment/Actions/Teacher/' +
+encodeURIComponent(schoolId)
+)
+: fetchSameOriginDocument(
+'/Student/Home/Index/' +
+encodeURIComponent(schoolId) +
+(userId
+? '?UId=' +
+encodeURIComponent(userId)
+: '')
+);
+const infoPromise =
+isTeacher
+? fetchSameOriginDocument(
+'/TeachersReports/Statistics/MyInfo/' +
+encodeURIComponent(schoolId)
+)
+: Promise.resolve(null);
+const [
+dashboardDoc,
+roleDoc,
+infoDoc
+] = await Promise.all([
+dashboardPromise,
+rolePromise,
+infoPromise
+]);
+const dashboardContext =
+isTeacher
+? parseTeacherDashboardContext(
+dashboardDoc,
+schoolId
+)
+: parseStudentDashboardContext(
+dashboardDoc,
+schoolId,
+userId
+);
+const roleContext =
+isTeacher
+? parseTeacherHomeContext(
+roleDoc
+)
+: parseStudentHomeContext(
+roleDoc
+);
+const region =
+extractRegionFromDocument(
+infoDoc
+) ||
+extractRegionFromDocument(
+dashboardDoc
+) ||
+extractRegionFromDocument(
+roleDoc
+) ||
+'';
+data.systemMeta = {
+...(data.systemMeta || {}),
+...dashboardContext,
+...Object.fromEntries(
+Object.entries(roleContext)
+.filter(([, value]) => value)
+),
+region:
+region ||
+dashboardContext.region ||
+roleContext.region ||
+data.systemMeta?.region ||
+''
+};
 }
 function extractSystemIdentity(data) {
 const system = data.systemMeta || {};
