@@ -1283,66 +1283,160 @@
  });
 };
 
-    const saveImport = async function(){
- if(!state.fetchAudit?.complete)return toast('لم يثبت اكتمال جميع صفحات الطلاب، تم إيقاف الحفظ الجماعي لحماية درجات المشروع.','error');
- const ready=state.importPreview?.rows?.filter(r=>r.status==='ready')||[];
- if(state.importPreview?.rows?.some(r=>r.status==='zero_decision'))return toast('يوجد طلاب بدرجة صفر وحالة تسليم غير محسومة. اختر سلّم أو لم يسلّم أولًا.','error');
- if(!ready.length)return toast('لا توجد درجات جاهزة للحفظ. راجع أسباب الرفض في المعاينة.','error');
- if(new Set(ready.map(r=>String(r.student.studentId))).size!==ready.length)return toast('هناك طلاب مكررون في المطابقة، تم إيقاف الحفظ.','error');
- const counts={submittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='submitted').length,notSubmittedZero:ready.filter(r=>r.grade===0&&resolvedImportCode(r)==='not_submitted').length,autoNotes:ready.filter(r=>r.feedbackSource==='auto').length,changed:ready.filter(r=>Number.isFinite(r.student?.grade)).length,notesOnly:ready.filter(r=>Number.isFinite(r.student?.grade)&&Math.abs(r.grade-r.student.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length};
- if(!await confirmProjectImport(`تأكيد رصد درجات المشروع «${state.activityTitle}»\n\nالطلاب الجاهزون للرصد: ${ready.length}\nدرجات موجودة ستتغير أو تُحدَّث: ${counts.changed}\nسلّم وحصل على صفر: ${counts.submittedZero}\nلم يسلّم وسيرصد له صفر: ${counts.notSubmittedZero}\nملاحظات تلقائية: ${counts.autoNotes}\nملاحظات تُحدَّث دون تغيير الدرجة: ${counts.notesOnly}\n\nستُنزّل نسخة احتياطية قبل الحفظ وسيتحقق السكربت من أول دفعة.\n\nهل تؤكد رصد هؤلاء الطلاب؟`))return;
- const backup=ready.map(r=>({studentId:r.student.studentId,name:r.student.name,oldGrade:r.student.grade,oldFeedback:r.student.feedback,newGrade:r.grade,newFeedback:r.nextFeedback}));
- downloadJson(`project-grade-backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,{activity:state.activityTitle,at:new Date().toISOString(),notesImported:state.importFeedback,autoNotesGenerated:state.autoFeedback,rows:backup});
- setBusy(true,'جاري الحفظ والتحقق من أول دفعة…');
- let posted=0;
+    const saveImport = async function saveImport(){
+ if(state.gradeSaving)return;
+ if(!state.fetchAudit?.complete)return toast('لا يمكن تأكيد حفظ الدرجات: صفحات الطلاب غير مكتملة.','error');
+ const allRows=state.importPreview?.rows||[];
+ const rejected=allRows.filter(r=>!['ready','unchanged'].includes(r.status));
+ if(rejected.length)return toast(`توجد ${rejected.length} صفوف غير جاهزة أو تحتاج قرارًا. صحح الملف أولًا؛ لا يجوز تخطي أي صف دون إبلاغك.`,'error');
+ const ready=allRows.filter(r=>r.status==='ready');
+ const unchanged=allRows.filter(r=>r.status==='unchanged');
+ if(!ready.length)return toast('لا توجد درجات أو ملاحظات جديدة للرصد. راجع الصفوف المطابقة مسبقًا.','info');
+ if(new Set(allRows.map(r=>studentIdKey(r.student?.studentId))).size!==allRows.length)return toast('هناك رقم طالب مكرر أو مفقود؛ أُوقف الرصد.','error');
+ const changedGrades=ready.filter(r=>!Number.isFinite(r.student?.grade)||Math.abs(r.student.grade-r.grade)>1e-4).length;
+ const changedNotes=ready.filter(r=>clean(r.student?.feedback)!==clean(r.nextFeedback)).length;
+ const noteOnly=ready.filter(r=>Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-4&&clean(r.student?.feedback)!==clean(r.nextFeedback)).length;
+ const outsideFile=state.students.filter(student=>!allRows.some(r=>studentIdKey(r.student?.studentId)===studentIdKey(student.studentId))).length;
+ state.gradeSaving=true;
  try{
-  // اقرأ أحدث حالة للطلاب قبل أي كتابة على مدرستي؛ الخانات القديمة قد تكون تغيّرت.
-  const latest=await fetchAllStudents();
-  if(!state.fetchAudit?.complete)throw new Error('تعذر إعادة التحقق من جميع صفحات الطلاب قبل الحفظ؛ لم تُرسل أي درجات.');
-  const latestById=new Map(latest.map(row=>[studentIdKey(row.studentId),row]));
-  if(ready.some(r=>!latestById.has(studentIdKey(r.student.studentId))))throw new Error('بعض سجلات الطلاب لم تعد متاحة في مدرستي؛ لم تُرسل الدرجات.');
-  const changes=ready.map(r=>{
-    const student=latestById.get(studentIdKey(r.student.studentId));
-    if(!Number.isFinite(student.totalGrade)||student.totalGrade<=0||r.grade>student.totalGrade)throw new Error(`تغير الحد الأعلى لدرجة ${r.student.name}. أُوقف الحفظ.`);
-    const feedback=r.nextFeedback??student.feedback??'';
-    return {...student,grade:r.grade,feedback,rawFields:{...student.rawFields,Grade:String(r.grade),feedBack:feedback}};
-  });
-  for(let i=0;i<changes.length;i+=10){
-   const batch=changes.slice(i,i+10);
-   await postProjectRows(batch);
-   posted+=batch.length;
-   // لا تكتفِ بأول عشرة طلاب: افحص أول 20 سجلًا ثم كل عشرين وآخر دفعة.
-   // المقارنة تشمل نص الملاحظة حتى لو كانت الدرجة صحيحة مسبقًا.
-   if(i===0 || posted%20===0 || posted===changes.length){
+  const approval=await confirmProjectImport(`تأكيد رصد بيانات المشروع «${state.activityTitle}»
+
+الطلاب في ملف الاستيراد: ${allRows.length}
+مطابقون مسبقًا: ${unchanged.length}
+مطلوب تحديثهم: ${ready.length}
+درجات تحتاج تغييرًا: ${changedGrades}
+ملاحظات تحتاج تغييرًا: ${changedNotes}
+منها ملاحظات دون تغيير الدرجة: ${noteOnly}
+طلاب في كشف مدرستي غير موجودين في الملف: ${outsideFile}
+
+لا يوجد تنزيل تلقائي لأي نسخة احتياطية.
+سيُرسل السكربت على دفعات من 10 طلاب، ثم يعيد قراءة درجات وملاحظات كل دفعة من مدرستي.
+لن يظهر نجاح نهائي إلا بعد التحقق من جميع الصفوف في الملف.
+
+هل تؤكد بدء الرصد؟`);
+  if(!approval)return;
+  const counts={file:allRows.length,unchanged:unchanged.length,target:ready.length,sent:0,verifiedGrades:0,verifiedNotes:0,unverified:allRows.length};
+  const receipt=(phase,message,problems=[],native)=>updateGradeReceipt({phase,message,counts:{...counts},problems,native});
+  setBusy(true,'جاري مراجعة جميع الصفوف قبل الرصد…');
+  let lastChecked=null,posted=0,attempted=0;
+  try{
+   receipt('working','فحص الصفحات وأسماء الطلاب وحقول الدرجة والملاحظة قبل إرسال أي طلب.');
+   const latest=await fetchAllStudents();
+   if(!state.fetchAudit?.complete)throw new Error('لم تكتمل كل صفحات الطلاب قبل الرصد؛ لم يتم إرسال طلب حفظ.');
+   const lookup=new Map(latest.map(r=>[studentIdKey(r.studentId),r]));
+   const same=(student,row)=>student&&Number.isFinite(student.grade)&&Math.abs(student.grade-row.grade)<1e-4&&clean(student.feedback)===clean(row.nextFeedback);
+   const wants=allRows.map(r=>{
+    const id=studentIdKey(r.student.studentId),current=lookup.get(id);
+    if(!current)throw new Error(`لم أجد سجل الطالب ${r.student.name} في أحدث قراءة. لم يتم الحفظ.`);
+    if(!Number.isFinite(current.totalGrade)||current.totalGrade<=0||r.grade<0||r.grade>current.totalGrade)throw new Error(`تغيرت الدرجة الكلية للطالب ${r.student.name}. لم يتم الحفظ.`);
+    if(!Number.isFinite(r.grade))throw new Error(`درجة غير صالحة للطالب ${r.student.name}.`);
+    if(r.status==='unchanged'&&!same(current,r))throw new Error(`تغيرت بيانات الطالب ${r.student.name} بعد المعاينة. أعد الاستيراد قبل الحفظ.`);
+    if(r.status==='ready'&&!same(current,r)){
+      const samePrior=Number.isFinite(current.grade)&&Number.isFinite(r.student.grade)&&Math.abs(current.grade-r.student.grade)<1e-4
+        &&clean(current.feedback)===clean(r.student.feedback);
+      if(!samePrior)throw new Error(`تغيرت درجة أو ملاحظة الطالب ${r.student.name} منذ المعاينة. أعد تحميل الكشف وملف الدرجات أولًا.`);
+      if(clean(current.feedback)!==clean(r.nextFeedback) && !Object.keys(current.rawFields||{}).some(k=>k.toLowerCase()==='feedback'))
+        throw new Error(`لم يتم التعرف على حقل الملاحظة الحقيقي للطالب ${r.student.name}. لا أستطيع ضمان حفظ التعليق؛ أوقف الرصد قبل الإرسال.`);
+    }
+    return {id,name:r.student.name,grade:r.grade,feedback:r.nextFeedback??'',student:current,status:r.status,already:same(current,r)};
+   });
+   const plan=wants.filter(r=>!r.already);
+   const already=wants.filter(r=>r.already);
+   counts.unchanged=already.length;
+   const evaluate=(map,targets)=>{
+    const failedGrade=targets.filter(r=>{const current=map.get(r.id);return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4;});
+    const failedNotes=targets.filter(r=>{const current=map.get(r.id);return !current||clean(current.feedback)!==clean(r.feedback);});
+    return {failedGrade,failedNotes};
+   };
+   counts.verifiedGrades=already.length;
+   counts.verifiedNotes=already.length;
+   counts.unverified=wants.length-already.length;
+   receipt('working',`تمت مراجعة جميع الطلاب. ${already.length} سجلاً مطابقًا من مدرستي، وستُرسل ${plan.length} سجلات تحتاج تغييرًا. لم يتم تخطي أي صف من الملف.`);
+   for(let i=0;i<plan.length;i+=10){
+    const group=plan.slice(i,i+10);
+    const body=group.map(r=>({
+      ...r.student,grade:r.grade,feedback:r.feedback,
+      rawFields:{...r.student.rawFields,Grade:String(r.grade),
+        [Object.keys(r.student.rawFields||{}).find(k=>k.toLowerCase()==='feedback')||'feedBack']:r.feedback}
+    }));
+    attempted+=group.length;
+    counts.sent=attempted;
+    receipt('working',`جارٍ إرسال سجلات ${i+1}–${i+group.length} من ${plan.length} ثم التحقق من الملاحظات والدرجات.`);
+    await postProjectRows(body);
+    posted+=group.length;
     const checked=await fetchAllStudents();
-    if(!state.fetchAudit?.complete)throw new Error('فقد التحقق من اكتمال صفحات الطلاب بعد إحدى الدفعات؛ أوقفت الدفعات التالية.');
-    const checkedMap=new Map(checked.map(r=>[studentIdKey(r.studentId),r]));
-    const currentSlice=changes.slice(0,posted);
-    const failedGrade=currentSlice.filter(r=>{const current=checkedMap.get(studentIdKey(r.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4;});
-    const failedNotes=currentSlice.filter(r=>{const current=checkedMap.get(studentIdKey(r.studentId));return clean(current?.feedback)!==clean(r.feedback);});
+    if(!state.fetchAudit?.complete)throw new Error(`انقطع التحقق من كامل صفحات الطلاب بعد إرسال ${posted} سجلًا. لا يمكن إعلان النجاح.`);
+    lastChecked=checked;
+    const map=new Map(checked.map(r=>[studentIdKey(r.studentId),r]));
+    const currentSlice=plan.slice(0,i+group.length);
+    const {failedGrade,failedNotes}=evaluate(map,currentSlice);
+    const countValidGrade=currentSlice.length-failedGrade.length;
+    const countValidNotes=currentSlice.length-failedNotes.length;
+    counts.verifiedGrades=already.length+countValidGrade;
+    counts.verifiedNotes=already.length+countValidNotes;
+    counts.unverified=wants.length-Math.min(counts.verifiedGrades,counts.verifiedNotes);
     state.students=checked;
-    if(failedGrade.length||failedNotes.length)throw new Error(`تحقق الرصد بعد إرسال ${posted} من ${changes.length}: لم تتأكد درجات ${failedGrade.length} طالبًا، ولم تتأكد ملاحظات ${failedNotes.length} طالبًا. أوقفت بقية الدفعات. قد تكون بعض الدرجات حُفظت؛ راجع صفحة مدرستي قبل أي إعادة إرسال.`);
+    if(failedGrade.length||failedNotes.length){
+      const names=[...new Set([...failedGrade.map(r=>'الدرجة: '+r.name),...failedNotes.map(r=>'الملاحظة: '+r.name)])].slice(0,12);
+      const problem=new Error(`لم يتأكد حفظ بيانات ${Math.max(failedGrade.length,failedNotes.length)} طالبًا بعد الدفعة الحالية؛ الدرجات غير المؤكدة: ${failedGrade.length}، الملاحظات غير المؤكدة: ${failedNotes.length}. تم إيقاف بقية الدفعات.`);
+      problem.details=names;
+      throw problem;
+    }
+    const native=syncNativeVerifiedRows(checked.filter(r=>currentSlice.some(x=>x.id===studentIdKey(r.studentId))));
+    receipt('working',`تم التحقق من ${posted} سجلًا مرسلًا: درجاتهم وملاحظاتهم متطابقة مع مدرستي. المتبقي من الدفعات: ${plan.length-posted}.`,[],native);
    }
-   const status=document.getElementById(`${APP}-status`);
-   if(status)status.textContent=`أُرسل ${posted} من ${changes.length} درجة…`;
-  }
-  const after=await fetchAllStudents();
-  if(!state.fetchAudit?.complete)throw new Error('تعذر تأكيد اكتمال الرصد بعد الحفظ؛ يجب مراجعة الدرجات في مدرستي.');
-  const map=new Map(after.map(r=>[String(r.studentId),r]));
-  const mismatch=ready.filter(r=>{const current=map.get(String(r.student.studentId));return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4||clean(current.feedback)!==clean(r.nextFeedback);});
-  state.students=after;
-  if(mismatch.length){
-   renderGradeBody();
-   toast(`أُرسلت ${posted} درجة، لكن ${mismatch.length} لم تتأكد بعد قراءة مدرستي. لم يُعلن نجاح الحفظ.`, 'error');
-  }else{
+   const final=await fetchAllStudents();
+   if(!state.fetchAudit?.complete)throw new Error('لم تكتمل إعادة القراءة النهائية لجميع صفحات الطلاب.');
+   lastChecked=final;
+   const map=new Map(final.map(r=>[studentIdKey(r.studentId),r]));
+   const {failedGrade,failedNotes}=evaluate(map,wants);
+   counts.verifiedGrades=wants.length-failedGrade.length;
+   counts.verifiedNotes=wants.length-failedNotes.length;
+   counts.unverified=[...new Set([...failedGrade,...failedNotes].map(r=>r.id))].length;
+   state.students=final;
+   if(counts.unverified){
+    const e=new Error(`أُرسلت ${posted} سجلات، لكن إعادة القراءة النهائية أظهرت ${failedGrade.length} درجات و${failedNotes.length} ملاحظات غير مؤكدة.`);
+    e.details=[...new Set([...failedGrade.map(r=>'الدرجة: '+r.name),...failedNotes.map(r=>'الملاحظة: '+r.name)])].slice(0,12);
+    throw e;
+   }
+   const native=syncNativeVerifiedRows(final.filter(r=>wants.some(x=>x.id===studentIdKey(r.studentId))));
+   receipt('verified',`تم التحقق من ${wants.length} طالبًا في ملف الاستيراد، الدرجة والملاحظة لكل واحد منهم بعد قراءة خادم مدرستي. أُرسل ${posted} سجلًا، وكان ${wants.length-posted} مطابقًا مسبقًا. لا يشمل هذا التأكيد ${outsideFile} طالبًا غير موجود في ملفك.`,[],native);
    state.importPreview=null;
+   const preview=document.getElementById(`${APP}-import-preview`);
+   if(preview)preview.innerHTML='<div class="'+APP+'-note">انتهى الرصد. راجع لوحة التحقق أعلاه؛ لا حاجة لإعادة رفع الملف إذا كانت الحالة «تم التحقق من الحفظ».</div>';
+   toast(`تم تأكيد حفظ درجات وملاحظات ${wants.length} طالبًا من الخادم.`,'success');
+  }catch(error){
+   if(attempted>0){
+    try{
+     const final=await fetchAllStudents();
+     if(state.fetchAudit?.complete){
+      lastChecked=final;
+      state.students=final;
+      const map=new Map(final.map(r=>[studentIdKey(r.studentId),r]));
+      const applied=ready.filter(r=>{const current=map.get(studentIdKey(r.student.studentId));return Number.isFinite(current?.grade)&&Math.abs(current.grade-r.grade)<1e-4&&clean(current.feedback)===clean(r.nextFeedback);});
+      counts.verifiedGrades=ready.filter(r=>{const current=map.get(studentIdKey(r.student.studentId));return Number.isFinite(current?.grade)&&Math.abs(current.grade-r.grade)<1e-4;}).length+unchanged.length;
+      counts.verifiedNotes=ready.filter(r=>{const current=map.get(studentIdKey(r.student.studentId));return current&&clean(current.feedback)===clean(r.nextFeedback);}).length+unchanged.length;
+      counts.unverified=ready.length-applied.length;
+      syncNativeVerifiedRows(final.filter(r=>applied.some(x=>studentIdKey(x.student.studentId)===studentIdKey(r.studentId))));
+     }
+    }catch{}
+   }
+   const problems=error?.details||[];
+   receipt('failed',`${String(error?.message||error)}. تم إرسال طلبات لـ ${attempted} سجلات؛ ليس معنى ذلك أن جميعها حُفظت. لا تتكرر عملية الرصد قبل مراجعة الطلاب غير المؤكدين.`,problems);
+   if(attempted>0){
+    state.importPreview=null;
+    const preview=document.getElementById(`${APP}-import-preview`);
+    if(preview)preview.innerHTML='<div class="'+APP+'-note">تم تعليق استيراد الملف الحالي لمنع إعادة إرسال درجات محتمل حفظها. راجع النتيجة أعلاه، ثم أعد الاستيراد بعد تحديث الكشف فقط عند الحاجة.</div>';
+   }
+   toast('الرصد غير مكتمل أو لم يمكن التحقق منه. راجع سجل النتائج الثابت.','error');
+  }finally{
+   setBusy(false);
    renderGradeBody();
-   toast(`تم حفظ والتحقق من ${ready.length} درجة في مدرستي بنجاح.`, 'success');
+   if(state.lastGradeReceipt)updateGradeReceipt(state.lastGradeReceipt);
   }
- }catch(e){
-  renderGradeBody();
-  toast(`توقف الحفظ بعد إرسال ${posted} درجة: ${String(e?.message||e)}`,'error');
- }finally{setBusy(false);}
+ }finally{
+  state.gradeSaving=false;
+ }
 };
 
     const cleanFile = name => clean(name).replace(/[\\/:*?"<>|]/g,'-').slice(0,90) || 'تقرير';
