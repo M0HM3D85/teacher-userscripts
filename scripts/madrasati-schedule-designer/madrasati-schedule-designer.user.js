@@ -1407,23 +1407,7 @@ ${prefs.academicYear ? `<span>العام الدراسي: <b>${esc(prefs.academic
 <span>تاريخ الطباعة: <b>${esc(formatExtractionDate(state.extractedAt))}</b></span>
 </div>
 </header>
-${prefs.showLegend &&
-legend
-? `
-<div class="m0-legend">
-<span class="m0-legend-title">
-${
-isTeacher
-? 'ألوان الفصول:'
-: 'ألوان المواد:'
-}
-</span>
-${legend}
-</div>
-${subjectLegend}
-`
-: ''
-}
+
 ${statsHtml}
 <div class="m0-table-wrap">
 <table class="m0-schedule-table">
@@ -1440,6 +1424,26 @@ ${body}
 </tbody>
 </table>
 </div>
+${
+prefs.showLegend &&
+legend
+? `
+<div class="m0-bottom-legends">
+<div class="m0-legend">
+<span class="m0-legend-title">
+${
+isTeacher
+? 'الفصول:'
+: 'المواد:'
+}
+</span>
+${legend}
+</div>
+${subjectLegend}
+</div>
+`
+: ''
+}
 ${
 prefs.note
 ? `
@@ -1872,6 +1876,16 @@ font-size:10px;
 margin-top:-5px;
 color:#6A7583;
 }
+#${APP_ID} .m0-bottom-legends {
+margin-top:6px;
+padding-top:4px;
+border-top:1px solid #EEF2F4;
+}
+#${APP_ID} .m0-bottom-legends .m0-legend,
+#${APP_ID} .m0-bottom-legends .m0-subject-legend {
+margin-top:2px;
+margin-bottom:2px;
+}
 #${APP_ID} .m0-legend-title {
 font-weight:800;
 color:#445064;
@@ -2275,6 +2289,16 @@ font-size:6.7pt;
 .m0-subject-legend {
 margin-top:-1mm;
 color:#6A7583;
+}
+.m0-bottom-legends {
+margin-top:1.1mm;
+padding-top:.7mm;
+border-top:1px solid #EEF2F4;
+}
+.m0-bottom-legends .m0-legend,
+.m0-bottom-legends .m0-subject-legend {
+margin-top:.4mm;
+margin-bottom:.4mm;
 }
 .m0-legend-title {
 font-weight:800;
