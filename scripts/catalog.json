@@ -86,9 +86,9 @@
     {
       "id": "madrasati-projects-intelligence",
       "name": "Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي",
-      "version": "1.6.1-beta2",
+      "version": "1.6.1-beta3",
       "status": "beta",
-      "description": "إصدار تجريبي مستقل للمشاريع: رصد درجات وملاحظات على دفعات مع تحقق بعد كل 10 طلاب، فحص شامل لكل صفوف ملف الاستيراد، مزامنة الخانات المرئية وتقرير نتيجة ثابت واضح؛ دون تنزيل نسخة احتياطية تلقائية، ودون تغيير سكربت الواجبات.",
+      "description": "نسخة تصحيحية تجريبية مستقلة للمشاريع؛ إصلاح رفض الطالب الصحيح عندما تتغير درجة أو ملاحظة مدرستي منذ المعاينة، مع تأكيد ثانٍ قبل الكتابة فوق التغييرات، وتخطي المحفوظ مسبقًا والتحقق من كل دفعة ومن الملف بالكامل دون تنزيل نسخة احتياطية تلقائية.",
       "sourcePath": "scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js",
       "additionalInfoPath": "scripts/madrasati-projects-intelligence/README.md",
       "greasyFork": null,
