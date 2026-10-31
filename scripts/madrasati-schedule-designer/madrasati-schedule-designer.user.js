@@ -329,148 +329,208 @@ break;
 }
 return null;
 }
-function getRequestVerificationToken(
-doc = document
+function waitForMilliseconds(
+milliseconds
 ) {
-return clean(
-doc.querySelector(
-'input[name="__RequestVerificationToken"]'
-)?.value ||
-doc.querySelector(
-'input[name="RequestVerificationToken"]'
-)?.value ||
-doc.querySelector(
-'meta[name="request-verification-token"]'
-)?.content ||
-doc.querySelector(
-'meta[name="RequestVerificationToken"]'
-)?.content ||
-''
+return new Promise(
+resolve =>
+setTimeout(
+resolve,
+milliseconds
+)
 );
 }
-async function fetchTeacherTimeTableDocument(
+async function captureTeacherTimeTableContext(
 schoolId
 ) {
-if (!schoolId) return null;
-return fetchSameOriginDocument(
+if (!schoolId) {
+return {
+token: '',
+currentDate: '',
+source: 'daily-timetable-iframe'
+};
+}
+const frame =
+document.createElement(
+'iframe'
+);
+frame.setAttribute(
+'aria-hidden',
+'true'
+);
+frame.style.cssText = [
+'position:fixed',
+'width:1px',
+'height:1px',
+'opacity:0',
+'pointer-events:none',
+'left:-10000px',
+'top:-10000px',
+'border:0'
+].join(';');
+frame.src =
 '/teacher/TimeTable/index/' +
-encodeURIComponent(schoolId) +
-'?SetFaviorit=True'
+encodeURIComponent(
+schoolId
+) +
+'?SetFaviorit=True';
+document.body.appendChild(
+frame
+);
+try {
+await new Promise(
+(resolve, reject) => {
+const timer =
+setTimeout(
+() =>
+reject(
+new Error(
+'timetable-frame-timeout'
+)
+),
+12000
+);
+frame.addEventListener(
+'load',
+() => {
+clearTimeout(timer);
+resolve();
+},
+{ once: true }
 );
 }
-function extractWeekStartFromDocument(
-doc
+);
+const frameWindow =
+frame.contentWindow;
+const frameDocument =
+frame.contentDocument;
+if (
+!frameWindow ||
+!frameDocument
 ) {
-if (!doc) return null;
-const selectors = [
-'#CurrentWeekDate',
-'#StartDateSchedule',
-'input[name="CurrentWeekDate"]',
-'input[name="StartDateSchedule"]',
-'[data-current-week]',
-'[data-start-date]'
-];
-for (const selector of selectors) {
-const node =
-doc.querySelector(selector);
-if (!node) continue;
-const value =
-node.value ||
-node.getAttribute('data-current-week') ||
-node.getAttribute('data-start-date') ||
-node.getAttribute('title') ||
-node.textContent ||
-'';
-const date =
-parsePageDate(value);
-if (date) return date;
+return {
+token: '',
+currentDate: '',
+source: 'daily-timetable-iframe'
+};
 }
-const titleNodes = [
-...doc.querySelectorAll('[title]')
-];
-for (const node of titleNodes) {
-const date =
-parsePageDate(
-node.getAttribute('title') ||
+const currentDate =
+clean(
+frameDocument.querySelector(
+'#_hndCurrentDate'
+)?.value ||
+frameDocument.querySelector(
+'#ServerDateTime'
+)?.value ||
 ''
 );
-if (date) return date;
-}
-return null;
-}
-async function getTeacherVerificationContext(
-schoolId
+const XHR =
+frameWindow.XMLHttpRequest;
+const originalOpen =
+XHR.prototype.open;
+const originalHeader =
+XHR.prototype.setRequestHeader;
+let token = '';
+try {
+XHR.prototype.open =
+function (
+method,
+url,
+...rest
 ) {
-const timetableDoc =
-await fetchTeacherTimeTableDocument(
-schoolId
+this.__m0TimeUrl =
+String(url || '');
+return originalOpen.call(
+this,
+method,
+url,
+...rest
 );
-const timetableToken =
-getRequestVerificationToken(
-timetableDoc
-);
-const timetableStart =
-extractWeekStartFromDocument(
-timetableDoc
-);
+};
+XHR.prototype.setRequestHeader =
+function (
+name,
+value
+) {
 if (
-timetableToken ||
-timetableStart
+/requestverificationtoken/i
+.test(
+String(name || '')
+)
 ) {
-return {
-token:
-timetableToken,
-start:
-timetableStart,
-source:
-'timetable'
-};
+token =
+String(value || '');
 }
-const currentToken =
-getRequestVerificationToken(
-document
+return originalHeader.call(
+this,
+name,
+value
 );
-if (currentToken) {
-return {
-token:
-currentToken,
-start:
-null,
-source:
-'current'
 };
-}
-const teacherDoc =
-await fetchSameOriginDocument(
-'/SchoolManagment/Actions/Teacher/' +
-encodeURIComponent(schoolId)
-);
-return {
-token:
-getRequestVerificationToken(
-teacherDoc
-),
-start:
-extractWeekStartFromDocument(
-teacherDoc
-),
-source:
-'teacher-home'
-};
-}
-function formatTeacherCalendarDate(
-date
+const triggers = [
+'.daytoday',
+'.prevCalendar',
+'.nextCalendar'
+];
+for (
+const selector of triggers
 ) {
-return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} 12:00:00 PM`;
+if (token) break;
+const trigger =
+frameDocument.querySelector(
+selector
+);
+if (!trigger) continue;
+trigger.click();
+for (
+let attempt = 0;
+attempt < 10 &&
+!token;
+attempt++
+) {
+await waitForMilliseconds(
+120
+);
+}
+}
+} finally {
+XHR.prototype.open =
+originalOpen;
+XHR.prototype.setRequestHeader =
+originalHeader;
+}
+return {
+token:
+clean(token),
+currentDate,
+source:
+'daily-timetable-iframe'
+};
+} catch (error) {
+return {
+token: '',
+currentDate: '',
+source:
+'daily-timetable-iframe',
+error:
+String(
+error?.message ||
+error ||
+''
+)
+};
+} finally {
+frame.remove();
+}
 }
 async function fetchTeacherCalendarDay(
-date,
+dateText,
 index,
 schoolId,
 verificationToken
 ) {
 if (
-!date ||
+!dateText ||
 !schoolId ||
 !verificationToken
 ) return null;
@@ -478,9 +538,7 @@ const body =
 new URLSearchParams();
 body.set(
 'Date',
-formatTeacherCalendarDate(
-date
-)
+String(dateText)
 );
 body.set(
 'index',
@@ -507,12 +565,12 @@ credentials: 'same-origin',
 headers: {
 'Content-Type':
 'application/x-www-form-urlencoded; charset=UTF-8',
-'X-Requested-With':
-'XMLHttpRequest',
-'requestverificationtoken':
-verificationToken,
 'Accept':
-'application/json, text/javascript, */*; q=0.01'
+'application/json, text/javascript, */*; q=0.01',
+'RequestVerificationToken':
+verificationToken,
+'X-Requested-With':
+'XMLHttpRequest'
 },
 body:
 body.toString(),
@@ -658,76 +716,90 @@ if (
 ) return false;
 const schoolId =
 getCurrentSchoolId();
-if (!schoolId) return false;
-const pageStart =
-parsePageDate(
-document.querySelector(
-'#CurrentWeekDate'
-)?.value ||
-''
-) ||
-parsePageDate(
-document.querySelector(
-'#StartDateSchedule'
-)?.value ||
-''
-);
-const verificationContext =
-await getTeacherVerificationContext(
+if (!schoolId) {
+data.timeDebug = {
+reason:
+'school-id-not-found'
+};
+return false;
+}
+const context =
+await captureTeacherTimeTableContext(
 schoolId
 );
-const start =
-pageStart ||
-verificationContext.start;
-const verificationToken =
-verificationContext.token;
 data.timeDebug = {
-schoolIdFound:
-Boolean(schoolId),
-pageStartFound:
-Boolean(pageStart),
-contextStartFound:
-Boolean(
-verificationContext.start
-),
+schoolIdFound: true,
 tokenFound:
 Boolean(
-verificationToken
+context.token
+),
+dateFound:
+Boolean(
+context.currentDate
 ),
 tokenSource:
-verificationContext.source ||
+context.source ||
 ''
 };
-if (!start) {
+if (
+!context.token
+) {
 data.timeDebug.reason =
-'week-start-not-found';
+'verification-token-not-captured';
+if (context.error) {
+data.timeDebug.error =
+context.error;
+}
 return false;
 }
-if (!verificationToken) {
+if (
+!context.currentDate
+) {
 data.timeDebug.reason =
-'verification-token-not-found';
+'current-date-not-found';
 return false;
 }
-const days =
-await Promise.all(
-[0, 1, 2, 3, 4]
-.map(index =>
-fetchTeacherCalendarDay(
-addDays(start, index),
+const days = [];
+let requestDate =
+context.currentDate;
+for (
+let index = 0;
+index <= 4;
+index++
+) {
+const day =
+await fetchTeacherCalendarDay(
+requestDate,
 index,
 schoolId,
-verificationToken
-)
-)
+context.token
 );
+days.push(
+day
+);
+if (
+day?.CurrentDate
+) {
+requestDate =
+day.CurrentDate;
+} else if (!day) {
+break;
+}
+}
 data.timeDebug.responses =
-days.map(day => ({
+days.map(
+(day, index) => ({
+index,
 ok:
 Boolean(day),
 lectures:
 day?.TimeTable?.length ||
-0
-}));
+0,
+currentDate:
+day?.CurrentDate ||
+''
+})
+);
 if (
 !days.some(Boolean)
 ) {
@@ -874,6 +946,25 @@ data.timeDebug.reason =
 '';
 data.timeDebug.found =
 found;
+data.timeDebug.directSlots =
+slotTimes
+.map(
+(value, index) =>
+value
+? index + 1
+: null
+)
+.filter(Boolean);
+data.timeDebug.inferredSlots =
+completedTimes
+.map(
+(value, index) =>
+value &&
+!slotTimes[index]
+? index + 1
+: null
+)
+.filter(Boolean);
 state.prefs.times =
 [...data.times];
 } else {
