@@ -402,22 +402,125 @@ data.systemMeta = { ...(data.systemMeta || {}), school };
 if (found) { data.timeSource = 'system'; state.prefs.times = [...data.times]; }
 return found > 0 || Boolean(school);
 }
-function extractSystemIdentity(data) {
-const nameSelectors = ['.user-menu .fw-bold','.info-body.flex-grow-1.ms-3 h2','[data-clarity-mask="True"] .fw-bold'];
-let name = '';
-for (const selector of nameSelectors) {
-name = clean(document.querySelector(selector)?.textContent || '');
-if (name && !/مرحبا|تسجيل|الرئيسية/u.test(name)) break;
+function getCurrentSchoolId() {
+return clean(
+new URLSearchParams(location.search).get('SchoolId') ||
+document.querySelector('#hSchoolId')?.value ||
+document.querySelector('#hf_SchoolId')?.value ||
+''
+);
 }
-const subjects = collectUnique(data, lesson => lesson.subject);
+function getCurrentStudentUserId() {
+return clean(
+new URLSearchParams(location.search).get('UId') ||
+new URLSearchParams(location.search).get('uId') ||
+''
+);
+}
+async function fetchSameOriginDocument(url) {
+try {
+const response = await fetch(url, {
+credentials: 'same-origin',
+headers: { 'Accept': 'text/html,application/xhtml+xml' }
+});
+if (!response.ok) return null;
+return new DOMParser().parseFromString(await response.text(),'text/html');
+} catch (_) { return null; }
+}
+function extractRegionFromDocument(doc) {
+if (!doc) return '';
+const labels = ['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية'];
+const nodes = doc.querySelectorAll('label, small, span, p, div, td, th');
+for (const node of nodes) {
+const value = clean(node.textContent || '');
+if (!value || value.length > 180) continue;
+for (const label of labels) {
+const pos = value.indexOf(label);
+if (pos < 0) continue;
+const tail = clean(value.slice(pos + label.length).replace(/^[\s:：-]+/u, ''));
+if (tail && tail.length <= 80 && canonical(tail) !== canonical(label)) return tail;
+}
+}
+return '';
+}
+function parseTeacherDashboardContext(doc, schoolId) {
+if (!doc || !schoolId) return {};
+const links = [...doc.querySelectorAll('a[href*="ChangeUserTypeToTeacherFromParent"]')];
+const link = links.find(anchor => String(anchor.href || '').includes('/' + schoolId));
+if (!link) return {};
+let school = '';
+try { school = new URL(link.href, location.origin).searchParams.get('Name') || ''; } catch (_) {}
+const card = link.closest('[class*="col-lg-6"]') || link.parentElement;
+const text = clean(card?.textContent || '');
+const stageMatch = text.match(/المراحل الدراسية\s*:\s*(.*?)\s+قادة المدرسة/u);
+return { school: clean(school), stage: clean(stageMatch?.[1] || '') };
+}
+function parseStudentDashboardContext(doc, schoolId, userId) {
+if (!doc || !schoolId) return {};
+const links = [...doc.querySelectorAll('a[href*="/Student/Home/Index/"]')];
+const link = links.find(anchor => {
+try {
+const url = new URL(anchor.href, location.origin);
+const sameSchool = url.pathname.includes('/' + schoolId);
+const uid = url.searchParams.get('UId') || url.searchParams.get('uId') || '';
+return sameSchool && (!userId || uid === userId);
+} catch (_) { return false; }
+});
+if (!link) return {};
+const text = clean(link.textContent || '');
+const nameMatch = text.match(/^(.*?)\s+المدرسة\s*:/u);
+const schoolMatch = text.match(/المدرسة\s*:\s*(.*?)\s+الفصل\s*:/u);
+const classMatch = text.match(/الفصل\s*:\s*(.*?)(?:\s+بيانات|$)/u);
+return { name: clean(nameMatch?.[1] || ''), school: clean(schoolMatch?.[1] || ''), className: clean(classMatch?.[1] || '') };
+}
+function parseStudentHomeContext(doc) {
+if (!doc) return {};
+const info = doc.querySelector('.dashboard-info-banner .info-items');
+if (!info) return {};
+const parts = [...info.children].map(node => clean(node.textContent || '')).filter(Boolean);
+const spans = [...info.querySelectorAll('span')].map(node => clean(node.textContent || '')).filter(Boolean);
+const school = parts.find(value => !/^الصف\s/u.test(value) && !/@/.test(value)) || '';
+const grade = spans.find(value => /^الصف\s.+(?:الابتدائي|المتوسط|الثانوي)/u.test(value)) || '';
+const className = [...spans].reverse().find(value => /^الصف\s/u.test(value)) || '';
+return { school: clean(school), stage: /ابتدائي/u.test(grade) ? 'المرحلة الابتدائية' : /متوسط/u.test(grade) ? 'المرحلة المتوسطة' : /ثانوي/u.test(grade) ? 'المرحلة الثانوية' : '', className };
+}
+function parseTeacherHomeContext(doc) {
+if (!doc) return {};
+const rawTitle = clean(doc.title || '');
+const school = rawTitle.replace(/^مدرستي\s*\|\s*/u, '').trim();
+return { school: school && !/^الصفحة الرئيسية$/u.test(school) ? school : '', region: extractRegionFromDocument(doc) };
+}
+async function enrichRoleIdentityFromSystem(data) {
+if (!data) return;
+const schoolId = getCurrentSchoolId();
+const userId = getCurrentStudentUserId();
+if (!schoolId) return;
+const dashboardPromise = fetchSameOriginDocument('/Dashboards/Schools');
+const rolePromise = isTeacher
+? fetchSameOriginDocument('/SchoolManagment/Actions/Teacher/' + encodeURIComponent(schoolId))
+: fetchSameOriginDocument('/Student/Home/Index/' + encodeURIComponent(schoolId) + (userId ? '?UId=' + encodeURIComponent(userId) : ''));
+const [dashboardDoc, roleDoc] = await Promise.all([dashboardPromise, rolePromise]);
+const dashboardContext = isTeacher ? parseTeacherDashboardContext(dashboardDoc, schoolId) : parseStudentDashboardContext(dashboardDoc, schoolId, userId);
+const roleContext = isTeacher ? parseTeacherHomeContext(roleDoc) : parseStudentHomeContext(roleDoc);
+const region = extractRegionFromDocument(dashboardDoc) || extractRegionFromDocument(roleDoc) || '';
+data.systemMeta = { ...(data.systemMeta || {}), ...dashboardContext, ...Object.fromEntries(Object.entries(roleContext).filter(([, value]) => value)), region: region || dashboardContext.region || roleContext.region || data.systemMeta?.region || '' };
+}
+function extractSystemIdentity(data) {
+const system = data.systemMeta || {};
+const nameSelectors = ['.user-menu .fw-bold','.info-body.flex-grow-1.ms-3 h2','[data-clarity-mask="True"] .fw-bold','.mx-2.fw-bold'];
+let pageName = '';
+for (const selector of nameSelectors) {
+pageName = clean(document.querySelector(selector)?.textContent || '').replace(/\s+(?:معلم|طالب)\s*$/u, '');
+if (pageName && !/مرحبا|تسجيل|الرئيسية/u.test(pageName)) break;
+}
 return {
-name,
-school: clean(data.systemMeta?.school || ''),
-region: findPageValue(['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية']),
-term: findPageValue(['الفصل الدراسي']),
-academicYear: findPageValue(['العام الدراسي']) || inferAcademicYear(),
-stage: inferStage(data),
-subject: isTeacher ? subjects.join('، ') : ''
+name: clean(system.name || pageName),
+school: clean(system.school || ''),
+region: clean(system.region || findPageValue(['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية'])),
+term: clean(system.term || findPageValue(['الفصل الدراسي'])),
+academicYear: clean(system.academicYear || findPageValue(['العام الدراسي']) || inferAcademicYear()),
+stage: clean(system.stage || inferStage(data)),
+className: clean(system.className || data.commonClass || '')
 };
 }
 function formatExtractionDate(date = new Date()) {
@@ -885,23 +988,20 @@ function hydrateDefaults(
 data
 ) {
 const identity = extractSystemIdentity(data);
-if (!state.prefs.name && identity.name) state.prefs.name = identity.name;
-if (!state.prefs.school && identity.school) state.prefs.school = identity.school;
-if (!state.prefs.region && identity.region) state.prefs.region = identity.region;
-if (!state.prefs.term && identity.term) state.prefs.term = identity.term;
-if (!state.prefs.academicYear && identity.academicYear) state.prefs.academicYear = identity.academicYear;
-if (!state.prefs.stage && identity.stage) state.prefs.stage = identity.stage;
-if (isTeacher && !state.prefs.specialty && identity.subject) state.prefs.specialty = identity.subject;
-if (isStudent && !state.prefs.className && data.commonClass) state.prefs.className = data.commonClass;
+if (identity.name) state.prefs.name = identity.name;
+if (identity.school) state.prefs.school = identity.school;
+if (identity.region) state.prefs.region = identity.region;
+if (identity.term) state.prefs.term = identity.term;
+if (identity.academicYear) state.prefs.academicYear = identity.academicYear;
+if (identity.stage) state.prefs.stage = identity.stage;
+if (isStudent && identity.className) state.prefs.className = identity.className;
 if (!state.prefs.title) {
 state.prefs.title =
 isTeacher
 ? 'الجدول الدراسي الأسبوعي للمعلم'
 : 'الجدول الدراسي الأسبوعي للطالب';
 }
-state.logoDataUrl =
-state.prefs.logoDataUrl ||
-'';
+state.logoDataUrl = state.prefs.logoDataUrl || '';
 }
 function collectUnique(
 data,
