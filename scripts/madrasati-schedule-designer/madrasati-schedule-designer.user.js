@@ -258,15 +258,30 @@ function apiDate(date, separator = '/') {
 return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join(separator);
 }
 function extractClock(value = '') {
-const text = normalizeLatinDigits(value);
-const direct = text.match(/(?:T|\s|^)(\d{1,2}):(\d{2})(?::\d{2})?/);
-if (direct) return normalizeTimeValue(`${direct[1]}:${direct[2]}`);
-const ticks = text.match(/\/Date\((\d+)(?:[+-]\d+)?\)\//);
+const text =
+normalizeLatinDigits(value)
+.trim();
+const normalized =
+normalizeTimeValue(text);
+if (normalized) return normalized;
+const ticks =
+text.match(
+/\/Date\((\d+)(?:[+-]\d+)?\)\//
+);
 if (ticks) {
-const date = new Date(Number(ticks[1]));
-if (!Number.isNaN(date.getTime())) return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+const date =
+new Date(
+Number(ticks[1])
+);
+if (
+!Number.isNaN(
+date.getTime()
+)
+) {
+return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
-return normalizeTimeValue(text);
+}
+return '';
 }
 function findPageValue(labels = []) {
 const normalizedLabels = labels.map(label => canonical(label));
@@ -314,93 +329,413 @@ break;
 }
 return null;
 }
-async function fetchTeacherCalendarDay(date, separator = '/') {
-const schoolId =
-new URLSearchParams(location.search).get('SchoolId') ||
-document.querySelector('#hSchoolId')?.value ||
-'';
-const dateText = apiDate(date, separator);
-const commonHeaders = {
-'X-Requested-With': 'XMLHttpRequest',
-'Accept': 'application/json, text/javascript, */*; q=0.01'
-};
-const broadBody = new URLSearchParams();
-[
-'date','Date','start','StartDate','startDate',
-'CurrentDate','currentDate','SelectedDate','selectedDate'
-].forEach(key => broadBody.set(key, dateText));
-if (schoolId) {
-broadBody.set('SchoolId', schoolId);
-broadBody.set('schoolId', schoolId);
+function getRequestVerificationToken(
+doc = document
+) {
+return clean(
+doc.querySelector(
+'input[name="__RequestVerificationToken"]'
+)?.value ||
+doc.querySelector(
+'input[name="RequestVerificationToken"]'
+)?.value ||
+doc.querySelector(
+'meta[name="request-verification-token"]'
+)?.content ||
+''
+);
 }
-const query = new URLSearchParams({ date: dateText });
-if (schoolId) query.set('schoolId', schoolId);
-const attempts = [
-{
-url: '/Teacher/TimeTable/GetCal',
-options: {
-method: 'POST',
-headers: {
-...commonHeaders,
-'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-},
-body: broadBody.toString()
+async function getTeacherVerificationToken(
+schoolId
+) {
+const current =
+getRequestVerificationToken(
+document
+);
+if (current) return current;
+const teacherDoc =
+await fetchSameOriginDocument(
+'/SchoolManagment/Actions/Teacher/' +
+encodeURIComponent(schoolId)
+);
+return getRequestVerificationToken(
+teacherDoc
+);
 }
-},
-{
-url: `/Teacher/TimeTable/GetCal?${query.toString()}`,
-options: {
-method: 'GET',
-headers: commonHeaders
+function formatTeacherCalendarDate(
+date
+) {
+return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} 12:00:00 PM`;
 }
-}
-];
-for (const attempt of attempts) {
-const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(), 3500);
+async function fetchTeacherCalendarDay(
+date,
+index,
+schoolId,
+verificationToken
+) {
+if (
+!date ||
+!schoolId ||
+!verificationToken
+) return null;
+const body =
+new URLSearchParams();
+body.set(
+'Date',
+formatTeacherCalendarDate(
+date
+)
+);
+body.set(
+'index',
+String(index)
+);
+body.set(
+'SchoolId',
+schoolId
+);
+const controller =
+new AbortController();
+const timer =
+setTimeout(
+() => controller.abort(),
+4500
+);
 try {
-const response = await fetch(attempt.url, {
-...attempt.options,
+const response =
+await fetch(
+'/Teacher/TimeTable/GetCal',
+{
+method: 'POST',
 credentials: 'same-origin',
-signal: controller.signal
-});
-if (!response.ok) continue;
-const payload = normalizeCalendarPayload(await response.text());
-if (payload) return payload;
+headers: {
+'Content-Type':
+'application/x-www-form-urlencoded; charset=UTF-8',
+'X-Requested-With':
+'XMLHttpRequest',
+'requestverificationtoken':
+verificationToken,
+'Accept':
+'application/json, text/javascript, */*; q=0.01'
+},
+body:
+body.toString(),
+signal:
+controller.signal
+}
+);
+if (!response.ok) return null;
+return normalizeCalendarPayload(
+await response.text()
+);
 } catch (_) {
+return null;
 } finally {
 clearTimeout(timer);
 }
 }
-return null;
+function medianNumber(
+values
+) {
+const list =
+values
+.filter(Number.isFinite)
+.sort((a, b) => a - b);
+if (!list.length) return null;
+const middle =
+Math.floor(
+list.length / 2
+);
+return list.length % 2
+? list[middle]
+: (
+list[middle - 1] +
+list[middle]
+) / 2;
 }
-async function enrichTeacherScheduleFromSystem(data) {
-if (!isTeacher || !data) return false;
-const start = parsePageDate(document.querySelector('#StartDateSchedule')?.value || '') || parsePageDate(document.querySelector('#CurrentWeekDate')?.value || '') || parsePageDate(document.querySelector('#currentDateToday')?.value || '');
+function inferMissingSlotTimes(
+slotTimes,
+observedStarts,
+durations
+) {
+const observed = [
+...observedStarts.entries()
+]
+.map(([slot, values]) => ({
+slot:
+Number(slot),
+start:
+medianNumber(values)
+}))
+.filter(item =>
+Number.isFinite(item.start)
+)
+.sort((a, b) =>
+a.slot - b.slot
+);
+if (observed.length < 2) {
+return slotTimes;
+}
+const stepCandidates = [];
+for (
+let left = 0;
+left < observed.length;
+left++
+) {
+for (
+let right = left + 1;
+right < observed.length;
+right++
+) {
+const slotGap =
+observed[right].slot -
+observed[left].slot;
+const minuteGap =
+observed[right].start -
+observed[left].start;
+if (
+slotGap <= 0 ||
+minuteGap <= 0
+) continue;
+const step =
+minuteGap / slotGap;
+if (
+step >= 20 &&
+step <= 120
+) {
+stepCandidates.push(step);
+}
+}
+}
+const step =
+medianNumber(
+stepCandidates
+);
+if (
+!Number.isFinite(step)
+) return slotTimes;
+const baseCandidates =
+observed.map(item =>
+item.start -
+(item.slot - 1) *
+step
+);
+const base =
+medianNumber(
+baseCandidates
+);
+const duration =
+medianNumber(
+durations
+);
+if (
+!Number.isFinite(base) ||
+!Number.isFinite(duration) ||
+duration <= 0
+) return slotTimes;
+return slotTimes.map(
+(value, index) => {
+if (value) return value;
+const startMinute =
+Math.round(
+base +
+index * step
+);
+const endMinute =
+Math.round(
+startMinute +
+duration
+);
+return formatTimeRange(
+minutesToTime(startMinute),
+minutesToTime(endMinute)
+);
+}
+);
+}
+async function enrichTeacherScheduleFromSystem(
+data
+) {
+if (
+!isTeacher ||
+!data
+) return false;
+const schoolId =
+getCurrentSchoolId();
+if (!schoolId) return false;
+const start =
+parsePageDate(
+document.querySelector(
+'#CurrentWeekDate'
+)?.value ||
+''
+) ||
+parsePageDate(
+document.querySelector(
+'#StartDateSchedule'
+)?.value ||
+''
+);
 if (!start) return false;
-let separator = '/';
-let first = await fetchTeacherCalendarDay(start, separator);
-if (!first) { separator = '-'; first = await fetchTeacherCalendarDay(start, separator); }
-if (!first) return false;
-const days = [first, ...(await Promise.all([1,2,3,4].map(offset => fetchTeacherCalendarDay(addDays(start, offset), separator))))];
-const slotTimes = Array.from({ length: data.periods }, () => '');
+const verificationToken =
+await getTeacherVerificationToken(
+schoolId
+);
+if (!verificationToken) return false;
+const days =
+await Promise.all(
+[0, 1, 2, 3, 4]
+.map(index =>
+fetchTeacherCalendarDay(
+addDays(start, index),
+index,
+schoolId,
+verificationToken
+)
+)
+);
+const slotTimes =
+Array.from(
+{ length: data.periods },
+() => ''
+);
+const observedStarts =
+new Map();
+const durations = [];
 let school = '';
-days.filter(Boolean).forEach(day => {
-(day.TimeTable || []).forEach(item => {
-const slot = Number(item?.SlotNumber) - 1;
-if (slot >= 0 && slot < slotTimes.length && !slotTimes[slot]) slotTimes[slot] = formatTimeRange(extractClock(item?.StartTime), extractClock(item?.EndTime));
-if (!school && item?.SchoolName) school = clean(item.SchoolName);
+days
+.filter(Boolean)
+.forEach(day => {
+(day.TimeTable || [])
+.forEach(item => {
+const slot =
+Number(
+item?.SlotNumber
+);
+if (
+!Number.isFinite(slot) ||
+slot < 1 ||
+slot > slotTimes.length
+) return;
+const startTime =
+extractClock(
+item?.StartTime ||
+item?.stime ||
+''
+);
+const endTime =
+extractClock(
+item?.EndTime ||
+''
+);
+if (
+startTime &&
+endTime
+) {
+const range =
+formatTimeRange(
+startTime,
+endTime
+);
+if (
+range &&
+!slotTimes[slot - 1]
+) {
+slotTimes[slot - 1] =
+range;
+}
+const startMinute =
+timeToMinutes(
+startTime
+);
+let endMinute =
+timeToMinutes(
+endTime
+);
+if (
+Number.isFinite(startMinute)
+) {
+if (
+!observedStarts.has(slot)
+) {
+observedStarts.set(
+slot,
+[]
+);
+}
+observedStarts.get(slot)
+.push(
+startMinute
+);
+}
+if (
+Number.isFinite(startMinute) &&
+Number.isFinite(endMinute)
+) {
+if (
+endMinute <
+startMinute
+) {
+endMinute +=
+24 * 60;
+}
+const duration =
+endMinute -
+startMinute;
+if (
+duration > 0 &&
+duration <= 180
+) {
+durations.push(
+duration
+);
+}
+}
+}
+if (
+!school &&
+item?.SchoolName
+) {
+school =
+clean(
+item.SchoolName
+);
+}
 });
 });
+const completedTimes =
+inferMissingSlotTimes(
+slotTimes,
+observedStarts,
+durations
+);
 let found = 0;
-slotTimes.forEach((value, index) => {
+completedTimes
+.forEach(
+(value, index) => {
 if (!value) return;
-data.times[index] = value;
+data.times[index] =
+value;
 found++;
-});
-data.systemMeta = { ...(data.systemMeta || {}), school };
-if (found) { data.timeSource = 'system'; state.prefs.times = [...data.times]; }
-return found > 0 || Boolean(school);
+}
+);
+data.systemMeta = {
+...(data.systemMeta || {}),
+school:
+school ||
+data.systemMeta?.school ||
+''
+};
+if (found) {
+data.timeSource =
+'system';
+state.prefs.times =
+[...data.times];
+}
+return (
+found > 0 ||
+Boolean(school)
+);
 }
 function getCurrentSchoolId() {
 return clean(
@@ -4108,16 +4443,21 @@ toast(
 );
 return;
 }
-try {
-await enrichRoleIdentityFromSystem(
+const enrichers = [
+enrichRoleIdentityFromSystem(
 state.data
-);
-} catch (error) {
-console.info(
-'[M0HM3D85 Schedule Userscript] school identity auto-detect skipped:',
-error
+)
+];
+if (isTeacher) {
+enrichers.push(
+enrichTeacherScheduleFromSystem(
+state.data
+)
 );
 }
+await Promise.allSettled(
+enrichers
+);
 hydrateDefaults(
 state.data
 );
