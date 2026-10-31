@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const s=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
-assert.match(s,/^\/\/ @version\s+1\.6\.1-beta1$/m);
+assert.match(s,/^\/\/ @version\s+1\.6\.1-beta2$/m);
 new vm.Script(s);
 assert(s.includes('i===0 || posted%20===0 || posted===changes.length'), 'First ten, first twenty, every 20 and last chunk must be verified');
 assert(s.includes('const failedNotes=currentSlice.filter'), 'Notes separately verified');
