@@ -7,7 +7,7 @@ assert.match(source,/^\/\/ @version\s+1\.6\.1-beta3$/m);
 new vm.Script(source,{filename:'projects-grading.user.js'});
 assert(source.includes("const rejected=allRows.filter(r=>!['ready','unchanged'].includes(r.status))"),'All non-ready statuses, including unresolved zero, must block saving');
 assert(source.includes('if(!state.fetchAudit?.complete)'),'Incomplete roster blocks saving');
-assert(source.includes("feedback:r.nextFeedback??''")&&source.includes("const body=group.map"),'Save must use previewed automatic comments');
+assert(source.includes("const expectedFeedback=r.nextFeedback??''")&&source.includes("feedback:expectedFeedback")&&source.includes("const body=group.map"),'Save must use previewed automatic comments');
 assert(source.includes('const {failedGrade,failedNotes}=evaluate(map,currentSlice)')&&source.includes('clean(current.feedback)!==clean(r.feedback)'),'Each sent batch must verify grade and comment independently');
 assert(source.includes('const {failedGrade,failedNotes}=evaluate(map,wants)'),'Final verification must check all file records for grades and comments');
 assert(source.includes('تأكيد رصد '),'Visible grading button must show count');
