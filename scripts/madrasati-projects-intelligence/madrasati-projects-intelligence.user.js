@@ -225,7 +225,15 @@
       status.textContent = busy ? (label || 'جارٍ المعالجة…') : 'جاهز';
       status.classList.toggle('busy', busy);
     }
-    document.querySelectorAll(`#${APP}-panel button, #${APP}-import-modal button`).forEach(btn => btn.disabled = !!busy && !btn.dataset.allowbusy);
+    document.querySelectorAll(`#${APP}-panel button, #${APP}-import-modal button`).forEach(btn => {
+      if(busy){
+        if(btn.dataset.maipWasDisabled===undefined)btn.dataset.maipWasDisabled=btn.disabled?'true':'false';
+        if(!btn.dataset.allowbusy)btn.disabled=true;
+      }else if(btn.dataset.maipWasDisabled!==undefined){
+        btn.disabled=btn.dataset.maipWasDisabled==='true';
+        delete btn.dataset.maipWasDisabled;
+      }
+    });
   };
 
   const findMount = () => {
@@ -991,6 +999,7 @@
   const numberNotes=preview.filter(x=>/^\d+(?:[.,]\d+)?$/.test(x.feedback)).length;
   state.importFeedback=false;
   state.importPreview={fileName:file.name,sheetName,rows:preview,numericFeedbackCount:numberNotes};
+  updateGradeReceipt(null);
   state.importExpanded=true;
   ensureImportModal().hidden=false;
   renderImportPreview();
