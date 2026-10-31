@@ -981,46 +981,85 @@ colorCounts,
 subjectCounts
 };
 }
-function stablePaletteIndex(value, length, salt = '') {
-if (!length) return 0;
-const text = `${salt}|${canonical(value)}`;
-let hash = 2166136261;
-for (let index = 0; index < text.length; index++) {
-hash ^= text.charCodeAt(index);
-hash = Math.imul(hash, 16777619);
-}
-return (hash >>> 0) % length;
-}
-function assignDistinctIndexes(keys, length, salt = '') {
-const normalizedKeys = [...new Set(keys.filter(Boolean).map(key => canonical(key)).filter(Boolean))].sort((a,b) => a.localeCompare(b,'ar',{ numeric:true }));
-const used = new Set();
+function assignDistinctIndexes(keys, length) {
+const normalizedKeys = [
+...new Set(
+keys
+.filter(Boolean)
+.map(key => canonical(key))
+.filter(Boolean)
+)
+].sort(
+(a, b) =>
+a.localeCompare(
+b,
+'ar',
+{ numeric: true }
+)
+);
 const indexes = new Map();
-normalizedKeys.forEach(key => {
-let index = stablePaletteIndex(key, length, salt);
-if (used.size < length) {
-while (used.has(index)) index = (index + 1) % length;
-used.add(index);
+normalizedKeys.forEach(
+(key, index) => {
+indexes.set(
+key,
+index % length
+);
 }
-indexes.set(key, index);
-});
+);
 return indexes;
 }
 function assignColors(keys) {
-const indexes = assignDistinctIndexes(keys, PALETTE.length, 'schedule-color');
-const map = new Map();
-keys.filter(Boolean).forEach(key => {
-const normalized = canonical(key);
-if (!map.has(normalized)) map.set(normalized, PALETTE[indexes.get(normalized) ?? 0]);
-});
+const indexes =
+assignDistinctIndexes(
+keys,
+PALETTE.length
+);
+const map =
+new Map();
+keys
+.filter(Boolean)
+.forEach(
+key => {
+const normalized =
+canonical(key);
+if (!map.has(normalized)) {
+map.set(
+normalized,
+PALETTE[
+indexes.get(normalized) ??
+0
+]
+);
+}
+}
+);
 return map;
 }
 function assignSubjectAccents(subjects) {
-const indexes = assignDistinctIndexes(subjects, SUBJECT_ACCENTS.length, 'subject-accent');
-const map = new Map();
-subjects.filter(Boolean).forEach(subject => {
-const normalized = canonical(subject);
-if (!map.has(normalized)) map.set(normalized, SUBJECT_ACCENTS[indexes.get(normalized) ?? 0]);
-});
+const indexes =
+assignDistinctIndexes(
+subjects,
+SUBJECT_ACCENTS.length
+);
+const map =
+new Map();
+subjects
+.filter(Boolean)
+.forEach(
+subject => {
+const normalized =
+canonical(subject);
+if (!map.has(normalized)) {
+map.set(
+normalized,
+SUBJECT_ACCENTS[
+indexes.get(normalized) ??
+0
+]
+);
+}
+}
+);
 return map;
 }
 function buildPreview() {
