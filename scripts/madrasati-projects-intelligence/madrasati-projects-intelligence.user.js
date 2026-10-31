@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.6.1-beta2
+// @version      1.6.1-beta3
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.1-beta2
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.1-beta3
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -33,7 +33,7 @@
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.6.1-beta2';
+  const VERSION = '1.6.1-beta3';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -710,7 +710,7 @@
   const gradeReceiptHtml = () => {
     const result=state.lastGradeReceipt;
     if(!result)return '';
-    const badge=result.phase==='verified'?'تم التحقق من الحفظ':result.phase==='working'?'جارٍ الرصد والتحقق':'الحفظ غير مكتمل أو غير مؤكد';
+    const badge=result.phase==='verified'?'تم التحقق من الحفظ':result.phase==='working'?'جارٍ الرصد والتحقق':result.phase==='cancelled'?'أُلغي الرصد دون إرسال':'الحفظ غير مكتمل أو غير مؤكد';
     const good=result.phase==='verified';
     const css=good?'background:#effdf4;border-color:#86efac;color:#14532d;':result.phase==='working'?'background:#eff6ff;border-color:#93c5fd;color:#1e3a8a;':'background:#fff7ed;border-color:#fdba74;color:#7c2d12;';
     const examples=(result.problems||[]).slice(0,8).map(x=>'<li>'+esc(x)+'</li>').join('');
@@ -1283,6 +1283,36 @@
  });
 };
 
+  // لا يعتبر عدم وجود درجة قديمة (null) تعارضًا إذا كانت الدرجة الحالية أيضًا غير مرصودة.
+  // يقيّم الهوية والدرجة والملاحظة بصورة مستقلة؛ رقم الطالب الموثوق يبقى المفتاح.
+  const projectGradeEqual = (a,b) => (!Number.isFinite(a)&&!Number.isFinite(b))
+    ||(Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<1e-4);
+  const prepareProjectImportPlan = (allRows,latestById) => {
+    const wants=[],drifts=[];
+    for(const r of allRows){
+      const id=studentIdKey(r.student?.studentId),current=latestById.get(id);
+      if(!id||!current)throw new Error(`لم أجد سجل الطالب ${r.student?.name||r.name||''} برقم مطابق في أحدث قراءة. لم يُرسل شيء.`);
+      if(!Number.isFinite(current.totalGrade)||current.totalGrade<=0||!Number.isFinite(r.grade)
+         ||r.grade<0||r.grade>current.totalGrade)
+        throw new Error(`الدرجة الكلية أو الدرجة المستوردة غير صالحة للطالب ${r.student.name}. لم يُرسل شيء.`);
+      const expectedFeedback=r.nextFeedback??'';
+      const already=projectGradeEqual(current.grade,r.grade)&&clean(current.feedback)===clean(expectedFeedback);
+      const sameSnapshot=projectGradeEqual(current.grade,r.student.grade)
+        &&clean(current.feedback)===clean(r.student.feedback);
+      const changedSincePreview=!sameSnapshot;
+      if(!already && clean(current.feedback)!==clean(expectedFeedback)
+         &&!Object.keys(current.rawFields||{}).some(k=>k.toLowerCase()==='feedback'))
+        throw new Error(`تعذّر تحديد حقل ملاحظات الطالب ${r.student.name} في مدرستي. لم يُرسل شيء. استخدم فحص صفحة الرصد للمراجعة.`);
+      const planned={id,name:r.student.name,grade:r.grade,feedback:expectedFeedback,
+        student:current,status:r.status,already,changedSincePreview,
+        previousGrade:r.student.grade,currentGrade:current.grade,
+        previousFeedback:r.student.feedback,currentFeedback:current.feedback};
+      wants.push(planned);
+      if(changedSincePreview&&!already)drifts.push(planned);
+    }
+    return {wants,drifts,plan:wants.filter(r=>!r.already),already:wants.filter(r=>r.already)};
+  };
+
     const saveImport = async function saveImport(){
  if(state.gradeSaving)return;
  if(!state.fetchAudit?.complete)return toast('لا يمكن تأكيد حفظ الدرجات: عدد الطلاب أو الصفحات غير مكتمل؛ افتح فحص الصفحة لمعرفة السبب.','error');
@@ -1324,25 +1354,44 @@
    const latest=await fetchAllStudents();
    if(!state.fetchAudit?.complete)throw new Error('لم تكتمل كل صفحات الطلاب قبل الرصد؛ لم يتم إرسال طلب حفظ.');
    const lookup=new Map(latest.map(r=>[studentIdKey(r.studentId),r]));
-   const same=(student,row)=>student&&Number.isFinite(student.grade)&&Math.abs(student.grade-row.grade)<1e-4&&clean(student.feedback)===clean(row.nextFeedback);
-   const wants=allRows.map(r=>{
-    const id=studentIdKey(r.student.studentId),current=lookup.get(id);
-    if(!current)throw new Error(`لم أجد سجل الطالب ${r.student.name} في أحدث قراءة. لم يتم الحفظ.`);
-    if(!Number.isFinite(current.totalGrade)||current.totalGrade<=0||r.grade<0||r.grade>current.totalGrade)throw new Error(`تغيرت الدرجة الكلية للطالب ${r.student.name}. لم يتم الحفظ.`);
-    if(!Number.isFinite(r.grade))throw new Error(`درجة غير صالحة للطالب ${r.student.name}.`);
-    if(r.status==='unchanged'&&!same(current,r))throw new Error(`تغيرت بيانات الطالب ${r.student.name} بعد المعاينة. أعد الاستيراد قبل الحفظ.`);
-    if(r.status==='ready'&&!same(current,r)){
-      const samePrior=Number.isFinite(current.grade)&&Number.isFinite(r.student.grade)&&Math.abs(current.grade-r.student.grade)<1e-4
-        &&clean(current.feedback)===clean(r.student.feedback);
-      if(!samePrior)throw new Error(`تغيرت درجة أو ملاحظة الطالب ${r.student.name} منذ المعاينة. أعد تحميل الكشف وملف الدرجات أولًا.`);
-      if(clean(current.feedback)!==clean(r.nextFeedback) && !Object.keys(current.rawFields||{}).some(k=>k.toLowerCase()==='feedback'))
-        throw new Error(`لم يتم التعرف على حقل الملاحظة الحقيقي للطالب ${r.student.name}. لا أستطيع ضمان حفظ التعليق؛ أوقف الرصد قبل الإرسال.`);
-    }
-    return {id,name:r.student.name,grade:r.grade,feedback:r.nextFeedback??'',student:current,status:r.status,already:same(current,r)};
-   });
-   const plan=wants.filter(r=>!r.already);
-   const already=wants.filter(r=>r.already);
+   const {wants,drifts,plan,already}=prepareProjectImportPlan(allRows,lookup);
    counts.unchanged=already.length;
+   counts.target=plan.length;
+   counts.unverified=plan.length;
+   // إذا اختلفت حالة مدرستي أثناء الفترة بين المعاينة والضغط على الرصد:
+   // لا تُرفض هوية الطالب الصحيح تلقائيًا، ولا يُسمح كذلك بالكتابة فوق تحديث حديث دون موافقة.
+   if(drifts.length){
+     const description=drifts.slice(0,8).map(r=>{
+       const score=x=>Number.isFinite(x)?String(x):'غير مرصود';
+       const noteChanged=clean(r.previousFeedback)!==clean(r.currentFeedback)?' · تغير نص الملاحظة':'';
+       return `• ${r.name}: درجة المعاينة ${score(r.previousGrade)}، درجة مدرستي الآن ${score(r.currentGrade)}، الدرجة المطلوبة ${score(r.grade)}${noteChanged}`;
+     }).join('\n');
+     const approvalChanged=await confirmProjectImport(`تنبيه: تغيرت بيانات ${drifts.length} طالبًا منذ المعاينة.
+
+مراجعة أحدث بيانات مدرستي:
+${description}${drifts.length>8?'\n(مع وجود حالات أخرى)':''}
+
+بعض التغييرات قد تكون ناتجة عن عملية حفظ سابقة.
+الطلاب الذين أصبحت درجاتهم وملاحظاتهم مطابقة للمطلوب لن يُعاد إرسالهم.
+الطلاب الذين تغيرت بياناتهم ولم تطابق الملف يحتاجون موافقة إضافية قبل تعديل حالتهم الحالية.
+
+سيُرصد فعليًا ${plan.length} طالبًا، وسيُعدّ ${already.length} طالبًا مطابقًا مسبقًا.
+
+هل توافق على اعتماد درجات وملاحظات الملف لهؤلاء الطلاب بعد اطلاعك على التغييرات؟`);
+     if(!approvalChanged){
+       receipt('cancelled',`أُلغي الرصد: تغيرت بيانات ${drifts.length} طالبًا بعد المعاينة ولم توافق على تعديلها. لم يُرسل أي طلب حفظ.`,drifts.slice(0,8).map(r=>r.name));
+       return;
+     }
+     // بعد التأكيد الإضافي، امنع أي كتابة إذا تغيّرت الخانات مرة أخرى أثناء القرار.
+     const confirmed=await fetchAllStudents();
+     if(!state.fetchAudit?.complete)throw new Error('تعذر إعادة فحص جميع الطلاب بعد التأكيد الإضافي. لم يُرسل شيء.');
+     const confirmedMap=new Map(confirmed.map(r=>[studentIdKey(r.studentId),r]));
+     if(wants.some(r=>{
+       const next=confirmedMap.get(r.id);
+       return !next||!projectGradeEqual(next.grade,r.currentGrade)
+         ||clean(next.feedback)!==clean(r.currentFeedback);
+     }))throw new Error('تغيرت بيانات مدرستي مرة أخرى أثناء التأكيد؛ لم تُرسل درجات. أعد المعاينة للمراجعة.');
+   }
    const evaluate=(map,targets)=>{
     const failedGrade=targets.filter(r=>{const current=map.get(r.id);return !Number.isFinite(current?.grade)||Math.abs(current.grade-r.grade)>1e-4;});
     const failedNotes=targets.filter(r=>{const current=map.get(r.id);return !current||clean(current.feedback)!==clean(r.feedback);});
