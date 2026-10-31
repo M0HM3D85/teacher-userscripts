@@ -1017,17 +1017,192 @@ if (tail && tail.length <= 80 && canonical(tail) !== canonical(label)) return ta
 }
 return '';
 }
+function parseSchoolCardFields(card) {
+const fields = new Map();
+if (!card) return fields;
+const rows = card.querySelectorAll(
+'li, .list-group-item, [class*="info-item"], [class*="detail"]'
+);
+rows.forEach(row => {
+const labelNode =
+row.querySelector(
+'span, strong, b, label'
+);
+if (!labelNode) return;
+const label =
+clean(
+labelNode.textContent || ''
+)
+.replace(/\s*[:：]\s*$/u, '');
+if (!label) return;
+const rowText =
+clean(
+row.textContent || ''
+);
+const labelText =
+clean(
+labelNode.textContent || ''
+);
+const position =
+rowText.indexOf(labelText);
+const value =
+clean(
+position >= 0
+? rowText.slice(
+position +
+labelText.length
+)
+: rowText
+)
+.replace(
+/^[\s:：-]+/u,
+''
+);
+if (value) {
+fields.set(
+canonical(label),
+value
+);
+}
+});
+return fields;
+}
+function getSchoolCardRegion(
+fields
+) {
+const keys = [
+'إدارة التعليم',
+'الإدارة التعليمية',
+'المنطقة التعليمية',
+'مكتب التعليم',
+'المنطقة',
+'الإدارة'
+];
+for (const key of keys) {
+const value =
+fields.get(
+canonical(key)
+);
+if (value) return value;
+}
+for (const [key, value] of fields) {
+if (
+/إدارة.*تعليم|تعليم.*إدارة|مكتب.*تعليم|منطقة.*تعليم/u
+.test(key)
+) {
+return value;
+}
+}
+return '';
+}
+function findDashboardSchoolCard(
+doc,
+schoolId
+) {
+if (!doc || !schoolId) return null;
+const links = [
+...doc.querySelectorAll(
+'a[href]'
+)
+];
+const link =
+links.find(anchor => {
+try {
+const url =
+new URL(
+anchor.getAttribute('href'),
+location.origin
+);
+return (
+url.pathname.includes(
+'/' + schoolId
+) ||
+url.searchParams.get(
+'SchoolId'
+) === schoolId ||
+url.searchParams.get(
+'schoolId'
+) === schoolId
+);
+} catch (_) {
+return false;
+}
+});
+return (
+link?.closest('.card') ||
+link?.closest('.card-body') ||
+link?.closest('[class*="card"]') ||
+link?.parentElement ||
+null
+);
+}
 function parseTeacherDashboardContext(doc, schoolId) {
 if (!doc || !schoolId) return {};
-const links = [...doc.querySelectorAll('a[href*="ChangeUserTypeToTeacherFromParent"]')];
-const link = links.find(anchor => String(anchor.href || '').includes('/' + schoolId));
+const links = [
+...doc.querySelectorAll(
+'a[href*="ChangeUserTypeToTeacherFromParent"]'
+)
+];
+const link =
+links.find(anchor =>
+String(
+anchor.href || ''
+).includes(
+'/' + schoolId
+)
+);
 if (!link) return {};
 let school = '';
-try { school = new URL(link.href, location.origin).searchParams.get('Name') || ''; } catch (_) {}
-const card = link.closest('[class*="col-lg-6"]') || link.parentElement;
-const text = clean(card?.textContent || '');
-const stageMatch = text.match(/المراحل الدراسية\s*:\s*(.*?)\s+قادة المدرسة/u);
-return { school: clean(school), stage: clean(stageMatch?.[1] || '') };
+try {
+school =
+new URL(
+link.href,
+location.origin
+)
+.searchParams.get(
+'Name'
+) || '';
+} catch (_) {}
+const card =
+findDashboardSchoolCard(
+doc,
+schoolId
+) ||
+link.closest(
+'[class*="col-lg-6"]'
+) ||
+link.parentElement;
+const fields =
+parseSchoolCardFields(
+card
+);
+const stage =
+fields.get(
+canonical(
+'المراحل الدراسية'
+)
+) || '';
+const region =
+getSchoolCardRegion(
+fields
+);
+if (!school) {
+school =
+clean(
+card?.querySelector(
+'h5, .card-title'
+)?.textContent ||
+''
+);
+}
+return {
+school:
+clean(school),
+stage:
+clean(stage),
+region:
+clean(region)
+};
 }
 function parseStudentDashboardContext(doc, schoolId, userId) {
 if (!doc || !schoolId) return {};
@@ -1045,7 +1220,35 @@ const text = clean(link.textContent || '');
 const nameMatch = text.match(/^(.*?)\s+المدرسة\s*:/u);
 const schoolMatch = text.match(/المدرسة\s*:\s*(.*?)\s+الفصل\s*:/u);
 const classMatch = text.match(/الفصل\s*:\s*(.*?)(?:\s+بيانات|$)/u);
-return { name: clean(nameMatch?.[1] || ''), school: clean(schoolMatch?.[1] || ''), className: clean(classMatch?.[1] || '') };
+const card =
+findDashboardSchoolCard(
+doc,
+schoolId
+);
+const fields =
+parseSchoolCardFields(
+card
+);
+return {
+name:
+clean(
+nameMatch?.[1] || ''
+),
+school:
+clean(
+schoolMatch?.[1] || ''
+),
+className:
+clean(
+classMatch?.[1] || ''
+),
+region:
+clean(
+getSchoolCardRegion(
+fields
+)
+)
+};
 }
 function parseStudentHomeContext(doc) {
 if (!doc) return {};
