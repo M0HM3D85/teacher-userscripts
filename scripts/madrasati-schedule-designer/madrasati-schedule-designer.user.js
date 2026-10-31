@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         مدرستي - مصمم الجدول الدراسي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      2.0.0
-// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع المعاينة والتخصيص والأوقات الذكية والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.
+// @version      2.1.0
+// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع الإحصائيات والاحتواء الذكي والأوقات والطباعة/PDF وPNG وExcel والنسخ.
 // @author       Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -18,8 +18,8 @@
 /*
 =========================================================================
 مدرستي - مصمم الجدول الدراسي
-إصدار Tampermonkey : 2.0.0
-متوافق وظيفيًا مع إضافة المتصفح: 0.2.0
+إصدار Tampermonkey : 2.1.0
+مبني على أساس الإصدار المتوافق مع إضافة المتصفح: 0.2.0
 تصميم وتطوير: Mohammed Almalki (M0HM3D85)
 X / Twitter : https://x.com/M0HM3D85
 Snapchat    : https://www.snapchat.com/add/M0HM3D85
@@ -110,6 +110,8 @@ showLegend: true,
 showSecondary: true,
 showSubjectAccent: true,
 showBrandLogo: true,
+showStats: true,
+fitMode: 'auto',
 dense: false,
 monochrome: false,
 remember: true,
@@ -756,68 +758,78 @@ value
 );
 return result;
 }
-function assignColors(
-keys
-) {
-const map =
-new Map();
-keys
-.filter(
-Boolean
-)
-.forEach(
-key => {
-const normalized =
-canonical(
-key
+function computeScheduleStats(data) {
+const colorCounts = new Map();
+const subjectCounts = new Map();
+const classes = new Set();
+const teachers = new Set();
+const daily = [];
+let total = 0;
+data.days.forEach(day => {
+let dayTotal = 0;
+day.lessons.forEach(lesson => {
+if (!lesson.subject) return;
+total++;
+dayTotal++;
+const subjectKey = canonical(lesson.subject);
+if (subjectKey) subjectCounts.set(subjectKey, (subjectCounts.get(subjectKey) || 0) + 1);
+if (lesson.className) classes.add(canonical(lesson.className));
+if (lesson.teacher) teachers.add(canonical(lesson.teacher));
+const colorKey = canonical(isTeacher ? lesson.className : lesson.subject);
+if (colorKey) colorCounts.set(colorKey, (colorCounts.get(colorKey) || 0) + 1);
+});
+daily.push({ name: day.name, count: dayTotal });
+});
+const busiest = daily.reduce(
+(best, current) => current.count > best.count ? current : best,
+{ name: '', count: 0 }
 );
-if (
-!map.has(
-normalized
-)
-) {
+return {
+total,
+free: Math.max(0, data.days.length * data.periods - total),
+subjects: subjectCounts.size,
+classes: classes.size,
+teachers: teachers.size,
+busiestDay: busiest.name,
+busiestCount: busiest.count,
+colorCounts,
+subjectCounts
+};
+}
+function stablePaletteIndex(value, length, salt = '') {
+if (!length) return 0;
+const text = `${salt}|${canonical(value)}`;
+let hash = 2166136261;
+for (let index = 0; index < text.length; index++) {
+hash ^= text.charCodeAt(index);
+hash = Math.imul(hash, 16777619);
+}
+return (hash >>> 0) % length;
+}
+function assignColors(keys) {
+const map = new Map();
+keys.filter(Boolean).forEach(key => {
+const normalized = canonical(key);
+if (!map.has(normalized)) {
 map.set(
 normalized,
-PALETTE[
-map.size %
-PALETTE.length
-]
+PALETTE[stablePaletteIndex(normalized, PALETTE.length, 'schedule-color')]
 );
 }
-}
-);
+});
 return map;
 }
-function assignSubjectAccents(
-subjects
-) {
-const map =
-new Map();
-subjects
-.filter(
-Boolean
-)
-.forEach(
-subject => {
-const normalized =
-canonical(
-subject
-);
-if (
-!map.has(
-normalized
-)
-) {
+function assignSubjectAccents(subjects) {
+const map = new Map();
+subjects.filter(Boolean).forEach(subject => {
+const normalized = canonical(subject);
+if (!map.has(normalized)) {
 map.set(
 normalized,
-SUBJECT_ACCENTS[
-map.size %
-SUBJECT_ACCENTS.length
-]
+SUBJECT_ACCENTS[stablePaletteIndex(normalized, SUBJECT_ACCENTS.length, 'subject-accent')]
 );
 }
-}
-);
+});
 return map;
 }
 function buildPreview() {
@@ -858,6 +870,7 @@ subjects
 const multipleTeacherSubjects =
 isTeacher &&
 subjects.length > 1;
+const stats = computeScheduleStats(data);
 const metaItems = [];
 if (
 prefs.name
@@ -944,6 +957,7 @@ prefs.monochrome
 "
 ></i>
 ${esc(key)}
+${prefs.showStats ? `<small class="m0-legend-count">(${stats.colorCounts.get(canonical(key)) || 0})</small>` : ''}
 </span>
 `;
 }
@@ -981,6 +995,17 @@ ${esc(subject)}
 )
 .join('')
 }
+</div>
+`
+: '';
+const statsHtml =
+prefs.showStats
+? `
+<div class="m0-stats">
+<div class="m0-stat-card"><b>${stats.total}</b><small>إجمالي الحصص</small></div>
+<div class="m0-stat-card"><b>${isTeacher ? stats.classes : stats.subjects}</b><small>${isTeacher ? 'الفصول' : 'المواد'}</small></div>
+<div class="m0-stat-card"><b>${isTeacher ? stats.subjects : stats.teachers}</b><small>${isTeacher ? 'المواد' : 'المعلمون'}</small></div>
+<div class="m0-stat-card"><b>${isStudent ? stats.free : esc(stats.busiestDay || '—')}</b><small>${isStudent ? 'الفراغات الأسبوعية' : (stats.busiestCount ? `الأكثر ازدحامًا · ${stats.busiestCount} حصة` : 'الأكثر ازدحامًا')}</small></div>
 </div>
 `
 : '';
@@ -1176,11 +1201,8 @@ return `
 id="m0-print-area"
 class="
 m0-sheet
-${
-prefs.dense
-? 'dense'
-: ''
-}
+${prefs.dense ? 'dense' : ''}
+${prefs.fitMode === 'one-page' ? ' fit-one-page' : prefs.fitMode === 'comfortable' ? ' fit-comfortable' : ' fit-auto'}
 "
 >
 <div class="m0-topbar"></div>
@@ -1257,6 +1279,7 @@ ${subjectLegend}
 `
 : ''
 }
+${statsHtml}
 <div class="m0-table-wrap">
 <table class="m0-schedule-table">
 <thead>
@@ -1817,6 +1840,31 @@ font-size:11px;
 #${APP_ID} .m0-sheet.dense .m0-lesson-secondary {
 font-size:9px;
 }
+#${APP_ID} .m0-legend-count { font-size:8.5px; font-weight:800; color:#8B98A6; }
+#${APP_ID} .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:8px 0 11px; }
+#${APP_ID} .m0-stat-card { min-height:48px; display:flex; align-items:center; justify-content:center; gap:7px; padding:7px 9px; border:1px solid #E0EAED; border-radius:11px; background:#F8FBFC; color:#486271; text-align:center; }
+#${APP_ID} .m0-stat-card b { font-size:16px; color:#173F5F; }
+#${APP_ID} .m0-stat-card small { font-size:9px; font-weight:800; line-height:1.35; }
+#${APP_ID} .m0-fit-control { grid-column:1/-1; display:grid; grid-template-columns:1fr 145px; align-items:center; gap:10px; padding:9px; border:1px solid #DCE9EC; border-radius:10px; background:#F8FCFC; }
+#${APP_ID} .m0-fit-control b,#${APP_ID} .m0-fit-control small { display:block; }
+#${APP_ID} .m0-fit-control b { color:#355061; font-size:10.5px; margin-bottom:2px; }
+#${APP_ID} .m0-fit-control small { color:#8C9AA3; font-size:8.8px; line-height:1.45; }
+#${APP_ID} .m0-fit-control select { width:100%; border:1px solid #D7E5E8; border-radius:8px; padding:7px 8px; background:#fff; color:#244650; font:inherit; font-size:9.5px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-sheet-header,#${APP_ID} .m0-sheet.fit-auto-tight .m0-sheet-header,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-sheet-header,#${APP_ID} .m0-sheet.fit-one-page .m0-sheet-header { margin-bottom:10px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-schedule-table,#${APP_ID} .m0-sheet.fit-auto-tight .m0-schedule-table,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-schedule-table,#${APP_ID} .m0-sheet.fit-one-page .m0-schedule-table { border-spacing:4px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-schedule-table td { height:78px; }
+#${APP_ID} .m0-sheet.fit-auto-compact .m0-lesson-card { min-height:74px; padding:8px 5px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-schedule-table td { height:70px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-card { min-height:66px; padding:6px 5px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-subject { font-size:11px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-lesson-secondary { font-size:9px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra,#${APP_ID} .m0-sheet.fit-one-page { padding-top:25px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-schedule-table td,#${APP_ID} .m0-sheet.fit-one-page .m0-schedule-table td { height:64px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-card,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-card { min-height:60px; padding:5px 4px; gap:4px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-subject,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-subject { font-size:10.3px; }
+#${APP_ID} .m0-sheet.fit-auto-ultra .m0-lesson-secondary,#${APP_ID} .m0-sheet.fit-one-page .m0-lesson-secondary { font-size:8.6px; }
+#${APP_ID} .m0-sheet.fit-auto-tight .m0-stats,#${APP_ID} .m0-sheet.fit-auto-ultra .m0-stats,#${APP_ID} .m0-sheet.fit-one-page .m0-stats { margin:5px 0 7px; }
+
 #${OPEN_ID} {
 position:fixed;
 left:22px;
@@ -2114,6 +2162,25 @@ color:#586579;
 font-size:6.4pt;
 border-right:1mm solid #A8C7D0;
 }
+.m0-legend-count { font-size:5.8pt; font-weight:800; color:#8B98A6; }
+.m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1.5mm; margin:1mm 0 2mm; }
+.m0-stat-card { min-height:9mm; display:flex; align-items:center; justify-content:center; gap:1.5mm; padding:1mm 1.5mm; border:1px solid #E0EAED; border-radius:2mm; background:#F8FBFC; color:#486271; text-align:center; }
+.m0-stat-card b { font-size:9pt; color:#173F5F; }
+.m0-stat-card small { font-size:5.8pt; font-weight:800; }
+.fit-auto-compact .m0-schedule-table,.fit-auto-tight .m0-schedule-table,.fit-auto-ultra .m0-schedule-table,.fit-one-page .m0-schedule-table { border-spacing:.9mm; }
+.fit-auto-compact .m0-schedule-table td { height:16mm; }
+.fit-auto-compact .m0-lesson-card { min-height:15mm; padding:1.6mm 1mm; }
+.fit-auto-tight .m0-schedule-table td { height:14.5mm; }
+.fit-auto-tight .m0-lesson-card { min-height:13.5mm; padding:1.2mm .9mm; }
+.fit-auto-tight .m0-lesson-subject { font-size:6.7pt; }
+.fit-auto-tight .m0-lesson-secondary { font-size:5.7pt; }
+.fit-auto-ultra .m0-sheet-header,.fit-one-page .m0-sheet-header { margin-bottom:1.5mm; }
+.fit-auto-ultra .m0-schedule-table td,.fit-one-page .m0-schedule-table td { height:13mm; }
+.fit-auto-ultra .m0-lesson-card,.fit-one-page .m0-lesson-card { min-height:12mm; padding:1mm .8mm; gap:.6mm; }
+.fit-auto-ultra .m0-lesson-subject,.fit-one-page .m0-lesson-subject { font-size:6.2pt; }
+.fit-auto-ultra .m0-lesson-secondary,.fit-one-page .m0-lesson-secondary { font-size:5.3pt; }
+.fit-auto-tight .m0-stats,.fit-auto-ultra .m0-stats,.fit-one-page .m0-stats { margin:.7mm 0 1.2mm; }
+
 .m0-footer {
 margin-top:2.5mm;
 padding-top:1.5mm;
@@ -2878,6 +2945,10 @@ placeholder="ملاحظة اختيارية تظهر أسفل الجدول"
 <span><b>مفتاح الألوان</b><small>إظهار دليل الألوان أسفل العنوان</small></span>
 </label>
 <label class="m0-check">
+<input type="checkbox" data-check="showStats" ${state.prefs.showStats !== false ? 'checked' : ''}>
+<span><b>ملخص الجدول</b><small>إجمالي الحصص ومؤشرات سريعة مناسبة للدور</small></span>
+</label>
+<label class="m0-check">
 <input type="checkbox" data-check="showSecondary" ${state.prefs.showSecondary ? 'checked' : ''}>
 <span><b>${isTeacher ? 'الفصل داخل الحصة' : 'اسم المعلم داخل الحصة'}</b><small>إظهار المعلومة الثانوية داخل كل حصة</small></span>
 </label>
@@ -2936,6 +3007,14 @@ isTeacher
 <i>⌄</i>
 </summary>
 <div class="m0-accordion-body m0-check-grid">
+<label class="m0-fit-control">
+<span><b>احتواء صفحة A4</b><small>يضبط كثافة الجدول تلقائيًا عند الطباعة والتصدير.</small></span>
+<select data-pref="fitMode">
+<option value="auto" ${(state.prefs.fitMode || 'auto') === 'auto' ? 'selected' : ''}>تلقائي (موصى به)</option>
+<option value="comfortable" ${state.prefs.fitMode === 'comfortable' ? 'selected' : ''}>مريح</option>
+<option value="one-page" ${state.prefs.fitMode === 'one-page' ? 'selected' : ''}>صفحة واحدة</option>
+</select>
+</label>
 <label class="m0-check">
 <input type="checkbox" data-check="dense" ${state.prefs.dense ? 'checked' : ''}>
 <span><b>وضع مضغوط</b><small>تقليل المسافات لعرض جدول أكثر كثافة</small></span>
@@ -3027,6 +3106,29 @@ state.prefs.times = [
 state.prefs.logoDataUrl =
 state.logoDataUrl;
 }
+function applySmartFit(scope = document) {
+const sheet =
+scope.querySelector?.('#m0-print-area') ||
+document.querySelector(`#${APP_ID} #m0-print-area`);
+if (!sheet) return;
+sheet.classList.remove(
+'fit-auto-compact',
+'fit-auto-tight',
+'fit-auto-ultra'
+);
+const mode = state.prefs.fitMode || 'auto';
+if (mode !== 'auto') return;
+const targetHeight = 790;
+for (const level of [
+'fit-auto-compact',
+'fit-auto-tight',
+'fit-auto-ultra'
+]) {
+if (sheet.scrollHeight <= targetHeight) break;
+sheet.classList.add(level);
+void sheet.offsetHeight;
+}
+}
 function renderPreview() {
 const preview =
 document.querySelector(
@@ -3035,6 +3137,7 @@ document.querySelector(
 if (preview) {
 preview.innerHTML =
 buildPreview();
+requestAnimationFrame(() => applySmartFit(preview));
 }
 }
 function toast(
@@ -3354,7 +3457,7 @@ root.addEventListener(
 event => {
 if (
 event.target.matches(
-'[data-check]'
+'[data-check], [data-pref="fitMode"]'
 )
 ) {
 readControls(root);
@@ -3714,6 +3817,7 @@ BODY_LOCK_CLASS
 bindDesignerEvents(
 root
 );
+requestAnimationFrame(() => applySmartFit(root));
 let onboarded = false;
 try {
 onboarded =
@@ -3825,6 +3929,14 @@ ${clone.outerHTML}
 `
 );
 doc.close();
+try {
+if (doc.fonts?.ready) {
+await Promise.race([
+doc.fonts.ready,
+new Promise(resolve => setTimeout(resolve, 1200))
+]);
+}
+} catch (_) {}
 await new Promise(
 resolve => {
 setTimeout(
@@ -4130,6 +4242,7 @@ toast(
 }
 }
 function exportExcel() {
+const stats = computeScheduleStats(state.data);
 const header = `
 <tr>
 <th>
@@ -4250,6 +4363,22 @@ state.prefs.title ||
 )
 }
 </h2>
+${state.prefs.showStats !== false ? `
+<table style="margin-bottom:12px">
+<tr>
+<th>إجمالي الحصص</th>
+<th>${isTeacher ? 'الفصول' : 'المواد'}</th>
+<th>${isTeacher ? 'المواد' : 'المعلمون'}</th>
+<th>${isTeacher ? 'الأكثر ازدحامًا' : 'الفراغات'}</th>
+</tr>
+<tr>
+<td>${stats.total}</td>
+<td>${isTeacher ? stats.classes : stats.subjects}</td>
+<td>${isTeacher ? stats.subjects : stats.teachers}</td>
+<td>${isTeacher ? esc(stats.busiestDay || '') : stats.free}</td>
+</tr>
+</table>
+` : ''}
 <table>
 ${header}
 ${body}
@@ -4473,6 +4602,13 @@ ctx.restore();
 console.warn('[M0HM3D85 Schedule Userscript] logo render skipped:', error);
 }
 }
+async function waitForDocumentFonts(timeout = 1600) {
+if (!document.fonts?.ready) return;
+await Promise.race([
+document.fonts.ready.catch(() => null),
+new Promise(resolve => setTimeout(resolve, timeout))
+]);
+}
 async function renderPrintableToCanvas(source, scale = 2) {
 const rootRect = source.getBoundingClientRect();
 const width = Math.max(1, Math.ceil(source.offsetWidth || rootRect.width));
@@ -4490,6 +4626,7 @@ const boxSelectors = [
 '.m0-kicker',
 '.m0-week-box',
 '.m0-legend-item i',
+'.m0-stat-card',
 '.m0-schedule-table thead th',
 '.m0-day-cell',
 '.m0-lesson-card',
@@ -4512,6 +4649,8 @@ const textSelectors = [
 '.m0-week-box strong',
 '.m0-legend-title',
 '.m0-legend-item',
+'.m0-stat-card b',
+'.m0-stat-card small',
 '.m0-period-title',
 '.m0-period-time',
 '.m0-day-cell span',
@@ -4531,6 +4670,7 @@ const source = document.querySelector(`#${APP_ID} #m0-print-area`);
 if (!source) return;
 try {
 toast('جارٍ إنشاء صورة PNG...');
+await waitForDocumentFonts();
 const canvas = await renderPrintableToCanvas(source, 2);
 const blob = await new Promise((resolve, reject) => {
 canvas.toBlob(result => {
