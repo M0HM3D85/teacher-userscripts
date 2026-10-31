@@ -2015,7 +2015,6 @@ data.times[index]
 : 'empty'
 }
 "
-dir="ltr"
 contenteditable="true"
 data-time-index="${index}"
 title="اضغط لتعديل الوقت"
@@ -2751,8 +2750,7 @@ color:#DCEAF2;
 font-weight:500;
 outline:none;
 min-height:13px;
-direction:ltr;
-unicode-bidi:isolate;
+direction:rtl;
 text-align:center;
 }
 #${APP_ID} .m0-period-time.empty {
@@ -3163,8 +3161,7 @@ font-weight:900;
 font-size:6.2pt;
 margin-top:1mm;
 color:#DCEAF2;
-direction:ltr;
-unicode-bidi:isolate;
+direction:rtl;
 text-align:center;
 }
 .m0-period-time.empty {
