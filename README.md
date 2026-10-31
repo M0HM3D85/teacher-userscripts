@@ -15,12 +15,12 @@
 
 © 2026 Mohammed Almalki (M0HM3D85) — جميع الحقوق محفوظة.
 
-## الإصدارات المستقرة لمدرستي — 2026-10-27
+## الإصدارات المستقرة لمدرستي — آخر تحديث 2026-10-31
 
 الواجبات والمشاريع **سكريبتان منفصلان**، لكل منهما كود تثبيت مستقل، ويمكن تفعيلهما معًا على الصفحات المخصصة لكل قسم:
 
 - **[مدير الواجبات الذكي v1.4.8 (مستقر)](https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-assignment-intelligence/madrasati-assignment-intelligence.user.js)** — الواجبات واستيراد درجاتها والبحث والتقارير؛ كوده الوظيفي معتمد دون تغييرات.
-- **[مدير الأنشطة والمشاريع الذكي v1.6.0 (مستقر)](https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js)** — الأنشطة والمشاريع واستيرادها والتقارير والتمييز بين التسليم والرصد والملاحظات التلقائية.
+- **[مدير الأنشطة والمشاريع الذكي v1.6.1 (مستقر)](https://raw.githubusercontent.com/M0HM3D85/teacher-userscripts/main/scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js)** — الأنشطة والمشاريع واستيرادها والتقارير والتمييز بين التسليم والرصد والملاحظات التلقائية.
 
 **مهم:** النسخة الموحدة `v2.0.0-beta6` مؤرشفة، ولا يُنصح بتفعيلها مع النسختين المنفصلتين.
 
