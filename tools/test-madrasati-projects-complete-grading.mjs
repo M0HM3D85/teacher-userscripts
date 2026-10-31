@@ -39,7 +39,7 @@ const makeServer=()=>{
  for(const r of fileRows){m.set(r.student.studentId,{...r.student,rawFields:{...r.student.rawFields}});}
  return m;
 };
-const createHarness=({failNotes=false,incomplete=false,reject=false}={})=>{
+const createHarness=({failNotes=false,incomplete=false,reject=false,approvals=[]}={})=>{
  const server=makeServer(),state={students:[...server.values()],fetchAudit:{complete:!incomplete,expected:25},
   importPreview:{rows:fileRows.map(r=>({...r,student:{...r.student}}))},activityTitle:'مشروع الاختبار',gradeSaving:false,lastGradeReceipt:null};
  if(reject)state.importPreview.rows[0].status='invalid';
@@ -61,7 +61,7 @@ const createHarness=({failNotes=false,incomplete=false,reject=false}={})=>{
  const factory=new Function('state','studentIdKey','toast','confirmProjectImport','setBusy','updateGradeReceipt',
   'fetchAllStudents','postProjectRows','syncNativeVerifiedRows','renderGradeBody','document','APP','clean','prepareProjectImportPlan',
   saveCode+'return saveImport;');
- const save=factory(state,studentIdKey,fakeToast,async()=>{log.confirmation++;return true;},
+ const save=factory(state,studentIdKey,fakeToast,async()=>{log.confirmation++;return approvals.length?approvals.shift():true;},
   (v,text)=>log.busy.push({v,text}),v=>{state.lastGradeReceipt=v;log.receipts.push(JSON.parse(JSON.stringify(v)));},
   fetchAllStudents,postProjectRows,syncNativeVerifiedRows,()=>{log.render++;},doc,'MAIP',clean,prepareProjectImportPlan);
  return {state,log,save,server};
@@ -84,6 +84,36 @@ assert.equal(success.log.confirmation,1);
 assert.equal(success.log.busy.at(-1).v,false,'Busy state must clear');
 assert(success.log.receipts.some(r=>r.phase==='working'),'Show work in progress, not only a fleeting toast');
 assert(success.log.sync>=2,'Mirror verified data into the currently visible native inputs');
+
+// File target and student identity remain valid although the platform changed
+// a remark since preview (for example after an earlier partial operation).
+const stale=createHarness();
+stale.server.get('1001').feedback='ملاحظة خارجية أُضيفت بعد المعاينة';
+await stale.save();
+assert.equal(stale.log.confirmation,2,'Genuine platform drift requires second explicit teacher approval');
+assert.equal(stale.state.lastGradeReceipt.phase,'verified','Approved reconciliation may proceed when all IDs match');
+assert.equal(stale.server.get('1001').feedback,'الملاحظة الجديدة','Updated note follows spreadsheet's intended feedback');
+
+const declined=createHarness({approvals:[true,false]});
+declined.server.get('1001').feedback='تغيير من المعلم بعد المعاينة';
+await declined.save();
+assert.equal(declined.log.confirmation,2,'Teacher must review changed platform grade/comment');
+assert.equal(declined.log.posts.length,0,'Declining reconciliation must make zero writes');
+assert.equal(declined.state.lastGradeReceipt.phase,'cancelled');
+
+const preSaved=createHarness();
+preSaved.server.get('1001').feedback='الملاحظة الجديدة';
+await preSaved.save();
+assert.equal(preSaved.log.confirmation,1,'When server already equals target, skip without second confirmation');
+assert.equal(preSaved.state.lastGradeReceipt.counts.unchanged,6,'Already saved row is counted, not rejected');
+assert.equal(preSaved.state.lastGradeReceipt.counts.sent,19);
+
+const blankGrade=createHarness();
+blankGrade.server.get('1001').grade=null;
+blankGrade.state.importPreview.rows[0].student.grade=null;
+await blankGrade.save();
+assert.equal(blankGrade.log.confirmation,1,'Both prior and current blank grade are identical, not a false conflict');
+assert.equal(blankGrade.state.lastGradeReceipt.phase,'verified');
 
 const failure=createHarness({failNotes:true});
 await failure.save();
