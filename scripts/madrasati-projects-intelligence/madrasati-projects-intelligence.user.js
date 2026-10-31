@@ -91,6 +91,8 @@
     importFeedback: false,
     autoFeedback: true,
     zeroDecisions: {},
+    gradeSaving: false,
+    lastGradeReceipt: null,
     activityTitle: '',
     totalExpected: 0,
     studentPage: 1,
@@ -695,12 +697,42 @@
     document.querySelectorAll(`#${APP}-panel .${APP}-tab`).forEach(el=>{const selected=el.dataset.view===view;el.classList.toggle('active',selected);el.setAttribute('aria-selected',String(selected));});
   };
 
+
+  // تبقى النتيجة ظاهرة في نافذة الاستيراد وفي كشف المشروع حتى بعد انتهاء التنبيه العابر.
+  const gradeReceiptHtml = () => {
+    const result=state.lastGradeReceipt;
+    if(!result)return '';
+    const badge=result.phase==='verified'?'تم التحقق من الحفظ':result.phase==='working'?'جارٍ الرصد والتحقق':'الحفظ غير مكتمل أو غير مؤكد';
+    const good=result.phase==='verified';
+    const css=good?'background:#effdf4;border-color:#86efac;color:#14532d;':result.phase==='working'?'background:#eff6ff;border-color:#93c5fd;color:#1e3a8a;':'background:#fff7ed;border-color:#fdba74;color:#7c2d12;';
+    const examples=(result.problems||[]).slice(0,8).map(x=>'<li>'+esc(x)+'</li>').join('');
+    const count=result.counts||{};
+    return '<section role="status" aria-live="polite" style="border:2px solid;padding:13px;border-radius:11px;margin:11px 0;line-height:2;'+css+'">'+
+      '<b style="font-size:14px">'+esc(badge)+'</b>'+
+      '<div>'+esc(result.message||'')+'</div>'+
+      '<div>صفوف ملف الاستيراد: <b>'+Number(count.file||0)+'</b> · مطابقة مسبقًا: <b>'+Number(count.unchanged||0)+'</b> · مطلوب تحديثهم: <b>'+Number(count.target||0)+'</b></div>'+
+      '<div>أُرسلت سجلات: <b>'+Number(count.sent||0)+'</b> · درجات تأكدت: <b>'+Number(count.verifiedGrades||0)+'</b> · ملاحظات تأكدت: <b>'+Number(count.verifiedNotes||0)+'</b> · غير مؤكدة: <b>'+Number(count.unverified||0)+'</b></div>'+
+      (examples?'<b>تفاصيل تحتاج مراجعة:</b><ul>'+examples+'</ul>':'')+
+      (result.phase==='verified'?'<div><b>هذه النتيجة موثقة بإعادة قراءة الدرجات والملاحظات من مدرستي.</b></div>':
+        result.phase==='working'?'<div>لا تغلق الصفحة ولا تبدأ رصدًا جديدًا أثناء التحقق.</div>':
+        '<div><b>لا تكرر الحفظ تلقائيًا؛ راجع السجلات غير المؤكدة أولًا.</b></div>')+
+    '</section>';
+  };
+  const updateGradeReceipt = receipt => {
+    state.lastGradeReceipt=receipt;
+    for(const id of [APP+'-grade-result',APP+'-modal-grade-result']){
+      const host=document.getElementById(id);
+      if(host)host.innerHTML=gradeReceiptHtml();
+    }
+  };
+
   const renderGradeBody = () => {
     const body=document.getElementById(`${APP}-body`);
     if(!body)return;
     const classes=classOptions();
     if(state.filter.className!=='all'&&!classes.includes(state.filter.className))state.filter.className='all';
     body.innerHTML=`
+      <div id="${APP}-grade-result">${gradeReceiptHtml()}</div>
       <div id="${APP}-dynamic-metrics" class="${APP}-metrics"></div>
       <div class="${APP}-note"><b>${esc(state.activityTitle)}</b><span id="${APP}-filter-context"></span></div>
       <div class="${APP}-searchline"><input id="${APP}-search" type="search" autocomplete="off" placeholder="بحث فوري باسم الطالب أو الرقم أو الفصل أو الملاحظة…" aria-label="بحث في طلاب النشاط" value="${esc(state.filter.query)}"><span id="${APP}-shown-count" class="${APP}-count"></span><button id="${APP}-clear-search" class="${APP}-btn gray" type="button">مسح البحث</button></div>
@@ -772,11 +804,12 @@
  modal.setAttribute('aria-label','استيراد درجات الأنشطة والمشاريع');
  modal.innerHTML=`<div class="${APP}-dialog" dir="rtl">
    <div class="${APP}-dialog-head">
-    <div><div class="${APP}-title">استيراد درجات Excel / CSV</div><div class="${APP}-sub">مطابقة آمنة · معاينة مفصلة · نسخة احتياطية · تحقق من الحفظ</div></div>
+    <div><div class="${APP}-title">استيراد درجات Excel / CSV</div><div class="${APP}-sub">مطابقة آمنة · معاينة مفصلة · تحقق من الدرجات والملاحظات دون تنزيل تلقائي</div></div>
     <button id="${APP}-modal-close" class="${APP}-btn gray" type="button" aria-label="إغلاق نافذة الاستيراد">إغلاق ×</button>
    </div>
    <div class="${APP}-note"><b>قبل الحفظ:</b> الأولوية لرقم الطالب المؤكد، ثم الاسم والفصل عند عدم وجود رقم مطابق. يُرفض الاسم المكرر والتعارض المؤكد بين الهويات. جميع درجات الصفر تُعرض صراحة في المعاينة.</div>
    <div class="${APP}-drop" style="margin:14px 0"><input id="${APP}-file" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><b>اختر ملف الدرجات أو اسحبه هنا</b><span>Excel أو CSV — لن يُحفظ شيء قبل المعاينة والتأكيد</span></div>
+   <div id="${APP}-modal-grade-result">${gradeReceiptHtml()}</div>
    <div id="${APP}-import-preview" aria-live="polite"></div>
  </div>`;
  document.body.appendChild(modal);
@@ -999,7 +1032,7 @@
  const notesOnly=ready.filter(r=>Number.isFinite(r.student?.grade)&&Math.abs(r.student.grade-r.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length;
  const firstPage=rows.slice(0,20);
  const firstPageNotesOnly=firstPage.filter(r=>r.status==='ready'&&Number.isFinite(r.student?.grade)&&Math.abs(r.grade-r.student.grade)<1e-6&&clean(r.student.feedback)!==clean(r.nextFeedback)).length;
- const canApply=!!state.fetchAudit?.complete&&ready.length>0&&pending.length===0;
+ const canApply=!!state.fetchAudit?.complete&&!state.gradeSaving&&ready.length>0&&pending.length===0&&rejected.length===0;
  const limits=[...new Set(state.students.map(r=>r.totalGrade).filter(x=>Number.isFinite(x)&&x>0))];
  const val=r=>Number.isFinite(r)?fmt(r):'—';
  host.innerHTML=`
@@ -1009,6 +1042,7 @@
   ${numericNotes?`<div class="${APP}-note">ملاحظة: يحتوي الملف على ${numericNotes} قيمة رقمية في عمود الملاحظات. لا تُستعمل الأرقام وحدها بوصفها تعليقًا تربويًا.</div>`:''}
   <div class="${APP}-note"><label style="display:block;cursor:pointer"><input type="checkbox" id="${APP}-auto-comments" ${state.autoFeedback?'checked':''}> <b>توليد ملاحظات تلقائية وفق نسبة الدرجة وحالة التسليم</b> (مفعّل افتراضيًا)</label><label style="display:block;margin-top:7px;cursor:pointer"><input type="checkbox" id="${APP}-import-feedback" ${state.importFeedback?'checked':''}> استخدام الملاحظات النصية من Excel عند وجودها، بدل الملاحظة التلقائية</label><div style="margin-top:6px">لن تُغيّر ملاحظات الطالب في مدرستي إلا بعد المعاينة والتأكيد والحفظ.</div></div>
   ${!state.fetchAudit?.complete?`<div class="${APP}-note"><b>الرصد موقوف:</b> لم يثبت اكتمال صفحات الطلاب في المشروع. يمكنك تصدير المعاينة ومراجعتها فقط.</div>`:''}
+  ${rejected.length?`<div class="${APP}-note"><b>رصد شامل غير متاح:</b> ${rejected.length} صفوف مرفوضة أو غير مطابقة في الملف. لا يمكن تجاهلها بصمت؛ صححها ثم أعد الاستيراد.</div>`:''}
   ${pending.length?`<div class="${APP}-note"><b>قرار المعلم مطلوب:</b> يوجد ${pending.length} طالبًا بدرجة صفر دون بيان تسليم واضح. اختر حالة كل طالب من عمود «قرار الصفر» قبل الرصد، ولا تعتبر الصفر تلقائيًا عدم تسليم.</div>`:''}
   <div class="${APP}-toolbar" style="margin-bottom:10px">
    <button id="${APP}-save" class="${APP}-btn" ${canApply?'':'disabled'}>تأكيد رصد ${ready.length} طالبًا على مدرستي</button>
