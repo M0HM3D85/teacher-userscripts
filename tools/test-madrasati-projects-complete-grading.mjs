@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const src=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
-assert.match(src,/^\/\/ @version\s+1\.6\.1-beta3$/m);
+assert.match(src,/^\/\/ @version\s+1\.6\.1$/m);
 new vm.Script(src);
 assert(!src.includes('project-grade-backup-'),'Never download grade backup automatically');
 assert(src.includes('if(busy){')&&src.includes('maipWasDisabled'),'Do not reactivate intentionally disabled save buttons');
