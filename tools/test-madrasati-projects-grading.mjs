@@ -126,10 +126,10 @@ const freshState={students:[
 ],importFeedback:false,zeroDecisions:{},fetchAudit:{complete:true}};
 const num=v=>v===null||v===undefined||clean(v)===''?null:Number(clean(v));
 const modal={hidden:true};
-const makeImporter=new Function('state','clean','norm','num','studentIdKey','studentNameKey','studentNameFromSelect','classKey','normalizeProjectSubmission','importZeroNeedsDecision','setBusy','ensureImportModal','renderImportPreview','toast','fmt','document',
+const makeImporter=new Function('state','clean','norm','num','studentIdKey','studentNameKey','studentNameFromSelect','classKey','normalizeProjectSubmission','importZeroNeedsDecision','setBusy','ensureImportModal','renderImportPreview','toast','fmt','document','updateGradeReceipt',
  source.slice(importStart,importEnd)+'return readImportFile;');
 const importer=makeImporter(freshState,clean,norm,num,clean,norm,()=>'',norm,h.normalizeProjectSubmission,h.importZeroNeedsDecision,
- ()=>{},()=>modal,()=>{},()=>{},fmt,{getElementById:()=>null});
+ ()=>{},()=>modal,()=>{},()=>{},fmt,{getElementById:()=>null},()=>{});
 const csv=[
  'اسم الطالب,رقم الطالب,الفصل,حالة التسليم,الدرجة,ملاحظات',
  'أحمد سالم محمد,111,ثالث,تم التسليم,0,',
