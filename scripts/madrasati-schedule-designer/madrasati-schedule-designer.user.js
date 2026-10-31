@@ -46,6 +46,8 @@ const ROLE = isTeacher ? 'teacher' : 'student';
 // إبقاء المفتاح v13 يحافظ على إعدادات النسخة السابقة إن وُجدت.
 const STORAGE_KEY =
 `m0hm3d85_schedule_designer_v13_${ROLE}`;
+const SCHOOL_PREFS_PREFIX =
+'m0hm3d85_schedule_school_v1_';
 // لوحة ألوان قريبة من هوية وزارة التعليم:
 // أخضر، تركوازي، أزرق، كحلي، بنفسجي وتدرجات هادئة مشتقة منها.
 const PALETTE = [
@@ -134,13 +136,31 @@ const loadPrefs = () => {
 const base =
 defaultPrefs();
 try {
-return {
-...base,
-...JSON.parse(
+const rolePrefs =
+JSON.parse(
 localStorage.getItem(
 STORAGE_KEY
 ) || '{}'
-)
+);
+const schoolId =
+getCurrentSchoolId();
+let schoolPrefs = {};
+if (schoolId) {
+schoolPrefs =
+JSON.parse(
+localStorage.getItem(
+SCHOOL_PREFS_PREFIX +
+schoolId
+) || '{}'
+);
+}
+return {
+...base,
+...rolePrefs,
+region:
+rolePrefs.region ||
+schoolPrefs.region ||
+''
 };
 } catch (_) {
 return base;
@@ -164,6 +184,14 @@ try {
 localStorage.removeItem(
 STORAGE_KEY
 );
+const schoolId =
+getCurrentSchoolId();
+if (schoolId) {
+localStorage.removeItem(
+SCHOOL_PREFS_PREFIX +
+schoolId
+);
+}
 } catch (_) {}
 return;
 }
@@ -179,6 +207,21 @@ state.logoDataUrl.length < 700000
 : ''
 })
 );
+const schoolId =
+getCurrentSchoolId();
+if (
+schoolId &&
+state.prefs.region
+) {
+localStorage.setItem(
+SCHOOL_PREFS_PREFIX +
+schoolId,
+JSON.stringify({
+region:
+state.prefs.region
+})
+);
+}
 } catch (_) {}
 }
 function clean(
@@ -4168,7 +4211,7 @@ isTeacher ? 'اسم المعلم' : 'اسم الطالب'
 )
 }
 ${field('اسم المدرسة','school','اسم المدرسة')}
-${field('الإدارة / المنطقة التعليمية','region','اختياري — يُقرأ تلقائيًا إن توفر')}
+${field('إدارة التعليم','region','اختياري — أدخلها مرة واحدة إذا لم توفرها مدرستي')}
 <div class="m0-grid2">
 ${field('المرحلة','stage','ابتدائي / متوسط / ثانوي')}
 ${isStudent ? field('الصف / الفصل','className','مثال: الصف الثالث أ') : field('الفصل الدراسي','term','مثال: الفصل الدراسي الأول')}
