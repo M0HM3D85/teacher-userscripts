@@ -313,32 +313,64 @@ break;
 return null;
 }
 async function fetchTeacherCalendarDay(date, separator = '/') {
-const schoolId = new URLSearchParams(location.search).get('SchoolId') || document.querySelector('#hSchoolId')?.value || '';
+const schoolId =
+new URLSearchParams(location.search).get('SchoolId') ||
+document.querySelector('#hSchoolId')?.value ||
+'';
 const dateText = apiDate(date, separator);
-const body = new URLSearchParams();
-['date','Date','start','StartDate','startDate','CurrentDate','currentDate','SelectedDate','selectedDate'].forEach(key => body.set(key, dateText));
-if (schoolId) { body.set('SchoolId', schoolId); body.set('schoolId', schoolId); }
+const commonHeaders = {
+'X-Requested-With': 'XMLHttpRequest',
+'Accept': 'application/json, text/javascript, */*; q=0.01'
+};
+const broadBody = new URLSearchParams();
+[
+'date','Date','start','StartDate','startDate',
+'CurrentDate','currentDate','SelectedDate','selectedDate'
+].forEach(key => broadBody.set(key, dateText));
+if (schoolId) {
+broadBody.set('SchoolId', schoolId);
+broadBody.set('schoolId', schoolId);
+}
+const query = new URLSearchParams({ date: dateText });
+if (schoolId) query.set('schoolId', schoolId);
+const attempts = [
+{
+url: '/Teacher/TimeTable/GetCal',
+options: {
+method: 'POST',
+headers: {
+...commonHeaders,
+'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+},
+body: broadBody.toString()
+}
+},
+{
+url: `/Teacher/TimeTable/GetCal?${query.toString()}`,
+options: {
+method: 'GET',
+headers: commonHeaders
+}
+}
+];
+for (const attempt of attempts) {
 const controller = new AbortController();
 const timer = setTimeout(() => controller.abort(), 3500);
 try {
-const response = await fetch('/Teacher/TimeTable/GetCal', {
-method: 'POST',
+const response = await fetch(attempt.url, {
+...attempt.options,
 credentials: 'same-origin',
-headers: {
-'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-'X-Requested-With': 'XMLHttpRequest',
-'Accept': 'application/json, text/javascript, */*; q=0.01'
-},
-body: body.toString(),
 signal: controller.signal
 });
-if (!response.ok) return null;
-return normalizeCalendarPayload(await response.text());
+if (!response.ok) continue;
+const payload = normalizeCalendarPayload(await response.text());
+if (payload) return payload;
 } catch (_) {
-return null;
 } finally {
 clearTimeout(timer);
 }
+}
+return null;
 }
 async function enrichTeacherScheduleFromSystem(data) {
 if (!isTeacher || !data) return false;
