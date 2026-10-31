@@ -19,7 +19,7 @@ const part=(a,b)=>{
 };
 const saveCode=part('    const saveImport = async function saveImport(){','    const cleanFile = name =>');
 const planCode=part('  const projectGradeEqual = ','    const saveImport = async function saveImport(){');
-const prepareProjectImportPlan=new Function('studentIdKey','clean',planCode+'return prepareProjectImportPlan;')((v)=>String(v??'').trim(),(v)=>String(v??'').trim());
+const {prepareProjectImportPlan,projectGradeEqual}=new Function('studentIdKey','clean',planCode+'return {prepareProjectImportPlan,projectGradeEqual};')((v)=>String(v??'').trim(),(v)=>String(v??'').trim());
 const uiCode=part('  const syncNativeVerifiedRows = function syncNativeVerifiedRows(','  const updateGradeReceipt =');
 assert(saveCode.includes('const final=await fetchAllStudents();'),'Must run final full-file server readback');
 assert(saveCode.includes('const checked=await fetchAllStudents();'),'Verify each batch before next POST');
@@ -59,11 +59,11 @@ const createHarness=({failNotes=false,incomplete=false,reject=false,approvals=[]
  const syncNativeVerifiedRows=rows=>{log.sync++;return {visible:Math.min(20,rows.length),grades:Math.min(20,rows.length),remarks:Math.min(20,rows.length),missingRemarks:0};};
  const fakeToast=(message,type)=>log.toasts.push({message,type});
  const factory=new Function('state','studentIdKey','toast','confirmProjectImport','setBusy','updateGradeReceipt',
-  'fetchAllStudents','postProjectRows','syncNativeVerifiedRows','renderGradeBody','document','APP','clean','prepareProjectImportPlan',
+  'fetchAllStudents','postProjectRows','syncNativeVerifiedRows','renderGradeBody','document','APP','clean','prepareProjectImportPlan','projectGradeEqual',
   saveCode+'return saveImport;');
  const save=factory(state,studentIdKey,fakeToast,async()=>{log.confirmation++;return approvals.length?approvals.shift():true;},
   (v,text)=>log.busy.push({v,text}),v=>{state.lastGradeReceipt=v;log.receipts.push(JSON.parse(JSON.stringify(v)));},
-  fetchAllStudents,postProjectRows,syncNativeVerifiedRows,()=>{log.render++;},doc,'MAIP',clean,prepareProjectImportPlan);
+  fetchAllStudents,postProjectRows,syncNativeVerifiedRows,()=>{log.render++;},doc,'MAIP',clean,prepareProjectImportPlan,projectGradeEqual);
  return {state,log,save,server};
 };
 const success=createHarness();
