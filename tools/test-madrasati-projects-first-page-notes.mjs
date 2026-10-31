@@ -4,11 +4,11 @@ import vm from 'node:vm';
 const s=readFileSync('scripts/madrasati-projects-intelligence/madrasati-projects-intelligence.user.js','utf8');
 assert.match(s,/^\/\/ @version\s+1\.6\.1-beta2$/m);
 new vm.Script(s);
-assert(s.includes('i===0 || posted%20===0 || posted===changes.length'), 'First ten, first twenty, every 20 and last chunk must be verified');
-assert(s.includes('const failedNotes=currentSlice.filter'), 'Notes separately verified');
+assert(s.includes('const checked=await fetchAllStudents()')&&s.includes('for(let i=0;i<plan.length;i+=10)'), 'Every ten-pupil batch must be verified');
+assert(s.includes('const {failedGrade,failedNotes}=evaluate(map,currentSlice)')&&s.includes('clean(current.feedback)!==clean(r.feedback)'), 'Notes separately verified');
 assert(s.includes('أوقفت بقية الدفعات'), 'Missing first page remarks stop later batches');
 assert(s.includes('ملاحظات تحتاج تحديثًا دون تغيير الدرجة'), 'Preview must surface notes-only updates');
-assert(s.includes('ملاحظات تُحدَّث دون تغيير الدرجة'), 'Explicit confirmation identifies notes-only updates');
+assert(s.includes('منها ملاحظات دون تغيير الدرجة'), 'Explicit confirmation identifies notes-only updates');
 
 const getPart=(start,end)=>{
  const i=s.indexOf(start),j=s.indexOf(end,i+start.length);
