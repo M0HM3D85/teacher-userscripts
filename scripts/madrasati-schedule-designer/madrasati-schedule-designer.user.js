@@ -49,7 +49,7 @@ const STORAGE_KEY =
 const PALETTE = [
 ['#E7F7EF', '#8AD7B5', '#075C3E', '#07A869'],
 ['#F0ECF8', '#B4A5D1', '#351375', '#351375'],
-['#EAF2FA', '#9EC3E2', '#173F5F', '#3D7EB9'],
+['#EAF2FA', '#9EC3E2', '#15445A', '#3D7EB9'],
 ['#F7F4EA', '#D8CFAC', '#665B2D', '#C1B489'],
 ['#E6F7F7', '#8BD6D4', '#0B5C5A', '#0DA9A6'],
 ['#F0F1FF', '#B6B9FF', '#3D438A', '#7A80FF'],
@@ -1044,16 +1044,6 @@ prefs.name
 });
 }
 if (
-prefs.school
-) {
-metaItems.push({
-label:
-'المدرسة',
-value:
-prefs.school
-});
-}
-if (
 prefs.stage
 ) {
 metaItems.push({
@@ -1064,6 +1054,7 @@ prefs.stage
 });
 }
 if (
+isStudent &&
 prefs.className
 ) {
 metaItems.push({
@@ -1079,7 +1070,7 @@ prefs.specialty
 ) {
 metaItems.push({
 label:
-'التخصص',
+'المادة',
 value:
 prefs.specialty
 });
@@ -1092,6 +1083,16 @@ label:
 'العام الدراسي',
 value:
 prefs.academicYear
+});
+}
+if (
+prefs.term
+) {
+metaItems.push({
+label:
+'الفصل الدراسي',
+value:
+prefs.term
 });
 }
 const legend =
@@ -1134,7 +1135,7 @@ ${
 subjects
 .map(
 subject => `
-<span class="m0-legend-item tiny">
+<span class="m0-legend-item tiny subject-key">
 <i
 style="
 background:${
@@ -1161,10 +1162,10 @@ const statsHtml =
 prefs.showStats
 ? `
 <div class="m0-stats">
-<div class="m0-stat-card"><b>${stats.total}</b><small>إجمالي الحصص</small></div>
-<div class="m0-stat-card"><b>${isTeacher ? stats.classes : stats.subjects}</b><small>${isTeacher ? 'الفصول' : 'المواد'}</small></div>
-<div class="m0-stat-card"><b>${isTeacher ? stats.subjects : stats.teachers}</b><small>${isTeacher ? 'المواد' : 'المعلمون'}</small></div>
-<div class="m0-stat-card"><b>${isStudent ? stats.free : esc(stats.busiestDay || '—')}</b><small>${isStudent ? 'الفراغات الأسبوعية' : (stats.busiestCount ? `الأكثر ازدحامًا · ${stats.busiestCount} حصة` : 'الأكثر ازدحامًا')}</small></div>
+<div class="m0-stat-card"><small>الحصص</small><b>${stats.total}</b></div>
+<div class="m0-stat-card"><small>${isTeacher ? 'الفصول' : 'المواد'}</small><b>${isTeacher ? stats.classes : stats.subjects}</b></div>
+<div class="m0-stat-card"><small>${isTeacher ? 'المواد' : 'المعلمون'}</small><b>${isTeacher ? stats.subjects : stats.teachers}</b></div>
+<div class="m0-stat-card"><small>${isStudent ? 'الفراغات' : 'الأكثر ازدحامًا'}</small><b>${isStudent ? stats.free : esc(stats.busiestDay || '—')}</b>${isTeacher && stats.busiestCount ? `<em>${stats.busiestCount} حصة</em>` : ''}</div>
 </div>
 `
 : '';
@@ -1366,62 +1367,35 @@ ${prefs.fitMode === 'one-page' ? ' fit-one-page' : prefs.fitMode === 'comfortabl
 >
 <div class="m0-topbar"></div>
 <header class="m0-sheet-header">
-<div class="m0-brand-side">
-${logo}
+<div class="m0-official-side">
+<strong>المملكة العربية السعودية</strong>
+<span>وزارة التعليم</span>
+${prefs.region ? `<span>${esc(prefs.region)}</span>` : ''}
+${prefs.school ? `<b>${esc(prefs.school)}</b>` : ''}
 </div>
 <div class="m0-title-side">
+${logo}
 <div class="m0-kicker">
-${
-isTeacher
-? 'جدول المعلم'
-: 'جدول الطالب'
-}
+${isTeacher ? 'جدول المعلم' : 'جدول الطالب'}
 </div>
 <h1>
 ${esc(prefs.title || '')}
 </h1>
-${
-metaItems.length
-? `
+${metaItems.length ? `
 <div class="m0-meta">
-${
-metaItems
-.map(
-item => `
-<span>
-<b>
-${esc(item.label)}:
-</b>
-${esc(item.value)}
-</span>
-`
-)
-.join('')
-}
+${metaItems.map(item => `
+<span><b>${esc(item.label)}:</b> ${esc(item.value)}</span>
+`).join('')}
 </div>
-`
-: ''
-}
+` : ''}
 </div>
-<div class="m0-week-side">
-${
-prefs.week
-? `
-<div class="m0-week-box">
-<small>
-الفترة
-</small>
-<strong>
-${esc(prefs.week)}
-</strong>
-</div>
-`
-: ''
-}
+<div class="m0-print-meta-side">
+${prefs.term ? `<span>${esc(prefs.term)}</span>` : ''}
+${prefs.academicYear ? `<span>العام الدراسي: <b>${esc(prefs.academicYear)}</b></span>` : ''}
+<span>تاريخ الطباعة: <b>${esc(formatExtractionDate(state.extractedAt))}</b></span>
 </div>
 </header>
-${
-prefs.showLegend &&
+${prefs.showLegend &&
 legend
 ? `
 <div class="m0-legend">
@@ -1558,7 +1532,7 @@ transition:.18s;
 }
 #${APP_ID} .m0-field input:focus,
 #${APP_ID} .m0-field textarea:focus {
-border-color:#55A8C8;
+border-color:#3D7EB9;
 box-shadow:0 0 0 3px rgba(85,168,200,.12);
 background:#fff;
 }
@@ -1585,7 +1559,7 @@ content:"";
 width:4px;
 height:14px;
 border-radius:3px;
-background:#3AA6A0;
+background:#0DA9A6;
 }
 #${APP_ID} .m0-check {
 display:flex;
@@ -1597,7 +1571,7 @@ margin:9px 0;
 cursor:pointer;
 }
 #${APP_ID} .m0-check input {
-accent-color:#2A9D8F;
+accent-color:#0DA9A6;
 }
 #${APP_ID} .m0-times {
 display:grid;
@@ -1660,7 +1634,7 @@ font-size:13px;
 font-weight:900;
 background:linear-gradient(
 135deg,
-#2A9D8F,
+#0DA9A6,
 #238A7F
 );
 color:#fff;
@@ -1693,7 +1667,7 @@ background:#123D5A;
 color:#fff;
 }
 #${APP_ID} .m0-action.accent {
-background:#2A9D8F;
+background:#0DA9A6;
 color:#fff;
 }
 #${APP_ID} .m0-preview-area {
@@ -1734,9 +1708,9 @@ left:0;
 height:7px;
 background:linear-gradient(
 90deg,
-#173F5F,
-#2A9D8F,
-#68B0AB
+#15445A,
+#0DA9A6,
+#07A869
 );
 }
 #${APP_ID} .m0-sheet-header {
@@ -1765,7 +1739,7 @@ display:grid;
 place-items:center;
 font-size:29px;
 font-weight:900;
-color:#2A9D8F;
+color:#0DA9A6;
 }
 #${APP_ID} .m0-title-side {
 text-align:center;
@@ -1868,7 +1842,7 @@ text-align:center;
 vertical-align:middle;
 }
 #${APP_ID} .m0-schedule-table thead th {
-background:#173F5F;
+background:#15445A;
 color:#fff;
 border-radius:10px;
 padding:9px 5px;
@@ -1900,7 +1874,7 @@ border-radius:5px;
 }
 #${APP_ID} .m0-day-cell {
 background:#EFF5F8;
-color:#173F5F;
+color:#15445A;
 border-radius:10px;
 padding:8px 4px;
 font-size:12px;
@@ -2002,7 +1976,7 @@ font-size:9px;
 #${APP_ID} .m0-legend-count { font-size:8.5px; font-weight:800; color:#8B98A6; }
 #${APP_ID} .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:8px 0 11px; }
 #${APP_ID} .m0-stat-card { min-height:48px; display:flex; align-items:center; justify-content:center; gap:7px; padding:7px 9px; border:1px solid #E0EAED; border-radius:11px; background:#F8FBFC; color:#486271; text-align:center; }
-#${APP_ID} .m0-stat-card b { font-size:16px; color:#173F5F; }
+#${APP_ID} .m0-stat-card b { font-size:16px; color:#15445A; }
 #${APP_ID} .m0-stat-card small { font-size:9px; font-weight:800; line-height:1.35; }
 #${APP_ID} .m0-fit-control { grid-column:1/-1; display:grid; grid-template-columns:1fr 145px; align-items:center; gap:10px; padding:9px; border:1px solid #DCE9EC; border-radius:10px; background:#F8FCFC; }
 #${APP_ID} .m0-fit-control b,#${APP_ID} .m0-fit-control small { display:block; }
@@ -2033,8 +2007,8 @@ border:0;
 border-radius:14px;
 background:linear-gradient(
 135deg,
-#173F5F,
-#2A9D8F
+#15445A,
+#0DA9A6
 );
 color:#fff;
 padding:12px 17px;
@@ -2109,9 +2083,9 @@ left:0;
 height:2mm;
 background:linear-gradient(
 90deg,
-#173F5F,
-#2A9D8F,
-#68B0AB
+#15445A,
+#0DA9A6,
+#07A869
 );
 }
 .m0-sheet-header {
@@ -2139,7 +2113,7 @@ display:grid;
 place-items:center;
 font-size:8mm;
 font-weight:900;
-color:#2A9D8F;
+color:#0DA9A6;
 }
 .m0-title-side {
 text-align:center;
@@ -2239,7 +2213,7 @@ text-align:center;
 vertical-align:middle;
 }
 .m0-schedule-table thead th {
-background:#173F5F;
+background:#15445A;
 color:#fff;
 border-radius:2.2mm;
 padding:2mm 1mm;
@@ -2263,7 +2237,7 @@ color:#94ACBC;
 }
 .m0-day-cell {
 background:#EFF5F8;
-color:#173F5F;
+color:#15445A;
 border-radius:2.2mm;
 padding:2mm 1mm;
 font-size:7.7pt;
@@ -2324,7 +2298,7 @@ border-right:1mm solid #A8C7D0;
 .m0-legend-count { font-size:5.8pt; font-weight:800; color:#8B98A6; }
 .m0-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1.5mm; margin:1mm 0 2mm; }
 .m0-stat-card { min-height:9mm; display:flex; align-items:center; justify-content:center; gap:1.5mm; padding:1mm 1.5mm; border:1px solid #E0EAED; border-radius:2mm; background:#F8FBFC; color:#486271; text-align:center; }
-.m0-stat-card b { font-size:9pt; color:#173F5F; }
+.m0-stat-card b { font-size:9pt; color:#15445A; }
 .m0-stat-card small { font-size:5.8pt; font-weight:800; }
 .fit-auto-compact .m0-schedule-table,.fit-auto-tight .m0-schedule-table,.fit-auto-ultra .m0-schedule-table,.fit-one-page .m0-schedule-table { border-spacing:.9mm; }
 .fit-auto-compact .m0-schedule-table td { height:16mm; }
@@ -2374,7 +2348,7 @@ const MODERN_CSS = `
 --m0-primary:#0B7F88;
 --m0-primary-2:#10A69D;
 --m0-green:#2BB673;
---m0-navy:#173F5F;
+--m0-navy:#15445A;
 --m0-ink:#163047;
 --m0-muted:#6F7F8F;
 --m0-surface:#FFFFFF;
@@ -2432,7 +2406,7 @@ box-shadow:0 6px 14px rgba(11,127,136,.18);
 #${OPEN_ID} strong {
 display:block;
 font-size:13px;
-color:#173F5F;
+color:#15445A;
 margin-bottom:3px;
 }
 #${OPEN_ID} small {
@@ -2903,7 +2877,7 @@ color:#244557;
 #${APP_ID} .m0-dialog-mark { width:86px; height:86px; margin:0 auto 10px; border-radius:22px; display:grid; place-items:center; background:#fff; border:1px solid #E1ECEF; box-shadow:0 10px 24px rgba(11,127,136,.16); overflow:hidden; padding:5px; }
 #${APP_ID} .m0-dialog-mark img { width:100%; height:100%; object-fit:contain; display:block; }
 #${APP_ID} .m0-dialog-kicker { color:var(--m0-primary); font-size:10px; font-weight:900; margin-top:7px; }
-#${APP_ID} .m0-dialog h3 { margin:4px 0 7px; color:#173F5F; font-size:21px; }
+#${APP_ID} .m0-dialog h3 { margin:4px 0 7px; color:#15445A; font-size:21px; }
 #${APP_ID} .m0-dialog > p { max-width:390px; margin:0 auto; color:#758791; font-size:11px; line-height:1.8; }
 #${APP_ID} .m0-guide-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin:22px 0 14px; }
 #${APP_ID} .m0-guide-steps > div { border:1px solid #E2ECEF; border-radius:13px; background:#F8FBFC; padding:12px 8px; }
@@ -3058,18 +3032,19 @@ isTeacher ? 'اسم المعلم' : 'اسم الطالب'
 )
 }
 ${field('اسم المدرسة','school','اسم المدرسة')}
+${field('الإدارة / المنطقة التعليمية','region','اختياري — يُقرأ تلقائيًا إن توفر')}
 <div class="m0-grid2">
 ${field('المرحلة','stage','ابتدائي / متوسط / ثانوي')}
-${field('الصف / الفصل','className',isStudent ? 'مثال: الصف الثالث أ' : 'اختياري')}
+${isStudent ? field('الصف / الفصل','className','مثال: الصف الثالث أ') : field('الفصل الدراسي','term','مثال: الفصل الدراسي الأول')}
 </div>
 ${
 isTeacher
-? field('التخصص','specialty','مثال: المهارات الرقمية')
+? field('المادة','specialty','تُقرأ من الجدول تلقائيًا')
 : ''
 }
 <div class="m0-grid2">
 ${field('العام الدراسي','academicYear','1448 هـ')}
-${field('الأسبوع / الفترة','week','الفترة المعروضة')}
+${isStudent ? field('الفصل الدراسي','term','اختياري') : ''}
 </div>
 ${
 field(
@@ -3138,7 +3113,7 @@ isTeacher
 </summary>
 <div class="m0-accordion-body">
 <div class="m0-inline-note">
-${isTeacher ? 'اختر وقت البداية والنهاية لكل حصة، أو استخدم التعبئة السريعة ثم عدّل أي حصة عند الحاجة.' : 'الأوقات المكتشفة من الصفحة تظهر هنا ويمكن تعديلها.'}
+${isTeacher ? (state.data.timeSource === 'system' ? '✓ تم اكتشاف أوقات الحصص تلقائيًا من بيانات مدرستي، ويمكن تعديلها عند الحاجة.' : 'لم تتوفر الأوقات تلقائيًا؛ يمكنك إدخالها أو استخدام التعبئة السريعة.') : 'الأوقات المكتشفة من صفحة الطالب تظهر هنا ويمكن تعديلها.'}
 </div>
 ${
 isTeacher
@@ -3197,12 +3172,9 @@ isTeacher
 </div>
 </div>
 </details>
-<div class="m0-update">
-<button type="button" id="m0-btn-update">
-<span>↻</span>
-تحديث معاينة الجدول
-</button>
-<small>طبّق تعديلات البيانات والأوقات على المعاينة.</small>
+<div class="m0-live-preview-note">
+<span>✓</span>
+<div><b>المعاينة تتحدث تلقائيًا</b><small>أي تغيير في البيانات أو المظهر أو الأوقات يظهر مباشرة.</small></div>
 </div>
 `;
 }
@@ -3488,7 +3460,7 @@ layer.innerHTML = `
 <div class="m0-dialog-mark"><img src="${BRAND_ICON_DATA}" alt=""></div>
 <div class="m0-dialog-kicker">حول الأداة</div>
 <h3>مدرستي - مصمم الجدول الدراسي</h3>
-<p class="m0-version">الإصدار 0.2.0</p>
+<p class="m0-version">الإصدار 2.1.1</p>
 <div class="m0-author-card">
 <small>تصميم وتطوير</small>
 <strong>Mohammed Almalki</strong>
@@ -3599,15 +3571,28 @@ event.preventDefault();
 showDialog(root, 'about');
 }
 );
+const update =
+() => {
+readControls(root);
+savePrefs();
+renderPreview();
+setPreviewStatus(root, false);
+};
+let liveUpdateTimer = 0;
+const scheduleLiveUpdate = (delay = 140) => {
+setPreviewStatus(root, true);
+clearTimeout(liveUpdateTimer);
+liveUpdateTimer = setTimeout(update, delay);
+};
 root.addEventListener(
 'input',
 event => {
 if (
 event.target.matches(
-'[data-pref], [data-time]'
+'[data-pref], [data-time-start], [data-time-end]'
 )
 ) {
-setPreviewStatus(root, true);
+scheduleLiveUpdate();
 }
 }
 );
@@ -3616,37 +3601,12 @@ root.addEventListener(
 event => {
 if (
 event.target.matches(
-'[data-check], [data-pref="fitMode"]'
+'[data-check], [data-pref], [data-time-start], [data-time-end]'
 )
 ) {
-readControls(root);
-savePrefs();
-renderPreview();
-setPreviewStatus(root, false);
-}
-}
-);
-const update =
-() => {
-readControls(
-root
-);
-savePrefs();
-renderPreview();
-setPreviewStatus(root, false);
-};
-root
-.querySelector(
-'#m0-btn-update'
-)
-?.addEventListener(
-'click',
-event => {
-event.preventDefault();
+clearTimeout(liveUpdateTimer);
 update();
-toast(
-'tم تحديث المعاينة.'
-);
+}
 }
 );
 root
@@ -3763,10 +3723,7 @@ event.target.matches(
 )
 ) {
 event.preventDefault();
-update();
-toast(
-'tم تحديث المعاينة.'
-);
+event.target.blur();
 }
 }
 );
@@ -3834,6 +3791,7 @@ root.querySelector(
 );
 if (startInput) startInput.value = parsed.start;
 if (endInput) endInput.value = parsed.end;
+savePrefs();
 }
 }
 if (
@@ -4619,9 +4577,9 @@ ctx.save();
 ctx.globalAlpha = Math.max(0, Math.min(1, Number.parseFloat(style.opacity || '1') || 1));
 if (element.classList.contains('m0-topbar')) {
 const gradient = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.width, rect.y);
-gradient.addColorStop(0, '#173F5F');
-gradient.addColorStop(0.5, '#2A9D8F');
-gradient.addColorStop(1, '#68B0AB');
+gradient.addColorStop(0, '#15445A');
+gradient.addColorStop(0.5, '#0DA9A6');
+gradient.addColorStop(1, '#07A869');
 canvasRoundRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius);
 ctx.fillStyle = gradient;
 ctx.fill();
