@@ -1239,13 +1239,15 @@ prefs.className
 }
 if (
 isTeacher &&
-prefs.specialty
+subjects.length
 ) {
 metaItems.push({
 label:
-'المادة',
+subjects.length > 1
+? 'المواد'
+: 'المادة',
 value:
-prefs.specialty
+subjects.join('، ')
 });
 }
 const legend =
@@ -1545,7 +1547,7 @@ ${metaItems.map(item => `
 <div class="m0-print-meta-side">
 ${prefs.term ? `<span>${esc(prefs.term)}</span>` : ''}
 ${prefs.academicYear ? `<span>العام الدراسي: <b>${esc(prefs.academicYear)}</b></span>` : ''}
-<span>تاريخ الطباعة: <b>${esc(formatExtractionDate(state.extractedAt))}</b></span>
+<span>تاريخ الاستخراج: <b>${esc(formatExtractionDate(state.extractedAt))}</b></span>
 </div>
 </header>
 
@@ -1597,9 +1599,6 @@ ${esc(prefs.note)}
 <footer class="m0-footer">
 <span>
 تم استخراج الجدول بواسطة <strong>مصمم الجدول الدراسي</strong>
-</span>
-<span>
-تاريخ الاستخراج: ${esc(formatExtractionDate(state.extractedAt))}
 </span>
 </footer>
 </section>
@@ -3303,11 +3302,6 @@ ${field('الإدارة / المنطقة التعليمية','region','اختي�
 ${field('المرحلة','stage','ابتدائي / متوسط / ثانوي')}
 ${isStudent ? field('الصف / الفصل','className','مثال: الصف الثالث أ') : field('الفصل الدراسي','term','مثال: الفصل الدراسي الأول')}
 </div>
-${
-isTeacher
-? field('المادة','specialty','تُقرأ من الجدول تلقائيًا')
-: ''
-}
 <div class="m0-grid2">
 ${field('العام الدراسي','academicYear','1448 هـ')}
 ${isStudent ? field('الفصل الدراسي','term','اختياري') : ''}
@@ -4114,12 +4108,15 @@ toast(
 );
 return;
 }
-if (isTeacher) {
 try {
-await enrichTeacherScheduleFromSystem(state.data);
+await enrichRoleIdentityFromSystem(
+state.data
+);
 } catch (error) {
-console.info('[M0HM3D85 Schedule Userscript] automatic teacher times skipped:', error);
-}
+console.info(
+'[M0HM3D85 Schedule Userscript] school identity auto-detect skipped:',
+error
+);
 }
 hydrateDefaults(
 state.data
