@@ -720,12 +720,38 @@
       '<div>'+esc(result.message||'')+'</div>'+
       '<div>صفوف ملف الاستيراد: <b>'+Number(count.file||0)+'</b> · مطابقة مسبقًا: <b>'+Number(count.unchanged||0)+'</b> · مطلوب تحديثهم: <b>'+Number(count.target||0)+'</b></div>'+
       '<div>أُرسلت سجلات: <b>'+Number(count.sent||0)+'</b> · درجات تأكدت: <b>'+Number(count.verifiedGrades||0)+'</b> · ملاحظات تأكدت: <b>'+Number(count.verifiedNotes||0)+'</b> · غير مؤكدة: <b>'+Number(count.unverified||0)+'</b></div>'+
+      (result.native?'<div>خانات صفحة مدرستي المعروضة حاليًا: '+Number(result.native.visible||0)+' · درجات أُظهرت بعد التحقق: '+Number(result.native.grades||0)+' · ملاحظات أُظهرت بعد التحقق: '+Number(result.native.remarks||0)+(result.native.missingRemarks?' · خانات ملاحظات لم تُعثر عليها: '+Number(result.native.missingRemarks):'')+'</div>':'')+
       (examples?'<b>تفاصيل تحتاج مراجعة:</b><ul>'+examples+'</ul>':'')+
       (result.phase==='verified'?'<div><b>هذه النتيجة موثقة بإعادة قراءة الدرجات والملاحظات من مدرستي.</b></div>':
         result.phase==='working'?'<div>لا تغلق الصفحة ولا تبدأ رصدًا جديدًا أثناء التحقق.</div>':
         '<div><b>لا تكرر الحفظ تلقائيًا؛ راجع السجلات غير المؤكدة أولًا.</b></div>')+
     '</section>';
   };
+  const syncNativeVerifiedRows = function syncNativeVerifiedRows(verifiedRows){
+ const byId=new Map(verifiedRows.map(r=>[studentIdKey(r.studentId),r]));
+ let visible=0,grades=0,remarks=0,missingRemarks=0;
+ const ids=[...document.querySelectorAll('input[name^="List["][name$=".StudentId"]')];
+ for(const hidden of ids){
+  const key=studentIdKey(hidden.value),expected=byId.get(key);
+  if(!expected)continue;
+  visible++;
+  const m=String(hidden.name||'').match(/^List\[(\d+)\]\.StudentId$/);
+  if(!m)continue;
+  const fields=[...document.querySelectorAll(`[name^="List[${m[1]}]."]`)];
+  const gradeInput=fields.find(el=>String(el.name).toLowerCase()===`list[${m[1]}].grade`.toLowerCase());
+  const feedbackInput=fields.find(el=>String(el.name).toLowerCase()===`list[${m[1]}].feedback`.toLowerCase());
+  if(gradeInput){
+   if(String(gradeInput.value)!==String(expected.grade))gradeInput.value=String(expected.grade);
+   grades++;
+  }
+  if(feedbackInput){
+   if(clean(feedbackInput.value)!==clean(expected.feedback))feedbackInput.value=expected.feedback;
+   remarks++;
+  }else missingRemarks++;
+ }
+ return {visible,grades,remarks,missingRemarks};
+};
+
   const updateGradeReceipt = receipt => {
     state.lastGradeReceipt=receipt;
     for(const id of [APP+'-grade-result',APP+'-modal-grade-result']){
