@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         مدرستي - مصمم الجدول الدراسي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      2.1.0
-// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع الإحصائيات والاحتواء الذكي والأوقات والطباعة/PDF وPNG وExcel والنسخ.
+// @version      2.1.1
+// @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع أوقات تلقائية وهوية وزارة التعليم وإحصائيات مدمجة وطباعة/PDF وPNG وExcel.
 // @author       Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -18,7 +18,7 @@
 /*
 =========================================================================
 مدرستي - مصمم الجدول الدراسي
-إصدار Tampermonkey : 2.1.0
+إصدار Tampermonkey : 2.1.1
 مبني على أساس الإصدار المتوافق مع إضافة المتصفح: 0.2.0
 تصميم وتطوير: Mohammed Almalki (M0HM3D85)
 X / Twitter : https://x.com/M0HM3D85
@@ -47,18 +47,22 @@ const ROLE = isTeacher ? 'teacher' : 'student';
 const STORAGE_KEY =
 `m0hm3d85_schedule_designer_v13_${ROLE}`;
 const PALETTE = [
-['#EAF3FF', '#8DBCF4', '#163B66', '#3B82F6'],
-['#EAFBF3', '#86D9AF', '#165B3A', '#22A06B'],
-['#FFF4E7', '#F5C37D', '#72420B', '#F59E0B'],
-['#F4EEFF', '#BCA4F4', '#4A2A7A', '#8B5CF6'],
-['#FFEFF4', '#F3A8BD', '#74233C', '#E85D85'],
-['#E9FAFB', '#84D7DB', '#15545A', '#19A7AE'],
-['#FFF9DF', '#E9D36A', '#65530B', '#C9A90A'],
-['#EEF7EA', '#A9D58D', '#355B22', '#6AA84F'],
-['#FDEEEE', '#EFB0B0', '#6E2525', '#D65A5A'],
-['#EEF1FF', '#AAB6EE', '#2C3C78', '#6376D9'],
-['#F7F0E9', '#D9B99A', '#67462A', '#B37A49'],
-['#EDF8FF', '#9CCFEA', '#24556E', '#4598C4']
+['#E7F7EF', '#8AD7B5', '#075C3E', '#07A869'],
+['#F0ECF8', '#B4A5D1', '#351375', '#351375'],
+['#EAF2FA', '#9EC3E2', '#173F5F', '#3D7EB9'],
+['#F7F4EA', '#D8CFAC', '#665B2D', '#C1B489'],
+['#E6F7F7', '#8BD6D4', '#0B5C5A', '#0DA9A6'],
+['#F0F1FF', '#B6B9FF', '#3D438A', '#7A80FF'],
+['#E9F0F3', '#9DB3BE', '#15445A', '#15445A'],
+['#F2EDF8', '#C1B2D8', '#4D376C', '#7258A4'],
+['#ECF9FC', '#A7E0EC', '#245D69', '#69CEE3'],
+['#E8F2F8', '#92BBD5', '#1E5676', '#3078A6'],
+['#E7F4F7', '#8AC8D5', '#18596B', '#218CAA'],
+['#FCEDEA', '#E8A79F', '#7A342D', '#D96B5F'],
+['#FFF4DF', '#EBCB8B', '#75500E', '#D79A2B'],
+['#FBEAF0', '#E6A5B8', '#7B2944', '#C75B7A'],
+['#F0F4E6', '#BBCB8D', '#46591D', '#7A8F3B'],
+['#F8ECE7', '#DDB5A3', '#68351F', '#A65C3D']
 ].map(
 ([bg, border, text, accent]) => ({
 bg,
@@ -68,18 +72,22 @@ accent
 })
 );
 const SUBJECT_ACCENTS = [
-'#2563EB',
-'#059669',
-'#D97706',
-'#7C3AED',
-'#DB2777',
-'#0891B2',
-'#65A30D',
-'#DC2626',
-'#4F46E5',
-'#0F766E',
-'#A16207',
-'#9333EA'
+'#351375',
+'#07A869',
+'#3D7EB9',
+'#D79A2B',
+'#0DA9A6',
+'#C75B7A',
+'#7A80FF',
+'#A65C3D',
+'#218CAA',
+'#7258A4',
+'#7A8F3B',
+'#D96B5F',
+'#15445A',
+'#69CEE3',
+'#3078A6',
+'#C1B489'
 ];
 const ORDINALS = [
 'الأولى',
@@ -100,6 +108,8 @@ stage: '',
 className: '',
 specialty: '',
 academicYear: '',
+region: '',
+term: '',
 week: '',
 title:
 isTeacher
@@ -229,6 +239,152 @@ const normalized = normalizeTimeValue(value);
 if (!normalized) return null;
 const [hour, minute] = normalized.split(':').map(Number);
 return hour * 60 + minute;
+}
+function parsePageDate(value = '') {
+const text = normalizeLatinDigits(value).trim();
+const match = text.match(/(20\d{2})[\/-](\d{1,2})[\/-](\d{1,2})/);
+if (!match) return null;
+const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+return Number.isNaN(date.getTime()) ? null : date;
+}
+function addDays(date, days) {
+const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+result.setDate(result.getDate() + Number(days || 0));
+return result;
+}
+function apiDate(date, separator = '/') {
+return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join(separator);
+}
+function extractClock(value = '') {
+const text = normalizeLatinDigits(value);
+const direct = text.match(/(?:T|\s|^)(\d{1,2}):(\d{2})(?::\d{2})?/);
+if (direct) return normalizeTimeValue(`${direct[1]}:${direct[2]}`);
+const ticks = text.match(/\/Date\((\d+)(?:[+-]\d+)?\)\//);
+if (ticks) {
+const date = new Date(Number(ticks[1]));
+if (!Number.isNaN(date.getTime())) return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+return normalizeTimeValue(text);
+}
+function findPageValue(labels = []) {
+const normalizedLabels = labels.map(label => canonical(label));
+const nodes = document.querySelectorAll('label, small, span, div, h5, h6');
+for (const node of nodes) {
+const text = clean(node.textContent || '');
+if (!text || text.length > 120) continue;
+const normalized = canonical(text);
+for (const label of normalizedLabels) {
+if (!label || !normalized.startsWith(label)) continue;
+const colonIndex = Math.max(text.indexOf(':'), text.indexOf('：'));
+if (colonIndex < 0) continue;
+const value = clean(text.slice(colonIndex + 1));
+if (value && value.length <= 80) return value;
+}
+}
+return '';
+}
+function inferAcademicYear() {
+try {
+return normalizeLatinDigits(new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura',{ year: 'numeric' }).format(new Date())).replace(/\s+/g, ' ').trim();
+} catch (_) {
+return '';
+}
+}
+function inferStage(data) {
+const text = data.days.flatMap(day => day.lessons.map(lesson => lesson.className || '')).join(' ');
+if (/ابتدائي/u.test(text)) return 'ابتدائي';
+if (/متوسط/u.test(text)) return 'متوسط';
+if (/ثانوي/u.test(text)) return 'ثانوي';
+return '';
+}
+function normalizeCalendarPayload(payload) {
+let value = payload;
+for (let depth = 0; depth < 4; depth++) {
+if (typeof value === 'string') {
+try { value = JSON.parse(value); continue; } catch (_) { return null; }
+}
+if (value && Array.isArray(value.TimeTable)) return value;
+if (value && typeof value === 'object') {
+value = value.data ?? value.result ?? value.value ?? value.d;
+continue;
+}
+break;
+}
+return null;
+}
+async function fetchTeacherCalendarDay(date, separator = '/') {
+const schoolId = new URLSearchParams(location.search).get('SchoolId') || document.querySelector('#hSchoolId')?.value || '';
+const dateText = apiDate(date, separator);
+const body = new URLSearchParams();
+['date','Date','start','StartDate','startDate','CurrentDate','currentDate','SelectedDate','selectedDate'].forEach(key => body.set(key, dateText));
+if (schoolId) { body.set('SchoolId', schoolId); body.set('schoolId', schoolId); }
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 3500);
+try {
+const response = await fetch('/Teacher/TimeTable/GetCal', {
+method: 'POST',
+credentials: 'same-origin',
+headers: {
+'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+'X-Requested-With': 'XMLHttpRequest',
+'Accept': 'application/json, text/javascript, */*; q=0.01'
+},
+body: body.toString(),
+signal: controller.signal
+});
+if (!response.ok) return null;
+return normalizeCalendarPayload(await response.text());
+} catch (_) {
+return null;
+} finally {
+clearTimeout(timer);
+}
+}
+async function enrichTeacherScheduleFromSystem(data) {
+if (!isTeacher || !data) return false;
+const start = parsePageDate(document.querySelector('#StartDateSchedule')?.value || '') || parsePageDate(document.querySelector('#CurrentWeekDate')?.value || '') || parsePageDate(document.querySelector('#currentDateToday')?.value || '');
+if (!start) return false;
+let separator = '/';
+let first = await fetchTeacherCalendarDay(start, separator);
+if (!first) { separator = '-'; first = await fetchTeacherCalendarDay(start, separator); }
+if (!first) return false;
+const days = [first, ...(await Promise.all([1,2,3,4].map(offset => fetchTeacherCalendarDay(addDays(start, offset), separator))))];
+const slotTimes = Array.from({ length: data.periods }, () => '');
+let school = '';
+days.filter(Boolean).forEach(day => {
+(day.TimeTable || []).forEach(item => {
+const slot = Number(item?.SlotNumber) - 1;
+if (slot >= 0 && slot < slotTimes.length && !slotTimes[slot]) slotTimes[slot] = formatTimeRange(extractClock(item?.StartTime), extractClock(item?.EndTime));
+if (!school && item?.SchoolName) school = clean(item.SchoolName);
+});
+});
+let found = 0;
+slotTimes.forEach((value, index) => {
+if (!value) return;
+data.times[index] = value;
+found++;
+});
+data.systemMeta = { ...(data.systemMeta || {}), school };
+if (found) { data.timeSource = 'system'; state.prefs.times = [...data.times]; }
+return found > 0 || Boolean(school);
+}
+function extractSystemIdentity(data) {
+const nameSelectors = ['.user-menu .fw-bold','.info-body.flex-grow-1.ms-3 h2','[data-clarity-mask="True"] .fw-bold'];
+let name = '';
+for (const selector of nameSelectors) {
+name = clean(document.querySelector(selector)?.textContent || '');
+if (name && !/مرحبا|تسجيل|الرئيسية/u.test(name)) break;
+}
+const subjects = collectUnique(data, lesson => lesson.subject);
+return {
+name,
+school: clean(data.systemMeta?.school || ''),
+region: findPageValue(['إدارة التعليم','الإدارة التعليمية','المنطقة التعليمية']),
+term: findPageValue(['الفصل الدراسي']),
+academicYear: findPageValue(['العام الدراسي']) || inferAcademicYear(),
+stage: inferStage(data),
+subject: isTeacher ? subjects.join('، ') : ''
+};
 }
 function formatExtractionDate(date = new Date()) {
 const value = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
@@ -683,30 +839,27 @@ document
 )
 ?.textContent ||
 ''
-)
+),
+timeSource:
+isStudent && times.some(Boolean)
+? 'page'
+: (times.some(Boolean) ? 'saved' : ''),
+systemMeta: {}
 };
 }
 function hydrateDefaults(
 data
 ) {
-if (
-!state.prefs.week &&
-data.week
-) {
-state.prefs.week =
-data.week;
-}
-if (
-isStudent &&
-!state.prefs.className &&
-data.commonClass
-) {
-state.prefs.className =
-data.commonClass;
-}
-if (
-!state.prefs.title
-) {
+const identity = extractSystemIdentity(data);
+if (!state.prefs.name && identity.name) state.prefs.name = identity.name;
+if (!state.prefs.school && identity.school) state.prefs.school = identity.school;
+if (!state.prefs.region && identity.region) state.prefs.region = identity.region;
+if (!state.prefs.term && identity.term) state.prefs.term = identity.term;
+if (!state.prefs.academicYear && identity.academicYear) state.prefs.academicYear = identity.academicYear;
+if (!state.prefs.stage && identity.stage) state.prefs.stage = identity.stage;
+if (isTeacher && !state.prefs.specialty && identity.subject) state.prefs.specialty = identity.subject;
+if (isStudent && !state.prefs.className && data.commonClass) state.prefs.className = data.commonClass;
+if (!state.prefs.title) {
 state.prefs.title =
 isTeacher
 ? 'الجدول الدراسي الأسبوعي للمعلم'
@@ -806,29 +959,35 @@ hash = Math.imul(hash, 16777619);
 }
 return (hash >>> 0) % length;
 }
+function assignDistinctIndexes(keys, length, salt = '') {
+const normalizedKeys = [...new Set(keys.filter(Boolean).map(key => canonical(key)).filter(Boolean))].sort((a,b) => a.localeCompare(b,'ar',{ numeric:true }));
+const used = new Set();
+const indexes = new Map();
+normalizedKeys.forEach(key => {
+let index = stablePaletteIndex(key, length, salt);
+if (used.size < length) {
+while (used.has(index)) index = (index + 1) % length;
+used.add(index);
+}
+indexes.set(key, index);
+});
+return indexes;
+}
 function assignColors(keys) {
+const indexes = assignDistinctIndexes(keys, PALETTE.length, 'schedule-color');
 const map = new Map();
 keys.filter(Boolean).forEach(key => {
 const normalized = canonical(key);
-if (!map.has(normalized)) {
-map.set(
-normalized,
-PALETTE[stablePaletteIndex(normalized, PALETTE.length, 'schedule-color')]
-);
-}
+if (!map.has(normalized)) map.set(normalized, PALETTE[indexes.get(normalized) ?? 0]);
 });
 return map;
 }
 function assignSubjectAccents(subjects) {
+const indexes = assignDistinctIndexes(subjects, SUBJECT_ACCENTS.length, 'subject-accent');
 const map = new Map();
 subjects.filter(Boolean).forEach(subject => {
 const normalized = canonical(subject);
-if (!map.has(normalized)) {
-map.set(
-normalized,
-SUBJECT_ACCENTS[stablePaletteIndex(normalized, SUBJECT_ACCENTS.length, 'subject-accent')]
-);
-}
+if (!map.has(normalized)) map.set(normalized, SUBJECT_ACCENTS[indexes.get(normalized) ?? 0]);
 });
 return map;
 }
@@ -3720,7 +3879,7 @@ target.textContent ||
 }
 );
 }
-function openDesigner() {
+async function openDesigner() {
 state.extractedAt =
 new Date();
 state.data =
@@ -3730,6 +3889,13 @@ toast(
 'لم أتمكن من العثور على جدول مدرستي في الصفحة الحالية.'
 );
 return;
+}
+if (isTeacher) {
+try {
+await enrichTeacherScheduleFromSystem(state.data);
+} catch (error) {
+console.info('[M0HM3D85 Schedule Userscript] automatic teacher times skipped:', error);
+}
 }
 hydrateDefaults(
 state.data
