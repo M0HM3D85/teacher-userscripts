@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         مدرستي - مصمم الجدول الدراسي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      2.1.2
+// @version      2.1.3
 // @description  مصمم عصري لجدول المعلم أو الطالب في مدرستي مع أوقات المعلم وبيانات المدرسة تلقائيًا وهوية قريبة من وزارة التعليم وإحصائيات وطباعة/PDF وPNG وExcel.
 // @author       Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -18,7 +18,7 @@
 /*
 =========================================================================
 مدرستي - مصمم الجدول الدراسي
-إصدار Tampermonkey : 2.1.2
+إصدار Tampermonkey : 2.1.3
 مبني على أساس الإصدار المتوافق مع إضافة المتصفح: 0.2.0
 تصميم وتطوير: Mohammed Almalki (M0HM3D85)
 X / Twitter : https://x.com/M0HM3D85
@@ -342,25 +342,121 @@ doc.querySelector(
 doc.querySelector(
 'meta[name="request-verification-token"]'
 )?.content ||
+doc.querySelector(
+'meta[name="RequestVerificationToken"]'
+)?.content ||
 ''
 );
 }
-async function getTeacherVerificationToken(
+async function fetchTeacherTimeTableDocument(
 schoolId
 ) {
-const current =
+if (!schoolId) return null;
+return fetchSameOriginDocument(
+'/teacher/TimeTable/index/' +
+encodeURIComponent(schoolId) +
+'?SetFaviorit=True'
+);
+}
+function extractWeekStartFromDocument(
+doc
+) {
+if (!doc) return null;
+const selectors = [
+'#CurrentWeekDate',
+'#StartDateSchedule',
+'input[name="CurrentWeekDate"]',
+'input[name="StartDateSchedule"]',
+'[data-current-week]',
+'[data-start-date]'
+];
+for (const selector of selectors) {
+const node =
+doc.querySelector(selector);
+if (!node) continue;
+const value =
+node.value ||
+node.getAttribute('data-current-week') ||
+node.getAttribute('data-start-date') ||
+node.getAttribute('title') ||
+node.textContent ||
+'';
+const date =
+parsePageDate(value);
+if (date) return date;
+}
+const titleNodes = [
+...doc.querySelectorAll('[title]')
+];
+for (const node of titleNodes) {
+const date =
+parsePageDate(
+node.getAttribute('title') ||
+''
+);
+if (date) return date;
+}
+return null;
+}
+async function getTeacherVerificationContext(
+schoolId
+) {
+const timetableDoc =
+await fetchTeacherTimeTableDocument(
+schoolId
+);
+const timetableToken =
+getRequestVerificationToken(
+timetableDoc
+);
+const timetableStart =
+extractWeekStartFromDocument(
+timetableDoc
+);
+if (
+timetableToken ||
+timetableStart
+) {
+return {
+token:
+timetableToken,
+start:
+timetableStart,
+source:
+'timetable'
+};
+}
+const currentToken =
 getRequestVerificationToken(
 document
 );
-if (current) return current;
+if (currentToken) {
+return {
+token:
+currentToken,
+start:
+null,
+source:
+'current'
+};
+}
 const teacherDoc =
 await fetchSameOriginDocument(
 '/SchoolManagment/Actions/Teacher/' +
 encodeURIComponent(schoolId)
 );
-return getRequestVerificationToken(
+return {
+token:
+getRequestVerificationToken(
 teacherDoc
-);
+),
+start:
+extractWeekStartFromDocument(
+teacherDoc
+),
+source:
+'teacher-home'
+};
 }
 function formatTeacherCalendarDate(
 date
@@ -563,7 +659,7 @@ if (
 const schoolId =
 getCurrentSchoolId();
 if (!schoolId) return false;
-const start =
+const pageStart =
 parsePageDate(
 document.querySelector(
 '#CurrentWeekDate'
@@ -576,12 +672,42 @@ document.querySelector(
 )?.value ||
 ''
 );
-if (!start) return false;
-const verificationToken =
-await getTeacherVerificationToken(
+const verificationContext =
+await getTeacherVerificationContext(
 schoolId
 );
-if (!verificationToken) return false;
+const start =
+pageStart ||
+verificationContext.start;
+const verificationToken =
+verificationContext.token;
+data.timeDebug = {
+schoolIdFound:
+Boolean(schoolId),
+pageStartFound:
+Boolean(pageStart),
+contextStartFound:
+Boolean(
+verificationContext.start
+),
+tokenFound:
+Boolean(
+verificationToken
+),
+tokenSource:
+verificationContext.source ||
+''
+};
+if (!start) {
+data.timeDebug.reason =
+'week-start-not-found';
+return false;
+}
+if (!verificationToken) {
+data.timeDebug.reason =
+'verification-token-not-found';
+return false;
+}
 const days =
 await Promise.all(
 [0, 1, 2, 3, 4]
@@ -594,6 +720,21 @@ verificationToken
 )
 )
 );
+data.timeDebug.responses =
+days.map(day => ({
+ok:
+Boolean(day),
+lectures:
+day?.TimeTable?.length ||
+0
+}));
+if (
+!days.some(Boolean)
+) {
+data.timeDebug.reason =
+'getcal-no-response';
+return false;
+}
 const slotTimes =
 Array.from(
 { length: data.periods },
@@ -729,8 +870,15 @@ data.systemMeta?.school ||
 if (found) {
 data.timeSource =
 'system';
+data.timeDebug.reason =
+'';
+data.timeDebug.found =
+found;
 state.prefs.times =
 [...data.times];
+} else {
+data.timeDebug.reason =
+'no-slot-times-found';
 }
 return (
 found > 0 ||
@@ -4124,7 +4272,7 @@ layer.innerHTML = `
 <div class="m0-dialog-mark"><img src="${BRAND_ICON_DATA}" alt=""></div>
 <div class="m0-dialog-kicker">حول الأداة</div>
 <h3>مدرستي - مصمم الجدول الدراسي</h3>
-<p class="m0-version">الإصدار 2.1.2</p>
+<p class="m0-version">الإصدار 2.1.3</p>
 <div class="m0-author-card">
 <small>تصميم وتطوير</small>
 <strong>Mohammed Almalki</strong>
