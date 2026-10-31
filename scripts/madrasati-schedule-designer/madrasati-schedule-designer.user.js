@@ -1688,6 +1688,14 @@ value
 );
 return result;
 }
+function isActivitySubject(value = '') {
+const text = canonical(value);
+return (
+text === 'نشاط' ||
+text === '(نشاط)' ||
+text.includes('النشاط')
+);
+}
 function computeScheduleStats(data) {
 const colorCounts = new Map();
 const subjectCounts = new Map();
@@ -1702,7 +1710,15 @@ if (!lesson.subject) return;
 total++;
 dayTotal++;
 const subjectKey = canonical(lesson.subject);
-if (subjectKey) subjectCounts.set(subjectKey, (subjectCounts.get(subjectKey) || 0) + 1);
+if (
+subjectKey &&
+!isActivitySubject(lesson.subject)
+) {
+subjectCounts.set(
+subjectKey,
+(subjectCounts.get(subjectKey) || 0) + 1
+);
+}
 if (lesson.className) classes.add(canonical(lesson.className));
 if (lesson.teacher) teachers.add(canonical(lesson.teacher));
 const colorKey = canonical(isTeacher ? lesson.className : lesson.subject);
@@ -1838,6 +1854,11 @@ data,
 lesson =>
 lesson.subject
 );
+const academicSubjects =
+subjects.filter(
+subject =>
+!isActivitySubject(subject)
+);
 const subjectAccentMap =
 assignSubjectAccents(
 subjects
@@ -1882,15 +1903,15 @@ prefs.className
 }
 if (
 isTeacher &&
-subjects.length
+academicSubjects.length
 ) {
 metaItems.push({
 label:
-subjects.length > 1
+academicSubjects.length > 1
 ? 'المواد'
 : 'المادة',
 value:
-subjects.join('، ')
+academicSubjects.join('، ')
 });
 }
 const legend =
@@ -1994,6 +2015,7 @@ data.times[index]
 : 'empty'
 }
 "
+dir="ltr"
 contenteditable="true"
 data-time-index="${index}"
 title="اضغط لتعديل الوقت"
@@ -2729,6 +2751,9 @@ color:#DCEAF2;
 font-weight:500;
 outline:none;
 min-height:13px;
+direction:ltr;
+unicode-bidi:isolate;
+text-align:center;
 }
 #${APP_ID} .m0-period-time.empty {
 color:#94ACBC;
@@ -3138,6 +3163,9 @@ font-weight:900;
 font-size:6.2pt;
 margin-top:1mm;
 color:#DCEAF2;
+direction:ltr;
+unicode-bidi:isolate;
+text-align:center;
 }
 .m0-period-time.empty {
 color:#94ACBC;
