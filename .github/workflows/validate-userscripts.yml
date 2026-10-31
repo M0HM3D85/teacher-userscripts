@@ -52,3 +52,6 @@ jobs:
 
       - name: First-page notes-only grading and form feedback field regression
         run: node tools/test-madrasati-projects-first-page-notes.mjs
+
+      - name: Full project grade save readback, receipt, and no-backup regression
+        run: node tools/test-madrasati-projects-complete-grading.mjs
