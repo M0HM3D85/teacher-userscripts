@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.6.1-beta1
+// @version      1.6.1-beta2
 // @description  مدير المشاريع: إصلاح مطابقة درجات Excel وCSV، توضيح أسباب الرفض، حماية الملاحظات وحفظ متحقق تدريجيًا، مع لوحة تحليل وتقارير.
 // @copyright    2026, Mohammed Almalki (M0HM3D85)
 // @license      All Rights Reserved
@@ -16,7 +16,7 @@
 
 /*
 =========================================================================
- Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.1-beta1
+ Madrasati Projects Intelligence | مدير الأنشطة والمشاريع الذكي — v1.6.1-beta2
 
  إصدار مستقر لوحدة الأنشطة والمشاريع يعمل إلى جانب:
  Madrasati Assignment Intelligence | مدير الواجبات الذكي
@@ -26,14 +26,14 @@
 */
 
 // ============================================================================
-// Madrasati Projects & Activities Intelligence — v1.6.0
+// Madrasati Projects & Activities Intelligence — v1.6.1-beta2
 // وحدة الأنشطة والمشاريع لمدير الواجبات الذكي
 // ============================================================================
 (() => {
   'use strict';
 
   const APP = 'MAIP';
-  const VERSION = '1.6.1-beta1';
+  const VERSION = '1.6.1-beta2';
   const path = location.pathname;
   const isIndex = /\/Projects\/Projects\/Index\//i.test(path);
   const isPublished = /\/Projects\/Projects\/PublishedProjects\/?$/i.test(path);
@@ -454,7 +454,7 @@
     if(alt.length){rows=alt;added=other;mode='legacy';}
    }
    if(rows.length&&added)lastPage=page;
-   if(!rows.length){complete=!expected||byId.size>=expected;reason=complete?'empty_page':'roster_shortfall';break;}
+   if(!rows.length){complete=expected>0&&byId.size>=expected;reason=complete?'empty_page':expected?'roster_shortfall':'missing_expected_total';break;}
    if(!added){reason='repeated_page';complete=false;break;}
    if(page===100){reason='page_limit';complete=false;}
   }
@@ -463,7 +463,7 @@
   if(!byId.size)throw error;
  }
  const rows=[...byId.values()].sort((a,b)=>compareNames(a.name,b.name));
- state.totalExpected=expected||rows.length;
+ state.totalExpected=expected;
  state.fetchAudit={complete,expected,received:rows.length,requests,pages:lastPage,reason,requestMode:mode};
  return rows;
 };
@@ -1285,7 +1285,7 @@
 
     const saveImport = async function saveImport(){
  if(state.gradeSaving)return;
- if(!state.fetchAudit?.complete)return toast('لا يمكن تأكيد حفظ الدرجات: صفحات الطلاب غير مكتملة.','error');
+ if(!state.fetchAudit?.complete)return toast('لا يمكن تأكيد حفظ الدرجات: عدد الطلاب أو الصفحات غير مكتمل؛ افتح فحص الصفحة لمعرفة السبب.','error');
  const allRows=state.importPreview?.rows||[];
  const rejected=allRows.filter(r=>!['ready','unchanged'].includes(r.status));
  if(rejected.length)return toast(`توجد ${rejected.length} صفوف غير جاهزة أو تحتاج قرارًا. صحح الملف أولًا؛ لا يجوز تخطي أي صف دون إبلاغك.`,'error');
@@ -1733,8 +1733,8 @@
    }
    if(rows.length&&added)pages=page;
    if(!rows.length){
-    complete=!expected||byId.size>=expected;
-    reason=complete?'empty_page':'roster_shortfall';break;
+    complete=expected>0&&byId.size>=expected;
+    reason=complete?'empty_page':expected?'roster_shortfall':'missing_expected_total';break;
    }
    if(!added){reason='repeated_page';break;}
    if(page===50)reason='page_limit';
