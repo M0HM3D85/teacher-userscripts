@@ -214,9 +214,9 @@
     {
       "id": "madrasati-schedule-designer",
       "name": "مدرستي - مصمم الجدول الدراسي الاحترافي",
-      "version": "2.0.0",
+      "version": "2.1.3",
       "status": "stable",
-      "description": "مصمم احترافي لجدول المعلم أو الطالب في مدرستي مع تنظيف مسميات المواد والتخصيص والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.",
+      "description": "مصمم احترافي لجدول المعلم أو الطالب في مدرستي مع أوقات المعلم التلقائية وبيانات المدرسة والتخصيص والملخصات والألوان والطباعة/PDF وحفظ PNG والتصدير إلى Excel والنسخ.",
       "sourcePath": "scripts/madrasati-schedule-designer/madrasati-schedule-designer.user.js",
       "additionalInfoPath": "scripts/madrasati-schedule-designer/README.md",
       "greasyFork": "https://greasyfork.org/scripts/592421",
