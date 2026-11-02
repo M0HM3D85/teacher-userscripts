@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fares+ | فارس+
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.1.0
+// @version      1.1.1
 // @description  تحسين شامل لتجربة نظام فارس: مدير أنشطة التطوير المهني، استيراد Excel والشهادات PDF/صور، تحليل Gemini اختياري، مسودات وتقارير.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
@@ -48,7 +48,7 @@
     const META = Object.freeze({
         id: 'm0hm3d85-fares-plus',
         name: 'فارس+',
-        version: '1.1.0',
+        version: '1.1.1',
         author: 'Mohammed Almalki (M0HM3D85)'
     });
 
@@ -9491,8 +9491,6 @@
 
                 reuseExistingBlank=true;
             }
-
-            clearCommitDebug();
 
             const tx={
                 version:1,
