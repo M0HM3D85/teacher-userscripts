@@ -1334,6 +1334,9 @@
 
         refreshStudentIdentityUI();
         refreshStudentSearchUI();
+        if (state.searchOpen && !state.searchBusy && !state.searchComplete && state.searchSourceUrl) {
+            Promise.resolve().then(loadStudentSearchIndex);
+        }
     }
 
     function currentObservedRespondent() {
@@ -2139,7 +2142,10 @@
                 sessionStorage.removeItem(SEARCH_JUMP_KEY);
                 return;
             }
-            if (currentReviewIndex() !== stored.index) return;
+            if (currentReviewIndex() !== stored.index) {
+                sessionStorage.removeItem(SEARCH_JUMP_KEY);
+                return;
+            }
             sessionStorage.removeItem(SEARCH_JUMP_KEY);
             openViewer({fromNameSearch: true});
             setStatus('✓ تم فتح الطالب المطلوب حتى لو كان مصححًا. تجاوز المصححين باقٍ على حاله.');
