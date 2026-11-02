@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Microsoft Forms - عارض المرفقات والتصحيح السريع
 // @namespace    https://greasyfork.org/users/1636459
-// @version      1.3.7
-// @description  عارض مرفقات Microsoft Forms مع أولوية الاسم المكتوب في سؤال الاسم، والتصحيح السريع، وإخفاء المرجع، وحذف الاستجابة بالتأكيد الأصلي.
+// @version      1.3.8
+// @description  عارض مرفقات Forms مع البحث عن الطلاب بالاسم بما فيهم المصححون، وأولوية الاسم المكتوب، والتصحيح السريع، وإخفاء المرجع، وحذف الاستجابة.
 // @author       Mohammed Almalki (M0HM3D85)
 // @homepageURL  https://greasyfork.org/en/users/1636459-m0hm3d85
 // @supportURL   https://github.com/M0HM3D85/teacher-userscripts/issues
@@ -45,7 +45,7 @@
        جميع الحقوق محفوظة
        ========================================================= */
 
-    const VERSION = '1.3.7';
+    const VERSION = '1.3.8';
 
     const DEVELOPER = Object.freeze({
         name: 'Mohammed Almalki',
@@ -55,6 +55,8 @@
     });
 
     const APP_ID = 'm0hm3d85-forms-attachment-reviewer';
+    const SEARCH_JUMP_KEY = APP_ID + ':search-jump-v138';
+    let originalFetchForSearch = null;
     const STYLE_ID = APP_ID + '-style';
     const LAUNCHER_ID = APP_ID + '-launcher';
     const LAUNCHER_STYLE_ID = LAUNCHER_ID + '-style';
@@ -113,6 +115,12 @@
         explicitNameQuestionIds: new Set(),
         respondentsCapturedAt: 0,
         nameRefreshTimer: null,
+        searchSourceUrl: '',
+        searchOpen: false,
+        searchBusy: false,
+        searchComplete: false,
+        searchToken: 0,
+        searchController: null,
 
         /* التصحيح التراكمي السريع */
         gradeHistoryContext: '',
@@ -736,6 +744,10 @@
             state.manualNameQuestionConfidence = '';
             state.respondentFormId = '';
             state.respondents = [];
+            state.searchSourceUrl = '';
+            state.searchComplete = false;
+            state.searchController?.abort();
+            state.searchToken++;
         }
         return formId;
     }
@@ -1293,6 +1305,12 @@
         }
 
         const offset = responseListOffset(rawUrl);
+        try {
+            const observed = new URL(rawUrl, location.href);
+            if (isResponsesListUrl(observed.href) && observed.origin === location.origin &&
+                (!state.searchSourceUrl || offset === 0)) state.searchSourceUrl = observed.href;
+        }
+        catch (_) {}
 
         if (
             state.respondentFormId !== formId ||
@@ -1315,6 +1333,7 @@
             Date.now();
 
         refreshStudentIdentityUI();
+        refreshStudentSearchUI();
     }
 
     function currentObservedRespondent() {
@@ -1439,6 +1458,7 @@
         const fetchMarker = '__m0hm3d85AttachmentIdentityFetchV137';
         if (typeof window.fetch === 'function' && !window[fetchMarker]) {
             const nativeFetch = window.fetch;
+            originalFetchForSearch = nativeFetch.bind(window);
             window.fetch = function(input, init) {
                 const promise = nativeFetch.apply(this, arguments);
                 try {
@@ -1911,6 +1931,222 @@
         catch (_) {}
     }
 
+
+    /* =========================================================
+       البحث عن الطالب — مستقل عن خيار تجاوز المصححين
+       ========================================================= */
+
+    function searchedStudentName(row) {
+        return getManualNameFromAnswers(row.answers) ||
+            validPersonName(row.manualName) ||
+            usableInstitutionalName(row) ||
+            clean(row.responderName) ||
+            clean(row.responder) || ('المستجيب ' + (row.index + 1));
+    }
+
+    function findSearchedStudents(value) {
+        const q = normalizeRespondentSearch(value);
+        if (!q || state.respondentFormId !== currentFormId()) return [];
+        const terms = q.split(/\s+/).filter(Boolean);
+        return state.respondents.filter(row => row && Number.isInteger(row.index))
+            .map(row => {
+                const manual = normalizeRespondentSearch(
+                    getManualNameFromAnswers(row.answers) || row.manualName);
+                const institutional = normalizeRespondentSearch(row.responderName);
+                const email = normalizeRespondentSearch(row.responder);
+                const id = normalizeRespondentSearch(row.id);
+                const position = normalizeRespondentSearch(String(row.index + 1));
+                if (!terms.every(term => [manual, institutional, email, id, position]
+                    .some(field => field.includes(term)))) return null;
+                let rank = 0;
+                if (manual === q) rank += 600;
+                else if (manual.startsWith(q)) rank += 450;
+                else if (manual.includes(q)) rank += 300;
+                if (institutional === q) rank += 250;
+                else if (institutional.startsWith(q)) rank += 180;
+                if (email.includes(q)) rank += 70;
+                if (id === q || position === q) rank += 500;
+                return {row, rank};
+            })
+            .filter(Boolean)
+            .sort((a, b) => b.rank - a.rank || a.row.index - b.row.index)
+            .map(item => item.row);
+    }
+
+    function refreshStudentSearchUI() {
+        if (!state.open || !state.searchOpen) return;
+        const input = $('#m0ar-search-input');
+        const meta = $('#m0ar-search-meta');
+        const list = $('#m0ar-search-results');
+        if (!input || !meta || !list) return;
+        const count = state.respondentFormId === currentFormId()
+            ? state.respondents.filter(Boolean).length : 0;
+        const q = clean(input.value);
+        const found = findSearchedStudents(q);
+        const shown = found.slice(0, 12);
+        if (state.searchBusy) {
+            meta.textContent = 'جارٍ تحميل قائمة الاستجابات… المتاح: ' + count +
+                '. البحث يشمل المصححين.';
+        } else if (!count) {
+            meta.textContent = 'بانتظار بيانات Forms. حدّث صفحة المراجعة إن لم تظهر الاستجابات.';
+        } else if (!q) {
+            meta.textContent = count + ' استجابة. ابحث بالاسم أو البريد أو الرقم؛ المصححون مشمولون.';
+        } else {
+            meta.textContent = found.length
+                ? 'المطابقات: ' + found.length +
+                  (found.length > shown.length ? ' — عرض أول 12' : '') +
+                  '. البحث لا يستثني المصححين.'
+                : 'لم تُعثر مطابقة في ' + count +
+                  (state.searchComplete ? ' استجابة.' : ' استجابة محمّلة حتى الآن.');
+        }
+        list.replaceChildren();
+        if (!q) return;
+        for (const row of shown) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'm0ar-search-item';
+            button.dataset.current = currentReviewIndex() === row.index ? 'true' : 'false';
+            const main = document.createElement('span');
+            const title = document.createElement('strong');
+            title.textContent = searchedStudentName(row);
+            const info = document.createElement('small');
+            const institutional = usableInstitutionalName(row);
+            const extras = [];
+            if (institutional && normalizeRespondentSearch(institutional) !==
+                normalizeRespondentSearch(title.textContent)) extras.push('Microsoft: ' + institutional);
+            if (row.responder) extras.push(row.responder);
+            info.textContent = extras.join(' · ') || 'افتح إجابة الطالب';
+            main.append(title, info);
+            const position = document.createElement('span');
+            position.className = 'm0ar-search-number';
+            position.textContent = (currentReviewIndex() === row.index ? 'الحالي · #' : '#') +
+                String(row.index + 1);
+            button.append(main, position);
+            button.addEventListener('click', () => jumpToSearchedStudent(row));
+            list.appendChild(button);
+        }
+    }
+
+    function closeStudentSearch() {
+        state.searchOpen = false;
+        state.searchController?.abort();
+        $('#m0ar-search-panel')?.setAttribute('hidden', '');
+        $('#m0ar-search-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+
+    function openStudentSearch() {
+        if (!state.open || state.countingUnreviewed ||
+            state.navigatingStudent || state.deletingResponse) return;
+        state.searchOpen = true;
+        $('#m0ar-search-panel')?.removeAttribute('hidden');
+        $('#m0ar-search-toggle')?.setAttribute('aria-expanded', 'true');
+        refreshStudentSearchUI();
+        $('#m0ar-search-input')?.focus({preventScroll: true});
+        loadStudentSearchIndex();
+    }
+
+    async function loadStudentSearchIndex() {
+        if (!state.searchOpen || state.searchBusy || state.searchComplete) return;
+        let url;
+        try {
+            url = new URL(state.searchSourceUrl);
+            if (url.origin !== location.origin || !isResponsesListUrl(url.href)) return;
+        }
+        catch (_) { return; }
+        const token = ++state.searchToken;
+        const controller = new AbortController();
+        state.searchController = controller;
+        state.searchBusy = true;
+        try {
+            const requested = Number(url.searchParams.get('$top'));
+            const size = Number.isInteger(requested) && requested > 0 && requested <= 100
+                ? requested : 100;
+            const fetchFn = originalFetchForSearch || window.fetch.bind(window);
+            let priorPageStart = '';
+            let complete = false;
+            /* اعتمد فقط على عنوان GET /responses الذي استخدمه الموقع بالفعل */
+            for (let offset = 0; offset < 3000; offset += size) {
+                if (token !== state.searchToken || !state.open || !state.searchOpen) break;
+                const page = new URL(url.href);
+                page.searchParams.set('$skip', String(offset));
+                page.searchParams.set('$top', String(size));
+                const response = await fetchFn(page.href, {
+                    method: 'GET', credentials: 'same-origin',
+                    cache: 'no-store', signal: controller.signal
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const payload = await response.json();
+                const rows = Array.isArray(payload?.value) ? payload.value :
+                    (Array.isArray(payload) ? payload : []);
+                if (!rows.length) { complete = true; break; }
+                const first = String(rows[0]?.id ?? rows[0]?.responseId ?? '');
+                if (offset && first && first === priorPageStart) break;
+                priorPageStart = first;
+                consumeObservedRespondents(payload, page.href);
+                if (rows.length < size) { complete = true; break; }
+            }
+            if (token === state.searchToken) state.searchComplete = complete;
+        }
+        catch (error) {
+            if (error?.name !== 'AbortError') {
+                const meta = $('#m0ar-search-meta');
+                if (meta) meta.textContent = 'تعذر إكمال تحميل القائمة؛ البحث متاح في الأسماء المحمّلة.';
+            }
+        }
+        finally {
+            if (token === state.searchToken) {
+                state.searchBusy = false;
+                state.searchController = null;
+                refreshStudentSearchUI();
+            }
+        }
+    }
+
+    function jumpToSearchedStudent(row) {
+        if (!row || !Number.isInteger(row.index) || row.index < 0 ||
+            state.navigatingStudent || state.countingUnreviewed ||
+            state.deletingResponse || state.respondentFormId !== currentFormId()) return;
+        if (currentReviewIndex() === row.index) {
+            closeStudentSearch();
+            setStatus('هذا الطالب معروض بالفعل، وخيار تجاوز المصححين لم يتغير.');
+            return;
+        }
+        saveCurrentGrade({quiet: true});
+        flushCurrentReferenceNotes();
+        const url = new URL(location.href);
+        url.searchParams.set('analysis', 'true');
+        url.searchParams.set('topview', 'Grading_ReviewAnswers');
+        url.searchParams.set('ridx', String(row.index));
+        /* لا نخزن أي اسم أو بريد أو درجة؛ فقط مؤشر الاستجابة مؤقتًا */
+        try {
+            sessionStorage.setItem(SEARCH_JUMP_KEY, JSON.stringify({
+                formId: currentFormId(), index: row.index, time: Date.now()
+            }));
+        }
+        catch (_) {}
+        state.searchController?.abort();
+        location.assign(url.href);
+    }
+
+    function restoreSearchedStudent() {
+        if (state.open || !isReviewPage()) return;
+        try {
+            const raw = sessionStorage.getItem(SEARCH_JUMP_KEY);
+            if (!raw) return;
+            const stored = JSON.parse(raw);
+            if (!stored || stored.formId !== currentFormId() ||
+                Date.now() - Number(stored.time) > 60000) {
+                sessionStorage.removeItem(SEARCH_JUMP_KEY);
+                return;
+            }
+            if (currentReviewIndex() !== stored.index) return;
+            sessionStorage.removeItem(SEARCH_JUMP_KEY);
+            openViewer({fromNameSearch: true});
+            setStatus('✓ تم فتح الطالب المطلوب حتى لو كان مصححًا. تجاوز المصححين باقٍ على حاله.');
+        }
+        catch (_) {}
+    }
+
     /* =========================================================
        زر التشغيل المدمج أعلى الصفحة
        ========================================================= */
@@ -1992,6 +2228,7 @@
                 target.container.appendChild(button);
             }
         }
+        restoreSearchedStudent();
     }
 
     /* =========================================================
@@ -2012,7 +2249,7 @@
        فتح العارض
        ========================================================= */
 
-    function openViewer() {
+    function openViewer(options = {}) {
         if (document.getElementById(APP_ID)) {
             return;
         }
@@ -2037,7 +2274,7 @@
         updateReferenceVisibilityUI();
 
         render({
-            preferPending: state.skipGraded
+            preferPending: state.skipGraded && !options.fromNameSearch
         });
 
         updateSkipButton();
@@ -2048,6 +2285,7 @@
         */
         if (
             state.skipGraded &&
+            !options.fromNameSearch &&
             !studentNeedsAttachmentReview(state.questions)
         ) {
             setTimeout(
@@ -2149,6 +2387,39 @@
 #m0ar-unreviewed-counter.ready #m0ar-unreviewed-value{
     color:#f8fafc;
 }
+
+
+#m0ar-search-panel{
+    position:fixed;top:76px;right:16px;z-index:2147483647;
+    width:min(440px,calc(100vw - 32px));padding:12px;
+    border:1px solid #475569;border-radius:14px;background:#111827;
+    box-shadow:0 20px 50px rgba(0,0,0,.55);direction:rtl;
+}
+#m0ar-search-panel[hidden]{display:none !important;}
+#m0ar-search-fields{display:flex;gap:7px;align-items:center;}
+#m0ar-search-input{
+    min-width:0;flex:1;height:42px;padding:8px 12px;color:#f8fafc;
+    background:#0f172a;border:1px solid #64748b;border-radius:9px;
+    outline:none;font:600 13px "Segoe UI",Tahoma,Arial,sans-serif;
+}
+#m0ar-search-input:focus{border-color:#60a5fa;}
+#m0ar-search-meta{margin:9px 2px;color:#cbd5e1;font-size:11px;line-height:1.7;}
+#m0ar-search-results{max-height:min(52vh,390px);overflow:auto;}
+.m0ar-search-item{
+    width:100%;min-height:58px;margin-top:5px;padding:8px;
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    text-align:right;direction:rtl;border:1px solid #334155;
+    border-radius:8px;background:#172033;color:#fff;cursor:pointer;
+    font-family:inherit;
+}
+.m0ar-search-item:hover,.m0ar-search-item:focus-visible{
+    background:#1e3a5f;border-color:#60a5fa;
+}
+.m0ar-search-item[data-current="true"]{border-color:#059669;}
+.m0ar-search-item>span:first-child{display:flex;min-width:0;flex:1;flex-direction:column;gap:3px;}
+.m0ar-search-item strong{font-size:12px;word-break:break-word;}
+.m0ar-search-item small{font-size:10px;color:#94a3b8;word-break:break-word;}
+.m0ar-search-number{flex-shrink:0;direction:ltr;font-size:11px;color:#93c5fd;}
 
 #m0ar-delete-response{
     white-space:nowrap;
@@ -2924,6 +3195,26 @@
     <div id="m0ar-person">
         <div id="m0ar-name">المستجيب</div>
         <div id="m0ar-person-meta"></div>
+    </div>
+
+
+    <button type="button" class="m0ar-btn" id="m0ar-search-toggle"
+        aria-controls="m0ar-search-panel" aria-expanded="false"
+        title="البحث يشمل الطلاب المصححين حتى لو كان تجاوز التصحيح مفعّلًا">
+        🔎 بحث عن طالب
+    </button>
+    <div id="m0ar-search-panel" hidden>
+        <div id="m0ar-search-fields">
+            <input id="m0ar-search-input" type="search" dir="auto"
+                autocomplete="off" placeholder="اسم الطالب أو البريد أو الرقم"
+                aria-label="البحث عن طالب">
+            <button type="button" class="m0ar-btn" id="m0ar-search-close"
+                title="إغلاق البحث">✕</button>
+        </div>
+        <div id="m0ar-search-meta" aria-live="polite">
+            البحث يشمل المصححين مهما كان إعداد التجاوز.
+        </div>
+        <div id="m0ar-search-results"></div>
     </div>
 
     <button
@@ -6147,6 +6438,21 @@
 
     function bindViewerEvents() {
         $('#m0ar-close').addEventListener('click', closeViewer);
+        $('#m0ar-search-toggle').addEventListener('click', () => {
+            if (state.searchOpen) closeStudentSearch();
+            else openStudentSearch();
+        });
+        $('#m0ar-search-close').addEventListener('click', closeStudentSearch);
+        $('#m0ar-search-input').addEventListener('input', refreshStudentSearchUI);
+        $('#m0ar-search-input').addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault(); event.stopPropagation(); closeStudentSearch();
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                const first = findSearchedStudents(event.currentTarget.value)[0];
+                if (first) jumpToSearchedStudent(first);
+            }
+        });
 
         $('#m0ar-delete-response').addEventListener(
             'click',
@@ -6513,6 +6819,10 @@
             )
         );
 
+        if (state.searchOpen && event.key === 'Escape') {
+            event.preventDefault(); event.stopPropagation(); closeStudentSearch(); return;
+        }
+
         const isReferenceNotes = targetId === 'm0ar-reference-notes';
         const plainKey = !event.ctrlKey && !event.altKey && !event.metaKey;
         const pageDown = event.code === 'PageDown' || event.key === 'PageDown';
@@ -6781,6 +7091,8 @@
         if (!state.open) {
             return;
         }
+        closeStudentSearch();
+        state.searchToken++;
 
         try {
             saveCurrentGrade();
@@ -6848,6 +7160,10 @@
         open: openViewer,
         close: closeViewer,
         scan: scanUploadQuestions,
+
+        searchStudents: query => findSearchedStudents(query).map(row => ({
+            index: row.index, id: row.id, name: searchedStudentName(row)
+        })),
 
         getStudentNameInfo: () => ({
             name: getStudentName(),
@@ -6968,7 +7284,7 @@
     );
 
     console.log('الإصدار:', VERSION);
-    console.log('v1.3.7: الأولوية لإجابة سؤال الاسم في صفحة Forms أو بيانات الاستجابة، قبل الاسم المؤسسي.');
+    console.log('v1.3.8: بحث عن الطلاب بالاسم حتى مع تجاوز المصححين، والتنقل المباشر مع إعادة فتح العارض.');
     console.log('المطور:', `${DEVELOPER.name} (${DEVELOPER.handle})`);
     console.log('تجاوز المصححين:', state.skipGraded ? 'مفعّل' : 'متوقف');
     console.log('اختصارات التصحيح: 1 = +1 | 5 = +0.5 | Z = تراجع | Enter = اعتماد ومتابعة');
